@@ -45,12 +45,12 @@ class Transcriptome():
 
 
     
-def collapse_transcripts(self,  fuzzy_junction=5, repair_5truncation=10000, repair_3trunkation=100, rename=True):
-    with tqdm(total=self.n_genes, unit='genes') as pbar:     
-        for chrom, tree in self.data.items():
-            for gene in tree:
-                isotools.collapse.collapse_transcript_of_gene(gene, fuzzy_junction, repair_5truncation, repair_3trunkation, rename)
-                pbar.update(1)
+    def collapse_transcripts(self,  fuzzy_junction=5, repair_5truncation=10000, repair_3trunkation=100, rename=True):
+        with tqdm(total=self.n_genes, unit='genes') as pbar:     
+            for chrom, tree in self.data.items():
+                for gene in tree:
+                    isotools.collapse.collapse_transcript_of_gene(gene, fuzzy_junction, repair_5truncation, repair_3trunkation, rename)
+                    pbar.update(1)
 
        
     def add_splice_graphs(self, force=False):

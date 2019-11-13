@@ -11,8 +11,10 @@ refseq_fn='/project/42/references/refseq/RefSeq_GRCh38_20181116_sorted.gff.gz'
 isoseq_collapsed=Transcriptome(isoseq_fn,type='gtf', rescue_genes=True)
 isoseq=Transcriptome(isoseq_bam_fn)
 refseq=Transcriptome(refseq_fn)
+
+
 isoseq.collapse_transcripts()
-isoseq.add_splice_graphs(isoseq)
+isoseq.add_splice_graphs(isoseq) 
 isoseq.add_reference_support(refseq)
 
 

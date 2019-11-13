@@ -1,14 +1,28 @@
-import  isotools.splice_graph
+import isotools
+import pandas as pd
+from  isotools.transcriptome import Transcriptome
 from importlib import reload
-reload(isotools.splice_graph)
-isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-gmap/all_merged_hq_isoforms.bam'
+from statistics import mean
+#reload(isotools.transcriptome)
+isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-minimap/all_merged_minimap.bam'
+isoseq_fn='/project/42/pacbio/hecatos_isoseq/05-minimap/all_merged_collapsed.gtf.gz'
 refseq_fn='/project/42/references/refseq/RefSeq_GRCh38_20181116_sorted.gff.gz'
-#refseq=isotools.splice_graph.import_gtf_transcripts(refseq_fn)
-isoseq=isotools.splice_graph.import_bam_transcripts(isoseq_bam_fn)
 
-isotools.splice_graph.collapse_transcripts(isoseq)
-isotools.splice_graph.add_splice_graphs(isoseq)
-isotools.splice_graph.add_reference_support(isoseq, refseq)
+isoseq_collapsed=Transcriptome(isoseq_fn,type='gtf', rescue_genes=True)
+isoseq=Transcriptome(isoseq_bam_fn)
+refseq=Transcriptome(refseq_fn)
+isoseq.collapse_transcripts()
+isoseq.add_splice_graphs(isoseq)
+isoseq.add_reference_support(refseq)
+
+
+
+
+
+
+
+#look for toxic /interesting cases
+#genes with multiple isoforms equal to the same refseq gene (which should not be there)
 toi=('splice_identical','truncated5', 'truncated3')
 for chrom, tree in isoseq.items():
     for i,gene in enumerate(tree):
@@ -18,9 +32,13 @@ for chrom, tree in isoseq.items():
             multi=next(refseq for refseq,n in n_found.items() if n>1)
         except StopIteration:
             pass
-        else:
+        else: #there is more than one
             exons=[tr['exons'] for tr in gene.data['transcripts'].values() if any(term in tr['support']['sType'] for term in toi) and tr['support']['ref_transcript']==multi]
             raise Exception('chrom {} gene {}: {}'.format(chrom, i,multi))
+
+#Exception: chrom 1 gene 106: NM_001351365.1
+#list(isoseq['1'])[106]
+
 
 for e in exons:
  print(e)

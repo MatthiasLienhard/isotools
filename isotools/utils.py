@@ -6,9 +6,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def is_same_gene(tr1, tr2, spj_iou_th=0, reg_iou_th=.9):
+def is_same_gene(tr1, tr2, spj_iou_th=0, reg_iou_th=0):
     # current definition of "same gene": at least one shared splice site
-    # or at least 90% exonic overlap
+    # or at least 50% exonic overlap
     spj_i, reg_i=get_intersects(tr1, tr2)
     total_spj=(len(tr1)+len(tr2)-2)*2
     total_len=sum([e[1]-e[0] for e in tr2+tr1])

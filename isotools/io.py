@@ -7,6 +7,48 @@ from intervaltree import IntervalTree, Interval
 from tqdm import tqdm
 import isotools.utils
 
+class Gene(Interval):
+    def __str__(self):
+        return('Gene {} {}:{}-{}({}), {} transcripts'.format(self.name, self.chr, self.begin, self.end,self.strand, self.n_transcripts, ))
+    
+    @property
+    def chr(self):
+        try:
+            return self.data['chromosome']
+        except KeyError:
+            return 'NA'
+
+    @property
+    def name(self):
+        try:
+            return self.data['gene_name']
+        except KeyError:
+            return 'NA'
+
+    @property
+    def strand(self):
+        try:
+            return self.data['strand']
+        except KeyError:
+            return 'NA'
+
+    @property
+    def transcripts(self):
+        try:
+            return self.data['transcripts']
+        except KeyError:
+            return 'NA'
+
+    @property
+    def n_transcripts(self):
+        try:
+            return len(self.data['transcripts'])
+        except KeyError:
+            return 0
+
+    
+
+
 def import_transcripts(fn, type='auto', **kwargs):
     if type=='auto':        
         type=os.path.splitext(fn)[1].lstrip('.')
@@ -30,14 +72,14 @@ def import_gtf_transcripts(fn, genes=None,chromosomes=None, rescue_genes=False):
     skipped = set()
     if genes is None:
         genes=dict()   
-    gids=set() 
+    gene_dict={g.data['gene_id']:g for t in genes for g in t}
     for line in tqdm(gtf.fetch(), smoothing=.1): 
         ls = line.split(sep="\t")
         
         if chromosomes is not None and ls[0] not in chromosomes:
             #warnings.warn('skipping line from chr '+ls[0])
             continue
-        genes.setdefault(ls[0], IntervalTree())
+        _=genes.setdefault(ls[0], IntervalTree())
         info = dict([pair.lstrip().split(' ', 1) for pair in ls[8].replace('"','').split(";") if pair])        
         start, end = [int(i) for i in ls[3:5]]
         start -= 1  # to make 0 based
@@ -45,7 +87,7 @@ def import_gtf_transcripts(fn, genes=None,chromosomes=None, rescue_genes=False):
             # print(line)
             try:
                 gtf_id = info['transcript_id']
-                exons.setdefault(gtf_id, list()).append((start, end))
+                _=exons.setdefault(gtf_id, list()).append((start, end))
             except KeyError:  # should not happen if GTF is OK
                 warnings.warn("gtf format error: exon without transcript_id. Skipping line\n"+line)
         elif ls[2] == 'gene':
@@ -54,24 +96,31 @@ def import_gtf_transcripts(fn, genes=None,chromosomes=None, rescue_genes=False):
             else:
                 info['strand'] = ls[6]
                 info['chromosome'] = ls[0]
-                genes[ls[0]][start:end] = info        
-                gids.add(info['gene_id'])
+                new_gene=Gene(start, end, info)
+                genes[ls[0]].add(new_gene)
+                gene_dict[info['gene_id']]=new_gene
         elif ls[2] == 'transcript':
             try:
-                transcripts.setdefault(info["gene_id"], list()).append(info["transcript_id"])
+                _=transcripts.setdefault(info["gene_id"], list()).append(info["transcript_id"])
             except KeyError:
                 warnings.warn("gtf format error for transcript, skipping line\n"+line )
             else:
                 if rescue_genes:
-                    if info["gene_id"] in gids:
-                        extend_gene(info["gene_id"],start, end, genes[ls[0]])
+                    if info["gene_id"] in gene_dict:
+                        original_gene=gene_dict[info["gene_id"]]
+                        if start<original_gene.begin or end>original_gene.end:
+                            merged_gene=Gene(min(start,original_gene.begin), max(end, original_gene.end), original_gene.data)
+                            genes[ls[0]].add(merged_gene)
+                            genes[ls[0]].remove(original_gene)
+                            gene_dict[info["gene_id"]]=merged_gene
                     else:
-                        info=copy.deepcopy(info)
+                        info=copy.deepcopy(info) #do not edit the transcript infos
                         del(info['transcript_id'])
                         info['strand'] = ls[6]
                         info['chromosome'] = ls[0]
-                        genes[ls[0]][start:end] = info        
-                        gids.add(info['gene_id'])                        
+                        new_gene=Gene(start, end, info)
+                        genes[ls[0]].add(new_gene)
+                        gene_dict[info['gene_id']]=new_gene          
         else:
             skipped.add(ls[2])
     if len(skipped)>0:
@@ -85,7 +134,7 @@ def import_gtf_transcripts(fn, genes=None,chromosomes=None, rescue_genes=False):
         #check for missing gene information
         missed_genes=0
         for gid in transcripts:
-            if gid not in gids:
+            if gid not in gene_dict:
                 missed_genes+=1
         if missed_genes:
             raise ValueError('no specific gene information for {}/{} genes'.format(missed_genes,missed_genes+sum((len(t) for t in genes.values()) )))
@@ -104,15 +153,6 @@ def import_gtf_transcripts(fn, genes=None,chromosomes=None, rescue_genes=False):
                     gene.data['transcripts'] = {t_id: {'exons':[tuple(gene[:2])]}}
                     
     return genes
-
-def extend_gene(id,start, end, genes):
-    for gene in genes.overlap(start, end):
-        if gene.data['gene_id']==id:
-            merged_gene=Interval(min(start,gene.begin), max(end, gene.end), gene.data)
-            genes.add(merged_gene)
-            genes.remove(gene)    
-            return True
-    return False
 
 
 def import_gff_transcripts(fn, genes=None):
@@ -157,8 +197,9 @@ def import_gff_transcripts(fn, genes=None):
         # elif ls[2] in ['gene', 'pseudogene']:
         elif ls[2] == 'gene':
             info['strand'] = ls[6]
-            info['chromosome'] = chrom
-            genes[chrom][start:end] = info
+            info['chr'] = chrom
+            #genes[chrom][start:end] = info
+            genes[chrom].add(Gene(start,end,info))
         # those denote transcripts
         elif all([v in info for v in ['Parent', "ID", 'Name']]) and info['Parent'].startswith('gene'):
             transcripts.setdefault(info["Parent"], list()).append(
@@ -210,7 +251,7 @@ def import_bam_transcripts(bam_fn, genes=None, n_lines=None):
                         tr_name='{}_{}'.format(gene.data['Name'],len(gene.data['transcripts'])+1)
                         gene.data['transcripts'][tr_name]={'exons':exons, 'source':[read.query_name]}
                         if pos[0]<gene.begin or pos[1]>gene.end:
-                            merged_gene=Interval(min(pos[0],gene.begin), max(pos[1], gene.end), gene.data)
+                            merged_gene=Gene(min(pos[0],gene.begin), max(pos[1], gene.end), gene.data)
                             genes[chrom].add(merged_gene)
                             genes[chrom].remove(gene)    
                             found=merged_gene
@@ -222,7 +263,7 @@ def import_bam_transcripts(bam_fn, genes=None, n_lines=None):
                         merged_number+=1
                         found.data['transcripts'].update(gene.data['transcripts'])
                         if gene.begin<found.begin or gene.end > found.end:
-                            merged_gene=Interval(min(found.begin,gene.begin), max(found.end, gene.end), found.data)
+                            merged_gene=Gene(min(found.begin,gene.begin), max(found.end, gene.end), found.data)
                             genes[chrom].add(merged_gene)
                             genes[chrom].remove(found)    
                             found=merged_gene
@@ -232,7 +273,7 @@ def import_bam_transcripts(bam_fn, genes=None, n_lines=None):
                 gname=gene_prefix+str(gene_number)
                 info={'strand':strand, 'Name':gname,'source':{gname+'_1':[read.query_name]}, 
                         'transcripts':{gname+'_1':{'exons':exons,'source':[read.query_name]}}}
-                genes[chrom].addi(*pos, info)
+                genes[chrom].add(Gene(*pos, info))
             if n_lines==i:
                 break
         
@@ -297,8 +338,8 @@ def collapse_isoforms(bam_fn='/project/42/pacbio/hecatos_isoseq/05-gmap/all_merg
                 if same_gene:
                     break
             else:  # new gene
-                genes[chr].addi(
-                    *pos, (strand, [exons], 'PB_{}'.format(gene_number), [[pos]]))
+                genes[chr].add(Gene(
+                    *pos, (strand, [exons], 'PB_{}'.format(gene_number), [[pos]])))
                 gene_number += 1
                 isoform_number += 1
 
@@ -306,7 +347,7 @@ def collapse_isoforms(bam_fn='/project/42/pacbio/hecatos_isoseq/05-gmap/all_merg
 
 def get_read_sequence(bam_fn,reg=None, name=None):
     with AlignmentFile(bam_fn, "rb") as align:
-        for i, read in enumerate(align.fetch(region=reg)):
+        for read in align.fetch(region=reg):
             chrom = read.reference_name
             strand = '-' if read.is_reverse else '+'
             exons = isotools.utils.junctions_from_read(read)

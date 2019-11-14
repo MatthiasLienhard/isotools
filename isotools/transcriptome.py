@@ -43,7 +43,10 @@ class Transcriptome():
     def __str__(self):
         return '<{} object with {} genes and {} transcripts'.format(type(self).__name__, self.n_genes, self.n_transcripts)
 
+    def __iter__(self):
+        return (gene for tree in self.data.values() for gene in tree)
 
+          
     
     def collapse_transcripts(self,  fuzzy_junction=5, repair_5truncation=10000, repair_3trunkation=100, rename=True):
         with tqdm(total=self.n_genes, unit='genes') as pbar:     
@@ -75,4 +78,6 @@ class Transcriptome():
                     for tr in gene.data['transcripts'].values():
                         tr['support']=isotools.utils.get_support(tr['exons'], ref_genes, chrom=chrom,is_reverse=gene.data['strand'] == '-')
                         pbar.update(1)
+
+
 

@@ -13,7 +13,7 @@ isoseq=Transcriptome(isoseq_bam_fn)
 refseq=Transcriptome(refseq_fn)
 
 
-isoseq.collapse_transcripts()
+isoseq.collapse_transcripts() 
 isoseq.add_splice_graphs(isoseq) 
 isoseq.add_reference_support(refseq)
 

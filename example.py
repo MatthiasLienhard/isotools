@@ -7,8 +7,12 @@ from statistics import mean
 import logging
 #reload(isotools.transcriptome)
 import pickle
-
-
+import matplotlib.pyplot as plt
+from collections import Counter
+import seaborn as sns
+import pomegranate #package to fit mixtures
+import numpy as np
+plot_path='/project/42/pacbio/hecatos_isoseq/plots'
 
 isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-align/all_aligned.sorted.bam'
 #isoseq_fn='/project/42/pacbio/hecatos_isoseq/06-collapse/all_isoseq_collapsed.gff'
@@ -17,27 +21,123 @@ refseq_fn='/project/42/references/refseq/RefSeq_GRCh38_20181116_sorted.gff.gz'
 ensembl_fn='/project/42/references/Ensemblv98/Homo_sapiens.GRCh38.98.sorted.gff3.gz'
 genome_fn='/project/42/references/GRCh38/hg38_chr_only.fa'
 out_fn=isoseq_bam_fn.replace('05-align', '06-isotools').replace('.sorted.bam', '_isotools')
-#reference=isotools.transcriptome.import_transcripts(refseq_fn)
-#with open('refseq.pkl', 'wb') as f:
+#reference=isotools.transcriptome.import_transcripts(ensembl_fn)
+#with open('ensembl.pkl', 'wb') as f:
 #    pickle.dump(reference, f, pickle.HIGHEST_PROTOCOL)
 
-with open('refseq.pkl', 'rb') as f:
+with open('ensembl.pkl', 'rb') as f:
     reference=pickle.load(f)
 
+chrom=[str(i+1)for i in range(22)]+['X','Y']
+isoseq=Transcriptome(pacbio_fn=isoseq_bam_fn,ref=reference, chromosomes=chrom)
+#print(isoseq)
+#isoseq.remove_chromosome('MT')
+isoseq.find_biases(genome_fn) #this looks up junction types, direct repeats at junctions and downstream genomic a content
+df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends' ,'all_canonical', 'nZMW','ts_score','downstream_A_content','alt_splice'])
+#pd.to_numeric(df['downstream_A_content']).hist(bins=30)
 
-isoseq=Transcriptome(pacbio_fn=isoseq_bam_fn,ref=reference)
-print(isoseq)
-isoseq.remove_chromosome('MT')
-print(isoseq)
-def get_gene(gid):
-    for chrom, tree in reference.items():
-        for g in tree:
-            if g.id == gid:
+
+#plot A content
+
+acontent=np.array(pd.to_numeric(df['downstream_A_content'])).reshape(-1,1)*30
+model = pomegranate.gmm.GeneralMixtureModel.from_samples(pomegranate.distributions.PoissonDistribution, 2, acontent)
+x = np.arange(0, max(acontent)+.01,0.05)
+plt.figure(figsize=(10, 5))
+plt.hist(acontent, bins=29, normed=True)
+y0=model.distributions[0].probability(x)*np.exp(model.weights[0])
+y1=model.distributions[1].probability(x)*np.exp(model.weights[1])
+i_idx=np.argwhere(np.diff(np.sign(y0 - y1))).flatten() #index of intersection
+plt.plot(x, y0, label="lambda={:.3f}, w={:.3f}".format(model.distributions[0].parameters[0],np.exp(model.weights[0])))
+plt.plot(x, y1, label="lambda={:.3f}, w={:.3f}".format(model.distributions[1].parameters[0],np.exp(model.weights[1])))
+plt.plot(x, model.probability(x), label="Mixture")
+plt.axvline(x=x[i_idx][0], label='intersection:{:.1f}'.format(x[i_idx][0]), c='k')
+plt.legend(fontsize=14)
+plt.title("downstream A content", fontsize=14)
+plt.ylabel("Probability Density", fontsize=14)
+plt.savefig(plot_path+'/downstream_a_content.png')
+# how many are above?
+sum(pd.to_numeric(df['downstream_A_content'])<.5)/len(df) #18% of transcripts have more than 50% A
+ne_normal=df.loc[pd.to_numeric(df['downstream_A_content'])<.5,'n_exons']
+ne_highA=df.loc[pd.to_numeric(df['downstream_A_content'])>.5,'n_exons']
+sns.distplot( ne_normal , color="skyblue", label="other")
+sns.distplot( ne_highA , color="red", label="high genomic A downstream")
+plt.legend()
+plt.show() #twice as many have one exon only
+
+
+
+
+jt=[t for g in isoseq for tr in g.transcripts for t in tr['junction_type']]
+jtc=Counter(jt) #97.77% GT-AG
+for t,c in jtc.most_common(20):
+    print('{}: {:.4f}%'.format(t,c*100/len(jt)))
+
+#get a noncanonical gene
+for g in isoseq:
+    if any(t != 'GTAG'  for tr in g.transcripts for t in tr['junction_type']):
+        break
+
+
+
+
+
+#get a gene with "gapped exons"
+for g in isoseq:
+    if any('gapped_exon' in tr['support']['sType'] for tr in g.transcripts if tr['support'] is not None):
+        break
+
+#{'strand': '-', 'chr': '17', 'ID': 'transcript/67090', 'exons': [[49404053, 49404977], [49405028, 49405204], [49406758, 49406854], [49409041, 49409158], [49409330, 49409473], [49411677, 49411839], [49413176, 49413291], [49414834, 49414871]], 'source': ['transcript/67090'], 'nZMW': 2, 'support': {'ref_gene_name': 'PHB', 'ref_gene_id': 'gene:ENSG00000167085', 'ref_transcript': 'transcript:ENST00000419140', 'ref_tss': 49414884, 'ref_pas': 49405072, 'ref_len': 907, 'ref_nSJ': 14, 'exI': 802, 'sjI': 12, 'exIoU': 0.42773333333333335, 'sjIoU': 0.75, 'sType': {'alternative_polyA': ['49404053-49404977'], 'exon_skipping': ['49413291~49414834']}}, 'ts_score': [6, 3, 1, 2, 3, 1, 5], 'junction_type': ['AGCC', 'GTAG', 'GTAG', 'GTAG', 'GTAG', 'GTAG', 'GTAG'], 'downstream_A_content': 0.1}
+exons= [[49404053, 49404977], [49405028, 49405204], [49406758, 49406854], [49409041, 49409158], [49409330, 49409473], [49411677, 49411839], [49413176, 49413291], [49414834, 49414871]]
+def get_gene(reference, id):
+    for chrom,t in reference.items():
+        for g in t:
+            if g.name==id or g.id==id:
                 return(g)
+            for tr in g.transcripts:
+                if tr['ID']==id:
+                    return(tr)
+
+tr=get_gene(reference, 'transcript:ENST00000419140')
+
+
+
+gi=iter(isoseq)
+g=next(gi)
+
+ts_score_known=np.array([s for g in isoseq for tr in g.transcripts if tr['support'] is not None for s in tr['ts_score']])
+ts_score_unknown=np.array([s for g in isoseq for tr in g.transcripts if tr['support'] is None for s in tr['ts_score']])
+plt.figure(figsize=(10, 5))
+plt.hist(ts_score_unknown, bins=20, normed=True)
+plt.hist(ts_score_known, bins=20, normed=True)
+
+plt.show()
+
+list(g.transcripts[0].keys())
+g.transcripts[0]['ts_score'] #this requires refinement
+g.transcripts[0]['junction_type'] #GTAG is canonical
+g.transcripts[0]['downstream_A_content'] # what threshold is alarming? 50%
+#whats the optimal length? look at the distribution and some examples to see how much is required (currently default 30 bases)
+
+
+
+
 
 g1=get_gene('gene28069')
 g2=get_gene('gene28070')
 new=[[47541308, 47542306], [47543541, 47543663], [47544388, 47544529], [47545431, 47545620], [47549304, 47549384], [47550657, 47550847], [47551743, 47551952], [47553478, 47553506]]
+novel={'10':[{'chr':10, 'ID':'test', 'exons':new, 'strand':'-'}]}
+isoseq.add_novel_transcripts(novel)
+
+chrom='10'
+tr={'chr':10, 'ID':'test', 'exons':new, 'strand':'-'}
+candidates=isoseq.data[chrom].overlap(tr['exons'][0][0], tr['exons'][-1][1])
+merge_genes=set()
+for ol_gene in candidates:
+    if ol_gene.strand != tr['strand']:
+        continue
+    if any(isotools.transcriptome.is_same_gene(tr['exons'], oltr['exons'],spj_iou_th, reg_iou_th) for oltr in ol_gene.transcripts):
+        merge_genes.add(ol_gene)
+        print(ol_gene)
 
 g=next(iter(g for g in isoseq if toi in t['source']  ))
 g.transcripts[toi]
@@ -86,6 +186,20 @@ from pysam import TabixFile, AlignmentFile, FastaFile
 from Bio import pairwise2
 genome_fn='/project/42/references/GRCh38/hg38_chr_only.fa'
 genome=FastaFile(genome_fn)
+
+
+g=next(iter(isoseq))
+g.find_threeprime_a_content(genome)
+tr=g.transcripts[0]
+delta=10
+introns=[(tr['exons'][i][1], tr['exons'][i+1][0]) for i in range(len(tr['exons'])-1)]
+intron_seq=[[genome.fetch(g.chrom, pos-delta, pos+delta) for pos in i] for i in introns]
+align=[[a==b for a,b in zip(*seq)] for seq in intron_seq ]
+
+
+
+
+
 typeOI='gapped_exon'
 gaps=list()
 #look at direct repeats and template switching

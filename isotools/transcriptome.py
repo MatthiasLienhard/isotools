@@ -6,6 +6,8 @@ from itertools import combinations, product
 from collections import ChainMap
 import argparse
 from pysam import TabixFile, AlignmentFile, FastaFile
+from Bio import pairwise2
+from Bio.Seq import Seq
 import pandas as pd
 import numpy as np
 #from Bio import SeqIO, Seq, SeqRecord
@@ -13,7 +15,6 @@ import matplotlib.pyplot as plt
 from intervaltree import IntervalTree, Interval
 from tqdm import tqdm
 import isotools.splice_graph
-
 import logging
 import copy
 
@@ -42,17 +43,23 @@ class Transcriptome:
         self.data, novel=self.collapse_to_refgenes(transcripts)
         log.info('find genes for novel transcripts')
         self.add_novel_transcripts(novel)
-
         self._make_index()
         
         
     def write_gtf(self, fn, source='isotools'):     
         with open(fn, 'w') as f:       
-            #todo:header?
             for gene in tqdm(self):
                 lines=gene.to_gtf(source=source)
                 print('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) ),file=f)
-            
+
+    def write_table(self, fn, source='isotools'):     
+        header=['id','name', 'chrom','strand','txStart','txEnd','exonCount','exonStarts','exonEnds']
+        with open(fn, 'w') as f:       
+            print('\t'.join(header))
+            for gene in tqdm(self):
+                lines=gene.to_table()
+                print('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) ),file=f)
+    
     def _make_index(self):
         idx=dict()
         for g in self:
@@ -71,6 +78,14 @@ class Transcriptome:
             if not self._idx[n]:
                 del self._idx[n]
         del self.data[chromosome]
+
+    def find_biases(self, genome_fn):
+        with FastaFile(genome_fn) as genome_fh:
+            for g in tqdm(self):
+                g.find_template_switching(genome_fh)
+                g.find_junction_type(genome_fh)
+                g.find_threeprime_a_content(genome_fh)
+
 
     
     @property
@@ -116,9 +131,10 @@ class Transcriptome:
                 strand = '-' if read.is_reverse else '+'
                 #genes.setdefault(chrom, IntervalTree())
                 exons = junctions_from_read(read)
-                pos = exons[0][0], exons[-1][1]               
+                pos = exons[0][0], exons[-1][1]      
+                tags= dict(read.tags)
                 info={'strand':strand, 'chr':chrom,
-                        'ID':read.query_name,'exons':exons,'source':[read.query_name]}
+                        'ID':read.query_name,'exons':exons,'source':[read.query_name], 'nZMW':tags['is']}
                 transcripts[chrom].append( info)      
         return transcripts
 
@@ -163,8 +179,8 @@ class Transcriptome:
                 for tr in tr_list:                    
                     tr['support']=get_support(tr['exons'], self.reference, chrom=chrom,is_reverse=tr['strand'] == '-')#what about fusion?                
                     if tr['support'] is not None:
-                        gname=tr['support']['ref_gene_name']                                                   
-                        gid=tr['support']['ref_gene_id']                                                   
+                        gname=tr['support']['ref_gene_name']
+                        gid=tr['support']['ref_gene_id']          
                         if gname not in genes[chrom]:
                             genes[chrom][gname]={'chr':chrom, 'ID':gid, 'Name': gname, 'strand':tr['strand'] }
                         genes[chrom][gname].setdefault('transcripts', []).append(tr)
@@ -209,7 +225,7 @@ class Transcriptome:
             raise ValueError('extra_columns should be provided as list')
         extracolnames={'alt_splice':('splice_IoU', 'base_IoU','splice_type')}        
         colnames=['chr', 'begin', 'end','strand','transcript_name', 'gene_name' ]     + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
-        rows=[(g.chrom, g.begin, g.end, g.strand, t, g.id)+g.get_values(t,extra_columns) for g in  self.get_genes(region) for t in g.transcripts]
+        rows=[(g.chrom, g.begin, g.end, g.strand, tr['ID'], g.id)+g.get_values(tidx,extra_columns) for g in  self.get_genes(region) for tidx, tr in enumerate(g.transcripts)]
         df = pd.DataFrame(rows, columns=colnames)
         return(df)
     
@@ -233,7 +249,9 @@ class Transcriptome:
                         gid={g.id for g in merge_genes if 'ID' in g.data}
                         gname={g.name for g in merge_genes if 'Name' in g.data}
                         if len(gid)>1 or len(gname)>1:
-                            raise NotImplementedError('attempt to add novel fusion {} to {}/{}, which is not implemented'.format(tr['exons'],gid, gname))
+                            #raise NotImplementedError('attempt to add novel fusion {} to {}/{}, which is not implemented'.format(tr['exons'],gid, gname))
+                            #log.warning('attempt to add novel fusion {} to {}/{}, which is not implemented'.format(tr['exons'],gid, gname))
+                            merge_genes=set()
                         if len(gid)==1:
                             new_data['ID']=gid.pop()
                         if len(gname)==1:
@@ -288,12 +306,13 @@ class Gene(Interval):
     def __repr__(self):
         return object.__repr__(self)
 
+
     def to_gtf(self, source='isoseq'):
         lines=list()
         info={'gene_id':self.id}
         lines.append((self.chrom, source, 'gene', self.begin+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items())))
         for tr in self.transcripts:
-            trid=info['name']
+            trid=info['ID']
             info['transcript_id']=trid
             #todo: print only relevant infos
             lines.append((self.chrom, source, 'transcript', tr['exons'][0][0]+1, tr['exons'][-1][1], '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items() if k != 'exon_id')))
@@ -305,13 +324,67 @@ class Gene(Interval):
     def unify_junctions(self, fuzzy_junction=5, reference=None):
         if 'splice_graph' not in self.data:
             self.data['splice_graph']=isotools.splice_graph.SpliceGraph((tr['exons'] for tr in self.transcripts), self.end)
-        new_start, new_end=self.data['splice_graph'].unify_junctions(fuzzy_junction)    
+        new_start, new_end=self.data['splice_graph'].unify_junctions(fuzzy_junction)  
         for tr in self.transcripts:
             try:
-                tr['exons']=[(new_start[e[0]], new_end[e[1]]) for e in tr['exons']]
+                tr['exons']=[(new_start[e[0]], new_end[e[1]]) for e in tr['exons']] #todo: simply use zip?
             except KeyError:
                 logging.info('no new values for transcript {}: {}\nnew starts:{}\nnew ends:{}'.format(tr['name'],tr['exons'],new_start, new_end))
                 raise
+    
+    def find_junction_type(self, genome_fh):
+        #for all transcripts, add the junction type information (canonical i.e. GT-AG, noncanonical...)
+        #i.e. save the dinucleotides of donor and aceptor as XX-YY string in the transcript dicts
+        #noncanonical splicing might indicate technical artifacts (template switching, missalignment, ...)
+        
+        for tr in self.transcripts:
+            pos=((tr['exons'][i][1], tr['exons'][i+1][0]-2) for i in range(len(tr['exons'])-1))
+            sj_seq=((genome_fh.fetch(self.chrom, p, p+2) for p in i) for i in pos)
+            if self.strand=='+':
+                sj_seq=[d+a for d,a in sj_seq]
+            else:
+                sj_seq=[str(Seq(d+a).reverse_complement()) for d,a in sj_seq]
+            tr['junction_type']=sj_seq
+
+    def find_template_switching(self, genome_fh,delta=10):
+        #perform a global alignment of the sequences at splice sites and report the score. Direct repeats indicate template switching
+        for tr in self.transcripts:
+            introns=((tr['exons'][i][1], tr['exons'][i+1][0]) for i in range(len(tr['exons'])-1))
+            intron_seq=((genome_fh.fetch(self.chrom, pos-delta, pos+delta) for pos in i) for i in introns)
+            #align=[pairwise2.align.globalms(seq5, seq3, 1,-1, -1, 0) for seq5, seq3 in intron_seq] 
+            #align=[pairwise2.align.globalxs(seq5, seq3,-1,-0, score_only=True) for seq5, seq3 in intron_seq] # number of equal bases at splice site
+            align=[[a==b for a,b in zip(*seq)] for seq in intron_seq ]
+            score=[0]*len(align)
+            for i,a in enumerate(align): #get the length of the direct repeat at the junction (no missmatches or gaps)
+                pos=delta
+                while(a[pos]):
+                    score[i]+=1
+                    pos+=1
+                    if pos==len(a):
+                        break
+                pos=delta-1
+                while(a[pos]):
+                    score[i]+=1
+                    pos-=1
+                    if pos<0:
+                        break
+            #parameters 2,-3,-1,-1 = match , missmatch, gap open, gap extend
+            #this is not optimal, since it does not account for the special requirements here: 
+            #a direct repeat shoud start at the same position in the seqs, so start and end missmatches free, but gaps not
+            tr['ts_score']=score    
+    
+    def find_threeprime_a_content(self, genome_fh, length=30):
+        #add the information of the genomic A content downstream the transcript. High values indicate genomic origin of the pacbio read        
+        for tr in self.transcripts:
+            if self.strand=='+':
+                pos=tr['exons'][-1][1]
+            else:
+                pos=tr['exons'][0][0]-length
+            seq=genome_fh.fetch(self.chrom, pos, pos+length) #whatif pos<0?
+            if self.strand=='+':
+                tr['downstream_A_content']=seq.upper().count('A')/length
+            else:
+                tr['downstream_A_content']=seq.upper().count('T')/length
 
     def collapse_transcripts(self, fuzzy_junction):   
         collapsed=[]
@@ -346,19 +419,25 @@ class Gene(Interval):
                 collapsed.append(tr1)
         self.data['transcripts']=collapsed
 
-    def get_values(self ,tid, what):
+    def get_values(self ,tidx, what):
         if what is None:
             return ()
-        return tuple((v for w in what for v in self._get_value(tid, w)))
+        return tuple((v for w in what for v in self._get_value(tidx, w)))
 
-    def _get_value(self, tid, what):
+    def _get_value(self, tidx, what):
         if what=='length':
-            return sum((e-b for b,e in self.transcripts[tid]['exons'])),#return a tuple (hence the comma)
+            return sum((e-b for b,e in self.transcripts[tidx]['exons'])),#return a tuple (hence the comma)
         elif what=='n_exons':
-            return len(self.transcripts[tid]['exons']),
+            return len(self.transcripts[tidx]['exons']),
+        elif what=='exon_starts':
+            return ','.join(str(e[0]) for e in self.transcripts[tidx]['exons']),
+        elif what=='exon_ends':
+            return ','.join(str(e[1]) for e in self.transcripts[tidx]['exons']),
+        elif what=='all_canonical':
+            return all(jt == 'GTAG' for jt in self.transcripts[tidx]['junction_type']),
         elif what=='alt_splice':
             sel=['sjIoU','exIoU', 'sType']
-            support=self.transcripts[tid]['support']
+            support=self.transcripts[tidx]['support']
             if support is None:
                 return ('NA',)*len(sel)
             else:
@@ -371,6 +450,11 @@ class Gene(Interval):
 
                 vals=(support['sjIoU'],support['exIoU'],type_string)
                 return(vals)
+        #elif what==
+        #todo: splice junction type list
+        # intron template switching scores
+        elif what in self.transcripts[tidx]:
+            return str(self.transcripts[tidx][what]),
         raise ValueError('cannot extract value "{}"'.format(what))
 
         
@@ -635,7 +719,7 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
                 exons.setdefault(gtf_id, list()).append((start, end))
             except KeyError:  # should not happen if GTF is OK
                 warnings.warn("GFF format error: no parent found for exon. Skipping line: "+line)
-        elif ls[2] == 'gene':
+        elif ls[2] == 'gene' or 'ID' in info and info['ID'].startswith('gene'):
             info['strand'] = ls[6]
             info['chr'] = chrom
             #genes[chrom][start:end] = info
@@ -701,6 +785,8 @@ def overlap(r1, r2):
         return False
     else:
         return True
+
+
 
 def get_intersects(tr1, tr2):
     tr1_enum = enumerate(tr1)
@@ -827,8 +913,7 @@ def splice_identical(tr1, tr2):
             return False
     return True
 
-def get_support(exons, ref_genes, chrom, is_reverse):
-        
+def get_support(exons, ref_genes, chrom, is_reverse):        
     if chrom not in ref_genes:
         return None
     ref_genes_ol = ref_genes[chrom][exons[0][0]: exons[-1][1]]
@@ -875,6 +960,7 @@ def compute_support(ref_genes, query_exons): #compute the support of all transcr
                         for i, db in zip(support['exI'],  support['ref_len'])]
     support['sjIoU'] = [i/(query_nsj+db-i) if (query_nsj+db-i) >
                         0 else 1 for i, db in zip(support['sjI'],  support['ref_nSJ'])]
+
     return support
 
 def get_alternative_splicing(support_dict, best_idx,exons, ref_genes_ol, is_reverse):
@@ -894,7 +980,6 @@ def get_alternative_splicing(support_dict, best_idx,exons, ref_genes_ol, is_reve
         if len(fusion)>0:
             splice_type['fusion_gene']=fusion
     return splice_type
-
 
 def get_fusion(support_dict, ref_genes_ol, min_iou=.5):
         covered_gene_ids = {id for id, iou in zip(
@@ -923,7 +1008,7 @@ def get_splice_type(ref, alt, is_reversed=False):
     first = next(i for i, rel in enumerate(relation) if rel) #first ref exon that overlaps an alt exon
     last=len(relation)-next(iter([i for i,r in enumerate(reversed(relation)) if r]))-1
     novel = set(range(len(alt)))-{r[0] for x in relation for r in x}
-    if 0 in novel:
+    if 0 in novel: #frist exon completely new (wrt troi)
         types['alternative_polyA' if is_reversed else 'alternative_promoter'].append(
             '{}-{}'.format(*alt[0]))
     if len(alt)-1 in novel:
@@ -939,11 +1024,11 @@ def get_splice_type(ref, alt, is_reversed=False):
         all([rel[0][1] == 3 for rel in relation[(first+1):last]]) and #all but the first and last alt exons are the same
         (relation[first][0][1] & 1) and #the first exon has matching second splice site
         (relation[last][0][1] & 2)) #the last exon has matching first splice site
-    if first > 0 and all_match:
+    if first > 0 and all_match and alt[0][0] >= ref[first][0]: #todo: check that alt[0][0]> ref[first][0]
         types['truncated3' if is_reversed else 'truncated5'].append(
             '{}-{}'.format(*alt[0]))
     # if len(alt)-1 not in novel and not types['novel_exon'] and len(relation[-1]) == 0:
-    if last < len(relation)-1 and all_match:
+    if last < len(relation)-1 and all_match and alt[-1][1] <= ref[last][1]:
         types['truncated5' if is_reversed else 'truncated3'].append(
             '{}-{}'.format(*alt[-1]))
     for i in range(first, last+1):

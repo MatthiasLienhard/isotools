@@ -96,7 +96,9 @@ class Transcriptome:
                 g.find_junction_type(genome_fh)
                 g.find_threeprime_a_content(genome_fh)
 
-
+    def add_filters(self,**kwargs):
+        for g in tqdm(self):
+            g.add_filters(**kwargs)
     
     @property
     def n_transcripts(self):
@@ -167,10 +169,6 @@ class Transcriptome:
                 transcripts[chrom].append( info)      
         print(f"skipped {n_chimeric} chimeric transcripts {n_chimeric/total_reads*100}%")
         return transcripts
-
-      
-    
-        
        
     '''
     def add_splice_graphs(self, force=False):
@@ -184,8 +182,6 @@ class Transcriptome:
                         continue
                     gene.data['splice_graph']=isotools.splice_graph.SpliceGraph((tr['exons'] for tr in gene.transcripts), gene.end)
     '''    
-
-
     
     def collapse_to_refgenes(self, transcripts):  
         #transcripts is a dict with chr keys, storing lists of all transcripts for these chr
@@ -217,7 +213,6 @@ class Transcriptome:
                     end=max(t['exons'][-1][1] for t in g['transcripts'])
                     tree[chrom].add(Gene(start, end, g))
         return tree, novel  
-        
 
     def get_genes(self, region):
         if region is None:
@@ -233,7 +228,6 @@ class Transcriptome:
                 raise ValueError('incorrect region string {}'.format(region))
         for g in genes:
             yield g
-
 
     def gene_table(self, region=None ): #ideas: filter, extra_columns
         colnames=['chr', 'begin', 'end', 'strand', 'gene_name', 'n_transcripts']        
@@ -311,7 +305,7 @@ class Transcriptome:
         for i,gene in enumerate(self):
             gene.id=name_prefix+str(i+1)
             self._idx[gene.id]={gene}
-'''
+    '''
     def find_truncations(self, dist5=-1, dist3=10):
         for g in tqdm(self):
             g.find_truncations(dist5, dist3)
@@ -330,12 +324,12 @@ class Gene(Interval):
             tr_filter=[]
             if tr['downstream_A_content']>a_th:
                 tr_filter.append('A_CONTENT')
-            for ts in tr['template_switching']:
-                s, l=(int(i) for i in ts[ts.rfind(':')+1:].split('/',1))
-                if s<rtts_maxcov and l/s>rtts_ratio:
-                    tr_filter.append('RTTS')
-                    break
-
+            if 'template_switching' in tr:
+                for ts in tr['template_switching']:
+                    s, l=(int(i) for i in ts[ts.rfind(':')+1:].split('/',1))
+                    if s<rtts_maxcov and l/s>rtts_ratio:
+                        tr_filter.append('RTTS')
+                        break
             if any(jt!='GTAG' for jt in tr['junction_type']):
                 tr_filter.append('NONCANONICAL_SPLICING')
             if novel_gene:

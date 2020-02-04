@@ -12,9 +12,11 @@ from collections import Counter
 import seaborn as sns
 import pomegranate #package to fit mixtures
 import numpy as np
-plot_path='/project/42/pacbio/hecatos_isoseq/plots'
+out_path='/project/42/pacbio/hecatos_isoseq'
 
-isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-align/all_aligned.sorted.bam'
+isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-align/all_aligned_200129.sorted.bam'
+#isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-align/Control_aligned.sorted.bam'
+
 #isoseq_fn='/project/42/pacbio/hecatos_isoseq/06-collapse/all_isoseq_collapsed.gff'
 refseq_fn='/project/42/references/refseq/RefSeq_GRCh38_20181116_sorted.gff.gz'
 #refseq_fn='refseq_head.gff.gz'
@@ -24,18 +26,80 @@ out_fn=isoseq_bam_fn.replace('05-align', '06-isotools').replace('.sorted.bam', '
 #reference=isotools.transcriptome.import_transcripts(ensembl_fn)
 #with open('ensembl.pkl', 'wb') as f:
 #    pickle.dump(reference, f, pickle.HIGHEST_PROTOCOL)
-
-with open('ensembl.pkl', 'rb') as f:
+#with open('ensembl.pkl', 'rb') as f:
+#    reference=pickle.load(f)
+with open('refseq.pkl', 'rb') as f:
     reference=pickle.load(f)
+#todo: remove/mark fusion genes in reference
 
 chrom=[str(i+1)for i in range(22)]+['X','Y']
-isoseq=Transcriptome(pacbio_fn=isoseq_bam_fn,ref=reference, chromosomes=chrom)
-#print(isoseq)
-#isoseq.remove_chromosome('MT')
+groups=[['m54070_190315_132401','m54070_190318_123927','m54070_190319_090034','m54070_190320_052230','m64080_200120_120529'], #
+        ['m54070_190316_094451','m54070_190321_014433','m54070_190321_220654','m54070_190322_182901','m64080_200120_120529']]  #treatmentm64080_200121_181850
+isoseq=Transcriptome(pacbio_fn=isoseq_bam_fn,ref=reference, chromosomes=chrom, groups=groups)
+isoseq.find_truncations()
 isoseq.find_biases(genome_fn) #this looks up junction types, direct repeats at junctions and downstream genomic a content
-df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends' ,'all_canonical', 'nZMW','ts_score','downstream_A_content','alt_splice'])
-#pd.to_numeric(df['downstream_A_content']).hist(bins=30)
 
+sum(g.n_transcripts for g in isoseq)#367321
+sum(g.n_transcripts-(len(g.data['truncated5']) if 'truncated5' in  g.data else 0) for g in isoseq)#276633
+
+th=3
+n_tr=[sum(1 for g in isoseq for tr in g.transcripts if tr['nZMW']>=th) for th in range(2,20)]
+#[108065, 60834, 42257, 32714, 26986, 23193, 20379, 18250, 16592, 15230, 14137, 13183, 12395, 11723, 11114, 10544, 10075, 9665]
+#[367321, 218758, 156876, 123454, 102438, 88023, 77359, 69411, 62962, 57817, 53494, 49901, 46882, 44270, 41916, 39897, 38136, 36341]
+g=next(iter(isoseq))
+g.to_gtf()
+date='20200203'
+df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends' ,'all_canonical', 'grouped_nZMW','direct_repeat_len','template_switching','downstream_A_content','alt_splice','junction_type','truncation'])
+df.to_csv(f'{out_path}/tables/isoseq_transcripts_{date}.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
+g_ids={g.id:[g.name] for g in isoseq}
+isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_{date}_test.gtf', use_gene_name=True, remove={'a_th':.5, 'truncation':True, 'rrts':True})
+isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_novel_{date}.gtf', use_gene_name=True, include={'novel':True}, remove={'a_th':.5, 'truncation':True, 'rrts':True})
+
+trunc=(g for g in isoseq if 'truncated5' in  g.data)
+
+g=next(trunc)
+print(g)
+print(g.data['truncated5'])
+for i,tr in enumerate(g.transcripts):
+   print('{} - {}'.format(i,tr['exons']))
+for read in align:
+
+#chimeric reads
+from pysam import  AlignmentFile
+import re 
+from isotools.transcriptome import junctions_from_cigar, overlap
+
+cigarid={c:i for i,c in enumerate('MIDNSHP=XB')}
+align=AlignmentFile(isoseq.pacbio_fn, 'rb')
+for read in align:
+    tags=dict(read.tags)
+    if read.reference_name == 'MT' or tags['is']<10:
+        continue
+    if 'SA' in tags and not read.flag & 0x800:
+        strand='-' if read.is_reverse else '-'
+        exons_1=junctions_from_cigar(read.cigartuples, read.reference_start)
+        snd_cigar=tags['SA'].split(',')
+        snd_cigartuplestring=re.findall(r'(\d+)(\w+?)', snd_cigar[3])
+        snd_cigartuple=[(cigarid[c],int(n)) for n,c in snd_cigartuplestring]
+        exons_2=junctions_from_cigar(snd_cigartuple, int(snd_cigar[1]))
+        dist=min(abs(exons_1[0][0]-exons_2[-1][1]),abs(exons_2[0][0]-exons_1[-1][1]))
+        if read.reference_name == snd_cigar[0] and overlap((exons_1[0][0],exons_1[-1][1]),(exons_2[0][0],exons_2[-1][1])):
+            continue
+        print(f"{read.qname}, len={len(read.seq)}\t({tags['is']})\tchr{read.reference_name}:{read.reference_start}-{read.reference_end}({strand}) len={sum([e[1]-e[0] for e in exons_1])} [{dist}]\tchr{snd_cigar[0]}:{snd_cigar[1]}-{exons_2[-1][1]}({snd_cigar[2]}) len={sum([e[1]-e[0] for e in exons_2])}")
+        #break
+
+
+read.qname
+
+roi='transcript/90154'
+reads=[]
+align=AlignmentFile(isoseq.pacbio_fn, 'rb')
+for read in align:
+    if read.qname == roi:
+        reads.append(read)
+
+for r in reads:
+    print(r)
 
 #plot A content
 
@@ -64,13 +128,65 @@ sns.distplot( ne_highA , color="red", label="high genomic A downstream")
 plt.legend()
 plt.show() #twice as many have one exon only
 
+#cases that might be template switching, since both sj are not in catalog
+sel=list()
+for g in isoseq:
+    for tnr,tr in enumerate(g.transcripts):
+        if tr['support'] is not None:
+            for a in tr['support']['novel_sj2']:
+                if a+1 in tr['support']['novel_sj1']:
+                    sel.append((a, tnr,g))
+
+sel=list()
+for g in isoseq:
+    sg=isotools.splice_graph.SpliceGraph(g)
+    candidates=list(sg.find_ts_candidates())
+    for st, end, js, ls, tr_idx in candidates:
+        if ls>0 and ls/js>2:
+            print('candidate {}:{}-{} {}/{}'.format(g.chrom,st-10, end+10, js, ls))
+            sel.append(g)
 
 
 
+len(sel) #6418 transcripts
+from Bio import pairwise2
+
+for j, (i, trn,g) in enumerate(sel):
+    tr=g.transcripts[trn]
+    print('{}:{}-{} {}'.format(tr['chr'],tr['exons'][i][1]-10,tr['exons'][i+1][0]+10, tr['junction_type'][i] ))
+    print('ownscore={}'.format(tr['ts_score'][i][0]))
+    seq=tr['ts_score'][i][1]
+    sg=isotools.splice_graph.SpliceGraph(g)
+    candidates=list(sg.find_ts_candidates())
+    for  st, end, js, ls, tr_idx in candidates:
+
+        print('candidate {}:{}-{} {}/{}'.format(g.chrom,st-10, end+10, js, ls))
+    #print( pairwise2.format_alignment(*pairwise2.align.globalms(*seq,1,-1,-10,-1)[0]   ) )
+    if j>10:
+        break
+
+import isotools.splice_graph
+g=sel[5][2]
+sg=isotools.splice_graph.SpliceGraph(g)
+weights=[tr['nZMW'] for tr in g.transcripts]
+#[tr['ts_score'][i-1]
+
+
+
+#junction type statistics
 jt=[t for g in isoseq for tr in g.transcripts for t in tr['junction_type']]
+jt_known=[t for g in isoseq for tr in g.transcripts for i,t in enumerate(tr['junction_type']) if tr['support'] is not None and i-1 not in tr['support']['novel_sj1'] and i not in tr['support']['novel_sj2'] ]
+jt_new=[t for g in isoseq for tr in g.transcripts for i,t in enumerate(tr['junction_type']) if tr['support'] is None or i-1 in tr['support']['novel_sj1'] or i in tr['support']['novel_sj2'] ]
 jtc=Counter(jt) #97.77% GT-AG
+jtc_known=Counter(jt_known)
+jtc_new=Counter(jt_new)
+
 for t,c in jtc.most_common(20):
-    print('{}: {:.4f}%'.format(t,c*100/len(jt)))
+    print('all {}: {:.4f}%'.format(t,c*100/len(jt)))
+for t,c in jtc_known.most_common(20):
+    print('known {}: {:.4f}%'.format(t,c*100/len(jt_known)))
+for t,c in jtc_new.most_common(20):
+    print('new {}: {:.4f}%'.format(t,c*100/len(jt_new)))
 
 #get a noncanonical gene
 for g in isoseq:
@@ -185,7 +301,7 @@ stats.plot_altsplice(ttab,out_fn=out_fn+'_altsplice.png' )
 from pysam import TabixFile, AlignmentFile, FastaFile
 from Bio import pairwise2
 genome_fn='/project/42/references/GRCh38/hg38_chr_only.fa'
-genome=FastaFile(genome_fn)
+genome_fh=FastaFile(genome_fn)
 
 
 g=next(iter(isoseq))

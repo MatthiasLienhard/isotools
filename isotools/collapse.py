@@ -2,15 +2,16 @@
 
 import isotools.utils
 import isotools.splice_graph
+import logging
 
-def collapse_transcript_of_gene(gene, fuzzy_junction, repair_5truncation, repair_3trunkation, rename=False):    
+def collapse_transcript_of_gene(gene, fuzzy_junction):    
     collapsed=dict()
+
     if fuzzy_junction>0:
         try:
             isotools.splice_graph.unify_junctions_of_gene(gene, fuzzy_junction)
-        except Exception as e:
-            print(e)
-            print(gene)
+        except Exception:
+            logging.exception(str(gene))
             raise
     for i,(tr1_name, tr1) in enumerate(gene.data['transcripts'].items()):
         for tr2_name, tr2 in collapsed.items():
@@ -49,13 +50,14 @@ def merge_transcripts(tr1, tr2, new_name=None):
             merged['exons'].append( ( min(e1[0], e2[0]), max(e1[1], e2[1]) ) )
         elif e1[0]<e2[0]:
             merged['exons'].append(e1)
+            continue
         else:
             merged['exons'].append(e2)
-            try:
-                e2=next(e2iter)
-            except StopIteration:
-                merged['exons']+=[e for j,e in e1enum if j> i]
-                break
+        try:
+            e2=next(e2iter)
+        except StopIteration:
+            merged['exons']+=[e for j,e in e1enum if j> i]
+            break
     else:
         merged['exons'].append(e2)
         merged['exons']+=list(e2iter)
@@ -102,7 +104,7 @@ def is_truncation(exons1, exons2, debug=False):
             (last==len(exons1)-1) == (exons1[last][1] > exons2[relation[last][0][0]][1])):  #check the end of the shorter
         if debug: print('last exon of trunkated version is actually longer')
         return False
-    if last-first > 3 and any(relation[i][0][1]!=3 for i in range(first+1, last)): #
+    if last-first > 1 and any(relation[i][0][1]!=3 for i in range(first+1, last)): #
         if debug: print('intermediate exons do not fit')
         return False
     if debug: print('all filters passed')

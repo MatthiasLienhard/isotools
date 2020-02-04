@@ -3,20 +3,25 @@ import warnings
 from itertools import combinations
 import itertools
 import numpy as np
+import isotools.transcriptome
 import matplotlib.pyplot as plt
+#from .transcriptome import Gene
 
-
-def is_same_gene(tr1, tr2, spj_iou_th=0, reg_iou_th=0):
-    # current definition of "same gene": at least one shared splice site
-    # or at least 50% exonic overlap
+def is_same_gene(tr1, tr2, spj_iou_th=0, reg_iou_th=.5):
+    # current default definition of "same gene": at least one shared splice site
+    # or more than 50% exonic overlap
     spj_i, reg_i=get_intersects(tr1, tr2)
     total_spj=(len(tr1)+len(tr2)-2)*2
-    total_len=sum([e[1]-e[0] for e in tr2+tr1])
     spj_iou=spj_i/(total_spj-spj_i) if total_spj>0 else 0
+    if spj_iou>spj_iou_th:
+        return True
+    total_len=sum([e[1]-e[0] for e in tr2+tr1])
     reg_iou=reg_i/(total_len-reg_i)
-    if spj_iou>spj_iou_th or reg_iou>reg_iou_th:
+    if reg_iou>reg_iou_th:
         return True
     return False
+
+
 
 def junctions_from_read(read):
     exons = list([[read.reference_start, read.reference_start]])
@@ -68,10 +73,9 @@ def num_transcripts(genes):
     return sum([len(gene.data['transcripts']) for tree in genes.values() for gene in tree])
 
 def get_support(exons, ref_genes, chrom, is_reverse):
-    support = {'ref_gene': 'NA', 'ref_transcript': 'NA', 'ref_tss': 0, 'ref_pas': 0,
-                        'ref_len': 0, 'ref_nSJ': 0, 'exI': 0, 'sjI': 0, 'exIoU': 0, 'sjIoU': 0, 'sType': ['novel/unknown']}
+        
     if chrom not in ref_genes:
-        return support
+        return None
     ref_genes_ol = ref_genes[chrom][exons[0][0]: exons[-1][1]]
     support_dict = compute_support(ref_genes_ol, exons)
     try:
@@ -80,8 +84,11 @@ def get_support(exons, ref_genes, chrom, is_reverse):
             zip(support_dict['sjIoU'], support_dict['exIoU'])), key=lambda x: x[1])[0]
         # https://stackoverflow.com/questions/2474015/getting-the-index-of-the-returned-max-or-min-item-using-max-min-on-a-list
     except ValueError:
-        return support
+        return None
     else:
+        if support_dict['exIoU'][best_idx] <=0:
+            return None
+        support=dict()
         for n, v in support_dict.items():
             support[n]=v[best_idx]
         support["sType"]=get_alternative_splicing(support_dict, best_idx,exons, ref_genes_ol, is_reverse)
@@ -101,8 +108,8 @@ def get_alternative_splicing(support_dict, best_idx,exons, ref_genes_ol, is_reve
                     ref_exons, exons, is_reverse)
                 break
         else:
-            warnings.warn(
-                'cannot find the transcript -- this should never happen')
+            isotools.transcriptome.log.error('cannot find the transcript -- this should never happen')
+            raise ValueError
         covered_gene_ids = {id for id, iou in zip(
             support_dict['ref_gene'], support_dict['sjIoU']) if iou > 0}
         covered_genes = {
@@ -180,7 +187,7 @@ def check_isoseq_bam(ref_genes,bam_fn='/project/42/pacbio/hecatos_isoseq/05-gmap
                                 exons=junctions_from_read(read),
                                 is_reverse=read.is_reverse)
     return support
-'''
+
 def add_support(ref_genes, support, chrom, name, exons, is_reverse=False):
     support_default = {'ref_gene': 'NA', 'ref_transcript': 'NA', 'ref_tss': 0, 'ref_pas': 0,
                         'ref_len': 0, 'ref_nSJ': 0, 'exI': 0, 'sjI': 0, 'exIoU': 0, 'sjIoU': 0, 'sType': ['novel/unknown']}
@@ -244,7 +251,7 @@ def add_support(ref_genes, support, chrom, name, exons, is_reverse=False):
     else:
         for n, v in support_default.items():
             support.setdefault(n, []).append(v)
-
+'''
 def alt_splice_fraction(support=None):
     stype = dict(zip(support['name'], support['sType']))
     type_list = list(itertools.chain.from_iterable(stype.values()))
@@ -299,6 +306,8 @@ def compute_support(ref_genes, query_exons): #compute the support of all transcr
 def get_splice_type(ref, alt, is_reversed=False):
     if len(ref) == 0:
         return(['novel/unknown'])
+    if len(alt) ==1:
+        return['unspliced_fragment']
     types = ['alternative_donor', 'alternative_acceptor', 'alternative_promoter', 'alternative_polyA',
              'truncated5', 'truncated3', 'exon_skipping', 'novel_exon', 'gapped_exon', 'retained_intron']
     types = {t: [] for t in types}
@@ -319,11 +328,11 @@ def get_splice_type(ref, alt, is_reversed=False):
                                 for i, e in enumerate(alt) if i in novel-{0, len(alt)-1}]
     # if 0 not in novel and not types['novel_exon'] and len(relation[0]) == 0:
 
-    all_match = (len(novel) == 0 and 
-        all([len(rel) == 1 for rel in relation[first:(last+1)]]) and 
-        all([rel[0][1] == 3 for rel in relation[(first+1):last]]) and 
-        (relation[first][0][1] & 1) and 
-        (relation[last][0][1] & 2))
+    all_match = (len(novel) == 0 and #no novel alt exons
+        all([len(rel) == 1 for rel in relation[first:(last+1)]]) and #each alt exon corresponds to exactly one ref exon
+        all([rel[0][1] == 3 for rel in relation[(first+1):last]]) and #all but the first and last alt exons are the same
+        (relation[first][0][1] & 1) and #the first exon has matching second splice site
+        (relation[last][0][1] & 2)) #the last exon has matching first splice site
     if first > 0 and all_match:
         types['truncated3' if is_reversed else 'truncated5'].append(
             '{}-{}'.format(*alt[0]))
@@ -335,7 +344,7 @@ def get_splice_type(ref, alt, is_reversed=False):
         rel = relation[i]
         if len(rel) > 1:  # more than one alt exon for a ref exon
             types['gapped_exon'].append(
-                "~".join(['{}-{}'.format(*e) for e in ref]))
+                 "~".join(['{}-{}'.format(*alt[alt_i]) for alt_i, splice in rel]))
         if rel and i > first and relation[i-1] and rel[0][0] == relation[i-1][-1][0]:
             types['retained_intron'].append('{}-{}'.format(*alt[rel[0][0]]))
         # fst splice site does not correspond to any alt exon

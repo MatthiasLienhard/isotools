@@ -316,8 +316,9 @@ class Gene(Interval):
     
     def __repr__(self):
         return object.__repr__(self)
-
-    def add_filters(self, a_th=.5, rtts_maxcov=10, rtts_ratio=5):        
+    def add_filters(self, a_th=.5, rtts_maxcov=10, rtts_ratio=5):   
+        #possible filter flags: 'A_CONTENT','RTTS','NONCANONICAL_SPLICING','NOVEL_GENE','NOVEL_TRANSCRIPT','TRUNCATION'
+     
         novel_gene=all(tr['support'] is None for tr in self.transcripts)
         for tr in self.transcripts:
             tr_filter=[]
@@ -349,7 +350,7 @@ class Gene(Interval):
         for tri in idx:
             if any(f in self.transcripts[tri]['filter'] for f in flags) != invert:
                 filter_idx.append(tri)
-        return(tri)
+        return(filter_idx)
 
 
     def to_gtf(self, source='isoseq', use_gene_name=False, include=None, remove=None):

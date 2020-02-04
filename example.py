@@ -48,13 +48,14 @@ th=3
 n_tr=[sum(1 for g in isoseq for tr in g.transcripts if tr['nZMW']>=th) for th in range(2,20)]
 #[108065, 60834, 42257, 32714, 26986, 23193, 20379, 18250, 16592, 15230, 14137, 13183, 12395, 11723, 11114, 10544, 10075, 9665]
 #[367321, 218758, 156876, 123454, 102438, 88023, 77359, 69411, 62962, 57817, 53494, 49901, 46882, 44270, 41916, 39897, 38136, 36341]
-g=next(iter(isoseq))
-g.to_gtf()
+
+
 date='20200203'
 df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends' ,'all_canonical', 'grouped_nZMW','direct_repeat_len','template_switching','downstream_A_content','alt_splice','junction_type','truncation','filter'])
 df.to_csv(f'{out_path}/tables/isoseq_transcripts_{date}.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
 g_ids={g.id:[g.name] for g in isoseq}
-isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_{date}_test.gtf', use_gene_name=True, remove={'a_th':.5, 'truncation':True, 'rrts':True})
+#filter flags: 'A_CONTENT','RTTS','NONCANONICAL_SPLICING','NOVEL_GENE','NOVEL_TRANSCRIPT','TRUNCATION'
+isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_{date}_test.gtf', use_gene_name=True, remove={'A_CONTENT','RTTS','TRUNCATION'})
 isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_novel_{date}.gtf', use_gene_name=True, include={'novel':True}, remove={'a_th':.5, 'truncation':True, 'rrts':True})
 
 trunc=(g for g in isoseq if 'truncated5' in  g.data)

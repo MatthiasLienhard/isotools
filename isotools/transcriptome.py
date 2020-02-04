@@ -48,14 +48,10 @@ class Transcriptome:
         
     def write_gtf(self, fn, source='isotools',use_gene_name=False,  include=None, remove=None):     
         with open(fn, 'w') as f:     
-            firstline=True #fix to avoid a problematic newline at eof
             for gene in tqdm(self):
                 lines=gene.to_gtf(source=source,use_gene_name=use_gene_name, include=include, remove=remove)
                 if lines:
-                    if not firstline:
-                        _=f.write('\n')
-                    _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) ))
-                    firstline=False
+                    _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'/n')
 
     def write_table(self, fn, source='isotools'):     
         header=['id','name', 'chrom','strand','txStart','txEnd','exonCount','exonStarts','exonEnds']

@@ -15,7 +15,7 @@ import numpy as np
 out_path='/project/42/pacbio/hecatos_isoseq'
 
 isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-align/all_aligned_200129.sorted.bam'
-isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-align/Control_aligned.sorted.bam'
+#isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-align/Control_aligned.sorted.bam'
 
 #isoseq_fn='/project/42/pacbio/hecatos_isoseq/06-collapse/all_isoseq_collapsed.gff'
 refseq_fn='/project/42/references/refseq/RefSeq_GRCh38_20181116_sorted.gff.gz'
@@ -33,8 +33,8 @@ with open('refseq.pkl', 'rb') as f:
 #todo: remove/mark fusion genes in reference
 
 chrom=[str(i+1)for i in range(22)]+['X','Y']
-groups=[['m54070_190315_132401','m54070_190318_123927','m54070_190319_090034','m54070_190320_052230','m64080_200120_120529'], #
-        ['m54070_190316_094451','m54070_190321_014433','m54070_190321_220654','m54070_190322_182901','m64080_200120_120529']]  #treatmentm64080_200121_181850
+groups=[['m54070_190315_132401','m54070_190318_123927','m54070_190319_090034','m54070_190320_052230','m64080_200120_120529'], #control
+        ['m54070_190316_094451','m54070_190321_014433','m54070_190321_220654','m54070_190322_182901','m64080_200120_120529']]  #treatment
 isoseq=Transcriptome(pacbio_fn=isoseq_bam_fn,ref=reference, chromosomes=chrom, groups=groups)
 isoseq.find_truncations()
 isoseq.find_biases(genome_fn) #this looks up junction types, direct repeats at junctions and downstream genomic a content
@@ -52,11 +52,20 @@ n_tr=[sum(1 for g in isoseq for tr in g.transcripts if tr['nZMW']>=th) for th in
 
 date='20200203'
 df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends' ,'all_canonical', 'grouped_nZMW','direct_repeat_len','template_switching','downstream_A_content','alt_splice','junction_type','truncation','filter'])
+df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends', 'grouped_nZMW','alt_splice','filter'])
 df.to_csv(f'{out_path}/tables/isoseq_transcripts_{date}.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
 g_ids={g.id:[g.name] for g in isoseq}
 #filter flags: 'A_CONTENT','RTTS','NONCANONICAL_SPLICING','NOVEL_GENE','NOVEL_TRANSCRIPT','TRUNCATION'
 isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_{date}_test.gtf', use_gene_name=True, remove={'A_CONTENT','RTTS','TRUNCATION'})
-isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_novel_{date}.gtf', use_gene_name=True, include={'novel':True}, remove={'a_th':.5, 'truncation':True, 'rrts':True})
+isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_novel_{date}.gtf', use_gene_name=True, include={'NOVEL_TRANSCRIPT'}, remove={'A_CONTENT','RTTS','TRUNCATION'})
+with open(f'{out_path}/tables/refseq_transcripts.gtf', 'w')as f:
+    for c, t in isoseq.reference.items():
+        if c in chrom:
+            for g in t:
+                lines=g.to_gtf(source='RefSeq',use_gene_name=True)
+                _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
+
+
 
 trunc=(g for g in isoseq if 'truncated5' in  g.data)
 

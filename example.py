@@ -15,7 +15,7 @@ import numpy as np
 out_path='/project/42/pacbio/hecatos_isoseq'
 
 isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-align/all_aligned_200129.sorted.bam'
-#isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-align/Control_aligned.sorted.bam'
+isoseq_bam_fn='/project/42/pacbio/hecatos_isoseq/05-align/Control_aligned.sorted.bam'
 
 #isoseq_fn='/project/42/pacbio/hecatos_isoseq/06-collapse/all_isoseq_collapsed.gff'
 refseq_fn='/project/42/references/refseq/RefSeq_GRCh38_20181116_sorted.gff.gz'
@@ -38,6 +38,8 @@ groups=[['m54070_190315_132401','m54070_190318_123927','m54070_190319_090034','m
 isoseq=Transcriptome(pacbio_fn=isoseq_bam_fn,ref=reference, chromosomes=chrom, groups=groups)
 isoseq.find_truncations()
 isoseq.find_biases(genome_fn) #this looks up junction types, direct repeats at junctions and downstream genomic a content
+
+isoseq.add_filters()
 
 sum(g.n_transcripts for g in isoseq)#367321
 sum(g.n_transcripts-(len(g.data['truncated5']) if 'truncated5' in  g.data else 0) for g in isoseq)#276633

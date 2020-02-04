@@ -338,7 +338,7 @@ class Gene(Interval):
                     tr_filter.append('NOVEL_TRANSCRIPT')
             tr['filter']=tr_filter
         if 'truncated5' in self.data:    
-            for tr_idx in self.transcripts['truncated5']:
+            for tr_idx in self.data['truncated5']:
                 self.transcripts[tr_idx]['filter'].append('TRUNCATION')
 
     

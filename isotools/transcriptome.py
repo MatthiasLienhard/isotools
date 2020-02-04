@@ -323,47 +323,31 @@ class Gene(Interval):
     def __repr__(self):
         return object.__repr__(self)
 
-    def filter_flags(self, a_th=.5, flag_truncation=True,flag_rtts=False, flag_novel=False, flag_known=False, flag_ncsj=False):
-        gene_filter=[]
+    def add_filters(self, a_th=.5, rtts_maxcov=10, rtts_ratio=5):
+        
+        novel_gene=all(tr['support'] is None for tr in self.transcripts)
         for tr in self.transcripts:
             tr_filter=[]
             if tr['downstream_A_content']>a_th:
                 tr_filter.append('A_CONTENT')
-            if flag_rtts:
-                pass
-            if flag_ncsj:
-                if any(jt!='GTAG' for jt in tr['junction_type']):
-                    tr_filter.append('NONCANONICAL_SPLICING')
-            if flag_novel:
-                if tr['support'] is None or tr['support']['exIoU']==0:
-                    tr_filter.append('NOVEL')
-            if flag_known:
-                if tr['support'] is not None and tr['support']['exIoU']>0:
-                    tr_filter.append('KNOWN')
-            gene_filter.append(tr_filter)
-        if flag_truncation and 'truncated5' in self.data:    
-            for tr_idx in self.transcripts['truncated5']:
-                gene_filter[tr_idx].append('TRUNCATION')
-        return(gene_filter)
+            for ts in tr['template_switching']:
+                s, l=(int(i) for i in ts[ts.rfind(':')+1:].split('/',1))
+                if s<rtts_maxcov and l/s>rtts_ratio:
+                    tr_filter.append('RTTS')
+                    break
 
-    def filter_transcripts(self, idx=None, a_th=0,rtts=False, truncation=False, novel=False, ncsj=False, invert=False):
-        #returns a list (generator) of transcript idx, which pass all filters
-        #does not check for presence of metrics
-        if idx is None:
-            idx=range(self.n_transcripts)
-        for i in idx:
-            tr=self.transcripts[i]
-            if ((truncation and 'truncated5' in self.data and i in self.data['truncated5']) or
-                (a_th and tr['downstream_A_content']>a_th) or
-                (rtts and 'template_switching' in tr) or 
-                (ncsj and any(jt!='GTAG' for jt in tr['junction_type'])) or
-                (novel and (tr['support'] is None or tr['support']['exIoU']>0))):
-                if not invert:
-                    yield i
-                else:
-                    continue
-            if invert:
-                yield i 
+            if any(jt!='GTAG' for jt in tr['junction_type']):
+                tr_filter.append('NONCANONICAL_SPLICING')
+            if novel_gene:
+                tr_filter.append('NOVEL_GENE')
+            elif tr['support'] is None or 'splice_identical' not in tr['support']['sType']:
+                    tr_filter.append('NOVEL_TRANSCRIPT')
+            tr['filter']=tr_filter
+        if 'truncated5' in self.data:    
+            for tr_idx in self.transcripts['truncated5']:
+                self.transcripts[tr_idx]['filter'].append('TRUNCATION')
+
+    
 
     def to_gtf(self, source='isoseq', use_gene_name=False, include=None, remove=None):
         include_tr=range(self.n_transcripts)

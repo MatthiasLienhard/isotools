@@ -51,7 +51,7 @@ n_tr=[sum(1 for g in isoseq for tr in g.transcripts if tr['nZMW']>=th) for th in
 g=next(iter(isoseq))
 g.to_gtf()
 date='20200203'
-df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends' ,'all_canonical', 'grouped_nZMW','direct_repeat_len','template_switching','downstream_A_content','alt_splice','junction_type','truncation'])
+df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends' ,'all_canonical', 'grouped_nZMW','direct_repeat_len','template_switching','downstream_A_content','alt_splice','junction_type','truncation','filter'])
 df.to_csv(f'{out_path}/tables/isoseq_transcripts_{date}.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
 g_ids={g.id:[g.name] for g in isoseq}
 isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_{date}_test.gtf', use_gene_name=True, remove={'a_th':.5, 'truncation':True, 'rrts':True})

@@ -317,8 +317,7 @@ class Gene(Interval):
     def __repr__(self):
         return object.__repr__(self)
 
-    def add_filters(self, a_th=.5, rtts_maxcov=10, rtts_ratio=5):
-        
+    def add_filters(self, a_th=.5, rtts_maxcov=10, rtts_ratio=5):        
         novel_gene=all(tr['support'] is None for tr in self.transcripts)
         for tr in self.transcripts:
             tr_filter=[]
@@ -341,14 +340,24 @@ class Gene(Interval):
             for tr_idx in self.data['truncated5']:
                 self.transcripts[tr_idx]['filter'].append('TRUNCATION')
 
-    
+    def filter_transcripts(self, flags,idx=None, invert=False):
+        #invert=false: transcripts must have at least one of the flags
+        #invert=True: transcripts must not have one of the flags
+        if idx is None:
+            idx=range(self.n_transcripts)
+        filter_idx=list()
+        for tri in idx:
+            if any(f in self.transcripts[tri]['filter'] for f in flags) != invert:
+                filter_idx.append(tri)
+        return(tri)
+
 
     def to_gtf(self, source='isoseq', use_gene_name=False, include=None, remove=None):
         include_tr=range(self.n_transcripts)
         if include is not None:
-            include_tr=self.filter_transcripts(idx=include_tr, **include)
+            include_tr=self.filter_transcripts(idx=include_tr, flags=include)
         if remove is not None:
-            include_tr=self.filter_transcripts(idx=include_tr, **remove, invert=True)
+            include_tr=self.filter_transcripts(idx=include_tr, flags=remove, invert=True)
         include_tr=list(include_tr)
         lines=list()
         if not include_tr:
@@ -468,6 +477,11 @@ class Gene(Interval):
     def _get_value(self, tidx, what):
         if what=='length':
             return sum((e-b for b,e in self.transcripts[tidx]['exons'])),#return a tuple (hence the comma)
+        if what=='filter':
+            if self.transcripts[tidx]['filter']:
+                return ','.join(self.transcripts[tidx]['filter']),
+            else:
+                return 'PASS',
         elif what=='n_exons':
             return len(self.transcripts[tidx]['exons']),
         elif what=='exon_starts':

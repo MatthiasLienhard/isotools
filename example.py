@@ -50,14 +50,17 @@ n_tr=[sum(1 for g in isoseq for tr in g.transcripts if tr['nZMW']>=th) for th in
 #[367321, 218758, 156876, 123454, 102438, 88023, 77359, 69411, 62962, 57817, 53494, 49901, 46882, 44270, 41916, 39897, 38136, 36341]
 
 
-date='20200203'
-df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends' ,'all_canonical', 'grouped_nZMW','direct_repeat_len','template_switching','downstream_A_content','alt_splice','junction_type','truncation','filter'])
-df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends', 'grouped_nZMW','alt_splice','filter'])
-df.to_csv(f'{out_path}/tables/isoseq_transcripts_{date}.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
-g_ids={g.id:[g.name] for g in isoseq}
+date='20200204'
+df1=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends' ,'all_canonical', 'grouped_nZMW','direct_repeat_len','template_switching','downstream_A_content','alt_splice','junction_type','truncation','filter'])
+df2=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends', 'grouped_nZMW','alt_splice','filter'])
+df1.to_csv(f'{out_path}/tables/isoseq_transcripts_allinfos_{date}.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
+df2.to_csv(f'{out_path}/tables/isoseq_transcripts_{date}.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
+
 #filter flags: 'A_CONTENT','RTTS','NONCANONICAL_SPLICING','NOVEL_GENE','NOVEL_TRANSCRIPT','TRUNCATION'
 isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_{date}_test.gtf', use_gene_name=True, remove={'A_CONTENT','RTTS','TRUNCATION'})
-isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_novel_{date}.gtf', use_gene_name=True, include={'NOVEL_TRANSCRIPT'}, remove={'A_CONTENT','RTTS','TRUNCATION'})
+isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_novel_transcripts_{date}.gtf', use_gene_name=True, include={'NOVEL_TRANSCRIPT', 'NOVEL_GENE'}, remove={'A_CONTENT','RTTS','TRUNCATION'})
+isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_novel_gene_{date}.gtf', use_gene_name=True, include={'NOVEL_GENE'}, remove={'A_CONTENT','RTTS','TRUNCATION'})
+
 with open(f'{out_path}/tables/refseq_transcripts.gtf', 'w')as f:
     for c, t in isoseq.reference.items():
         if c in chrom:

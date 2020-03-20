@@ -997,7 +997,8 @@ def splice_identical(tr1, tr2):
 def get_support(exons, ref_genes, chrom, is_reverse):        
     if chrom not in ref_genes:
         return None
-    ref_genes_ol = ref_genes[chrom][exons[0][0]: exons[-1][1]]
+    strand='-' if is_reverse else '+'
+    ref_genes_ol = [g for g in ref_genes[chrom][exons[0][0]: exons[-1][1]] if g.strand==strand]
     #compute support for all transcripts of overlapping genes
     support_dict, novel_sj1, novel_sj2 = compute_support(ref_genes_ol, exons)
     #chose the best transcript

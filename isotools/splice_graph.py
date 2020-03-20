@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from intervaltree import IntervalTree, Interval
 from tqdm import tqdm
 import logging
+import scipy.stats as stats
 
 import isotools.transcriptome
 
@@ -88,8 +89,7 @@ class SpliceGraph():
         exons.reverse()
         return exons
 
-    def find_ts_candidates(self):
-        
+    def find_ts_candidates(self):        
         for i, gnode in enumerate(self._graph[:-1]):
             if self._graph[i+1].begin==gnode.end: #jump candidates: introns that start within an exon
                 jumps={idx:n for idx,n in gnode.suc.items() if n>i+1 and self._graph[n].begin==self._graph[n-1].end}
@@ -104,7 +104,58 @@ class SpliceGraph():
                     long_idx=set(idx for idx,n in gnode.suc.items() if n==i+1) & set(idx for idx,n in self[target].pre.items() if n==target-1)
                     longer_weight=sum(self.weights[i] for i in long_idx)
                     yield gnode.end, self[target].begin,w, longer_weight, idx
+        
+    def splice_dependence(self, pval_th=0.05, min_sum=10):
+        #starts[i]: list with paths that join at node i
+        #end[i]: list with paths that split at node i
+        # the lists contain tupels (i, [trids]) where i is the neighbour exon number (-1 at tss/pas) and a list of transcript numbers
+        n=len(self)
+        starts=[list() for _ in range(n)]
+        ends=[list() for _ in range(n)]
+        for i, gnode in enumerate(self):
+            if i in self._tss: 
+                starts[i].append((-1, [j for j,v in enumerate(self._tss) if v==i]))
+            if i in self._pas: 
+                ends[i].append((-1, [j for j,v in enumerate(self._pas) if v==i]))
+            starts[i].extend([(j, [k for k in gnode.pre if gnode.pre[k]==j]) for j in set(gnode.pre.values())])
+            ends[i].extend([(j, [k for k in gnode.suc if gnode.suc[k]==j]) for j in set(gnode.suc.values())])
+        found=list()
+        #test independence of starts[i] and ends[j] for i,j where i>=j
+        for i in range(len(starts)):
+            for j in range(i,len(ends)):
+                if len(starts[i])>1 and len(ends[j])>1:#there are options at both i and j   
+                    ma=np.zeros((len(starts[i]),len(ends[j]))) #the contingency table
+                    for ix, st in enumerate(starts[i]):
+                        for iy, en in enumerate(ends[j]):
+                            ma[ix][iy]=sum(self.weights[k] for k in st[1] if k in en[1]) #sum the weight for the test
                     
+                    #fisher test requires 2x2 tables, and filter by row and colum sum
+                    ix=[i for i,s in enumerate(ma.sum(axis=1)) if s > min_sum]
+                    iy=[i for i,s in enumerate(ma.sum(axis=0)) if s > min_sum]
+                    for ixpair in combinations(ix, 2):
+                        for iypair in combinations(iy, 2):     
+                            subma=  ma[np.ix_(ixpair, iypair)]
+                            if any(subma.sum(0)<min_sum) or any(subma.sum(1)<min_sum):
+                                continue
+                            oddsratio, pvalue = stats.fisher_exact(subma)
+                    #fisher test requires 2x2 tables, and filter by row and colum sum
+                    ix=[i for i,s in enumerate(ma.sum(axis=1)) if s > min_sum]
+                    iy=[i for i,s in enumerate(ma.sum(axis=0)) if s > min_sum]
+                    for ixpair in combinations(ix, 2):
+                        for iypair in combinations(iy, 2):     
+                            subma=  ma[np.ix_(ixpair, iypair)]
+                            if any(subma.sum(0)<min_sum) or any(subma.sum(1)<min_sum):
+                                continue
+                            oddsratio, pvalue = stats.fisher_exact(subma)
+                            if pvalue<pval_th:
+                                #print(f'found {i}:{starts[i]} vs {j}:{ends[j]}\n{ma}\n:p={pvalue}\n-------')
+                                alt_from=['tss' if k == -1 else self[k].end for k,_ in [starts[i][idx] for idx in ixpair]]
+                                alt_to=['pas' if k == -1 else self[k].begin for k,_ in [ends[j][idy] for idy in iypair]]
+                                found.append((pvalue,subma, alt_from,self[i].begin,self[j].end,alt_to))
+        return found
+            
+
+
 
 
     '''

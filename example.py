@@ -41,6 +41,16 @@ isoseq.find_biases(genome_fn) #this looks up junction types, direct repeats at j
 
 isoseq.add_filters()
 
+#for g in isoseq:
+#    assert all(tr['strand']==g.strand for tr in g.transcripts)
+
+
+for i,g in tqdm(enumerate(isoseq)):
+    g.data['splice_dependence']=g.data['splice_graph'].splice_dependence()
+    if i>100:
+        break
+
+
 sum(g.n_transcripts for g in isoseq)#367321
 sum(g.n_transcripts-(len(g.data['truncated5']) if 'truncated5' in  g.data else 0) for g in isoseq)#276633
 
@@ -53,13 +63,14 @@ n_tr=[sum(1 for g in isoseq for tr in g.transcripts if tr['nZMW']>=th) for th in
 date='20200204'
 df1=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends' ,'all_canonical', 'grouped_nZMW','direct_repeat_len','template_switching','downstream_A_content','alt_splice','junction_type','truncation','filter'])
 df2=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends', 'grouped_nZMW','alt_splice','filter'])
-df1.to_csv(f'{out_path}/tables/isoseq_transcripts_allinfos_{date}.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
-df2.to_csv(f'{out_path}/tables/isoseq_transcripts_{date}.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
+filename=f'{out_path}/06-isotools/isotools_all_merged_{date}'
+df1.to_csv(filename+'_allinfos.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
+df2.to_csv(filename+'.table', sep='\t',quoting=3, index=False) #3==QUOTE_NONE
 
 #filter flags: 'A_CONTENT','RTTS','NONCANONICAL_SPLICING','NOVEL_GENE','NOVEL_TRANSCRIPT','TRUNCATION'
-isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_{date}_test.gtf', use_gene_name=True, remove={'A_CONTENT','RTTS','TRUNCATION'})
-isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_novel_transcripts_{date}.gtf', use_gene_name=True, include={'NOVEL_TRANSCRIPT', 'NOVEL_GENE'}, remove={'A_CONTENT','RTTS','TRUNCATION'})
-isoseq.write_gtf(f'{out_path}/tables/isoseq_transcripts_filtered_novel_gene_{date}.gtf', use_gene_name=True, include={'NOVEL_GENE'}, remove={'A_CONTENT','RTTS','TRUNCATION'})
+isoseq.write_gtf(filename+'_filtered.gtf', use_gene_name=True, remove={'A_CONTENT','RTTS','TRUNCATION'})
+isoseq.write_gtf(filename+'_filtered_novel_transcripts.gtf', use_gene_name=True, include={'NOVEL_TRANSCRIPT', 'NOVEL_GENE'}, remove={'A_CONTENT','RTTS','TRUNCATION'})
+isoseq.write_gtf(filename+'_filtered_novel_genes.gtf', use_gene_name=True, include={'NOVEL_GENE'}, remove={'A_CONTENT','RTTS','TRUNCATION'})
 
 with open(f'{out_path}/tables/refseq_transcripts.gtf', 'w')as f:
     for c, t in isoseq.reference.items():

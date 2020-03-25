@@ -778,7 +778,7 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
             #genes[chrom][start:end] = info
             gene_set.add(info['ID'])
             genes[chrom].add(Gene(start,end,info))
-        elif all([v in info for v in ['Parent', "ID", 'Name']]) and info['Parent'].startswith('gene'):# those denote transcripts
+        elif all([v in info for v in ['Parent', "ID", 'Name']]) and ls[2] == 'transcript' or info['Parent'].startswith('gene'):# those denote transcripts
             transcripts.setdefault(info["Parent"], list()).append(
                 (info["Name"], info["ID"]))
         else:

@@ -778,9 +778,8 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
             #genes[chrom][start:end] = info
             gene_set.add(info['ID'])
             genes[chrom].add(Gene(start,end,info))
-        elif all([v in info for v in ['Parent', "ID", 'Name']]) and ls[2] == 'transcript' or info['Parent'].startswith('gene'):# those denote transcripts
-            transcripts.setdefault(info["Parent"], list()).append(
-                (info["Name"], info["ID"]))
+        elif all([v in info for v in ['Parent', "ID"]]) and ls[2] == 'transcript' or info['Parent'].startswith('gene'):# those denote transcripts
+            transcripts.setdefault(info["Parent"], list()).append( info["ID"])
         else:
             skipped.add(ls[2])
     if skipped:
@@ -800,13 +799,13 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
     for chrom in genes:
         for gene in genes[chrom]:
             g_id = gene.data['ID']
-            t_ids = transcripts.get(g_id, [(gene.id, g_id)])
-            for t_name, t_id in t_ids:
+            t_ids = transcripts.get(g_id,  g_id)
+            for t_id in t_ids:
                 try:
-                    gene.data.setdefault('transcripts', list()).append({'ID':t_id,'Name':t_name, 'exons':exons[t_id]})
+                    gene.data.setdefault('transcripts', list()).append({'ID':t_id,'exons':exons[t_id]})
                 except KeyError:
                     # genes without transcripts get a single exons transcript
-                    gene.data['transcripts'] = [{'ID':t_id,'Name':t_name,'exons':[tuple(gene[:2])]}]
+                    gene.data['transcripts'] = [{'ID':t_id,'exons':[tuple(gene[:2])]}]
     return genes
 
 def get_gff_chrom_dict(gff, chromosomes):

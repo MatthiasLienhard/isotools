@@ -28,17 +28,18 @@ log.addHandler(log_stream)
 
 
 class Transcriptome:
-    def __init__(self, pacbio_fn,ref_fn=None,ref=None,  chromosomes=None, groups=None):
+    def __init__(self, pacbio_fn,ref_fn=None,ref=None,  chromosomes=None,groups=None, **kwargs):
         self._idx=dict()
         self.pacbio_fn=pacbio_fn
         self.chrom=chromosomes
+        self.groups=groups
         if ref is not None:
             self.reference=ref
         else:
             log.info('reading reference annotation from {}'.format(ref_fn))
             self.reference=import_transcripts(ref_fn, chromosomes=chromosomes)
         log.info('reading pacbio transcripts from {}'.format(pacbio_fn))
-        transcripts=self.import_pacbio_transcripts(groups=groups)
+        transcripts=self.import_pacbio_transcripts(groups=groups, **kwargs)
         log.info('annotating pacbio transcripts')
         self.data, novel=self.collapse_to_refgenes(transcripts)
         log.info('find genes for novel transcripts')
@@ -51,7 +52,7 @@ class Transcriptome:
             for gene in tqdm(self):
                 lines=gene.to_gtf(source=source,use_gene_name=use_gene_name, include=include, remove=remove)
                 if lines:
-                    _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'/n')
+                    _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
 
     def write_table(self, fn, source='isotools'):     
         header=['id','name', 'chrom','strand','txStart','txEnd','exonCount','exonStarts','exonEnds']
@@ -122,8 +123,9 @@ class Transcriptome:
         return (gene for tree in self.data.values() for gene in tree)
 
     
-    def import_pacbio_transcripts(self, groups=None):
+    def import_pacbio_transcripts(self, groups=None, group_type='run'):
         n_chimeric=0
+        n_secondary=0
         with AlignmentFile(self.pacbio_fn, "rb") as align:        
             stats = align.get_index_statistics()
             # try catch if sam/ no index
@@ -137,11 +139,15 @@ class Transcriptome:
                         group_nr.setdefault(run, [])
                         group_nr[run].append(i)
             transcripts={c:[] for c in self.chrom}
+            fusion=dict()
             for read in tqdm(align, total=total_reads, unit='transcripts'):
-                if read.flag & 0x800:
+                if read.flag & 0x100:
+                    n_secondary+=1
+                    continue # use only primary alignments
+                #if read.flag & 0x800:
                     #print(f"skipping chimeric read {read.query_name}")
-                    n_chimeric+=1
-                    continue #todo: include chimeric reads!
+                    #n_chimeric+=1
+                    #continue #todo: include chimeric reads!
                 chrom = read.reference_name
                 if chrom not in self.chrom:
                     continue
@@ -153,17 +159,39 @@ class Transcriptome:
 
 
                 info={'strand':strand, 'chr':chrom,
-                        'ID':read.query_name,'exons':exons,'source':[read.query_name], 'nZMW':tags['is']}
+                        'ID':read.query_name,'exons':exons,'source':[read.query_name], 'nZMW':tags['is'], 'source_len':len(read.seq), 'cigar':read.cigarstring}
+                
                 if groups is not None:
                     cov=[0]* len(groups)
-                    for read_id in tags['im'].split(','):
-                        run=read_id[:read_id.find('/')]
-                        if run in group_nr:
-                            for grp in group_nr[run]:
-                                cov[grp]+=1
+                    if group_type=='run':
+                        for read_id in tags['im'].split(','):
+                            run=read_id[:read_id.find('/')]
+                            if run in group_nr:
+                                for grp in group_nr[run]:
+                                    cov[grp]+=1
+                    elif group_type=='barcode':
+                        for bcs in tags['ib'].split(';'):#barcode summary
+                            bc,_,n=bcs.rpartition(',')
+                            if bc in group_nr:
+                                for grp in group_nr[bc]:
+                                    cov[grp]+=int(n)
                     info['grouped_nZMW']='/'.join(str(c) for c in cov)
-                transcripts[chrom].append( info)      
-        print(f"skipped {n_chimeric} chimeric transcripts {n_chimeric/total_reads*100}%")
+                if read.flag & 0x800:
+                    info['SA']=True
+                if 'SA'  in tags:
+                    fusion.setdefault(read.query_name, []).append(info) 
+                if not read.flag & 0x800:                    
+                    transcripts[chrom].append( info)      
+        for tid,chimeric in fusion.items():
+            try:
+                primary=[i for i in chimeric if 'SA' not in i][0]
+            except IndexError:
+                print(f'supplementary alignment without primary: {tid}')
+                #raise
+            else:
+                primary['fusion']=[i for i in chimeric if 'SA' in i]
+        if n_secondary>0:
+            print(f"skipped {n_secondary} secondary transcripts {n_secondary/total_reads*100}%")
         return transcripts
        
     '''
@@ -236,7 +264,7 @@ class Transcriptome:
             extra_columns=[]
         if not isinstance( extra_columns, list):
             raise ValueError('extra_columns should be provided as list')
-        extracolnames={'alt_splice':('splice_IoU', 'base_IoU','splice_type')}        
+        extracolnames={'alt_splice':('splice_IoU', 'base_IoU','splice_type'),'grouped_nZMW':(f'nZMW_{i}' for i in range(len(self.groups)))}        
         colnames=['chr', 'begin', 'end','strand','transcript_name', 'gene_name' ]     + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
         rows=[(g.chrom, g.begin, g.end, g.strand, tr['ID'], g.name)+g.get_values(tidx,extra_columns) for g in  self.get_genes(region) for tidx, tr in enumerate(g.transcripts)]
         df = pd.DataFrame(rows, columns=colnames)
@@ -320,6 +348,8 @@ class Gene(Interval):
             tr_filter=[]
             if tr['downstream_A_content']>a_th:
                 tr_filter.append('A_CONTENT')
+            if abs(tr['source_len'] - sum(e-s for s,e in tr['exons']))/tr['source_len']>.1:
+                tr_filter.append('CLIPPED_ALIGNMENT')
             if 'template_switching' in tr:
                 for ts in tr['template_switching']:
                     s, l=(int(i) for i in ts[ts.rfind(':')+1:].split('/',1))
@@ -437,7 +467,7 @@ class Gene(Interval):
                 pos=tr['exons'][-1][1]
             else:
                 pos=tr['exons'][0][0]-length
-            seq=genome_fh.fetch(self.chrom, pos, pos+length) #whatif pos<0?
+            seq=genome_fh.fetch(self.chrom, max(0,pos), pos+length) 
             if self.strand=='+':
                 tr['downstream_A_content']=seq.upper().count('A')/length
             else:
@@ -504,7 +534,8 @@ class Gene(Interval):
 
                 vals=(support['sjIoU'],support['exIoU'],type_string)
                 return(vals)
-        #elif what==
+        elif what=='grouped_nZMW':
+            return(self.transcripts[tidx]['grouped_nZMW'].split('/'))
         #todo: splice junction type list
         # intron template switching scores
         elif what in self.transcripts[tidx]:
@@ -778,7 +809,7 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
             #genes[chrom][start:end] = info
             gene_set.add(info['ID'])
             genes[chrom].add(Gene(start,end,info))
-        elif all([v in info for v in ['Parent', "ID"]]) and ls[2] == 'transcript' or info['Parent'].startswith('gene'):# those denote transcripts
+        elif all([v in info for v in ['Parent', "ID"]]) and (ls[2] == 'transcript' or info['Parent'].startswith('gene')):# those denote transcripts
             transcripts.setdefault(info["Parent"], list()).append( info["ID"])
         else:
             skipped.add(ls[2])

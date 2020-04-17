@@ -8,21 +8,29 @@ import pandas as pd
 import numpy as np
 #from Bio import SeqIO, Seq, SeqRecord
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
 from intervaltree import IntervalTree, Interval
 from tqdm import tqdm
 import logging
 import scipy.stats as stats
-
+from math import log10,pi
 import isotools.transcriptome
 
 
+def overlap(pos1,pos2,width, height):
+    if abs(pos1[0]-pos2[0])<width and abs(pos1[1]-pos2[1])<height:
+        return True
+    return False
 
 class SpliceGraph():
     def __init__(self, exons, end=None, weights=None):      
         if isinstance(exons,isotools.transcriptome.Gene):
-            weights=[tr['nZMW'] for tr in exons.transcripts]
+            #end=exons.end ?uncomment to increase performance
+            weights=np.array([tr['coverage'] for tr in exons.transcripts]).swapaxes(0,1)
             exons=[tr['exons'] for tr in exons.transcripts]
-            
+        if weights is None:
+            weights=np.ones((1,len(exons)))
         self.weights=weights
         if end is None:
             end=max((e[-1][1] for e in exons))
@@ -41,34 +49,34 @@ class SpliceGraph():
                 self._graph.append(SpliceGraphNode(start, boundaries[i+1]))
 
         #get the links
-        begin_idx={node.begin:i for i,node in enumerate(self._graph)}
+        start_idx={node.start:i for i,node in enumerate(self._graph)}
         end_idx={node.end:i for i,node in enumerate(self._graph)}
         
-        self._tss=[begin_idx[e[0][0]] for e in exons]
+        self._tss=[start_idx[e[0][0]] for e in exons]
         self._pas=[end_idx[e[-1][1]] for e in exons]
 
         for i,tr in enumerate(exons):
             for j,e in enumerate(tr):
-                if begin_idx[e[0]]<end_idx[e[1]]: # psydojuctions within exon
-                    self._graph[begin_idx[e[0]]].suc[i]=begin_idx[e[0]]+1
+                if start_idx[e[0]]<end_idx[e[1]]: # psydojuctions within exon
+                    self._graph[start_idx[e[0]]].suc[i]=start_idx[e[0]]+1
                     self._graph[end_idx[e[1]]].pre[i]=end_idx[e[1]]-1
-                    for node_idx in range(begin_idx[e[0]]+1,end_idx[e[1]]):
+                    for node_idx in range(start_idx[e[0]]+1,end_idx[e[1]]):
                         self._graph[node_idx].suc[i]=node_idx+1
                         self._graph[node_idx].pre[i]=node_idx-1
                 if j<len(tr)-1:# real junctions
                     e2=tr[j+1]
-                    self._graph[end_idx[e[1]]].suc[i]=begin_idx[e2[0]]
-                    self._graph[begin_idx[e2[0]]].pre[i]=end_idx[e[1]]
+                    self._graph[end_idx[e[1]]].suc[i]=start_idx[e2[0]]
+                    self._graph[start_idx[e2[0]]].pre[i]=end_idx[e[1]]
                     
     def restore(self, i):    #mainly for testing    
         idx=self._tss[i]
-        exons=[[self._graph[idx].begin, self._graph[idx].end]]
+        exons=[[self._graph[idx].start, self._graph[idx].end]]
         while True:
             idx=self._graph[idx].suc[i]
-            if self._graph[idx].begin==exons[-1][1]:#extend
+            if self._graph[idx].start==exons[-1][1]:#extend
                 exons[-1][1]=self._graph[idx].end
             else:
-                exons.append([self._graph[idx].begin, self._graph[idx].end])
+                exons.append([self._graph[idx].start, self._graph[idx].end])
             #print(exons)
             if idx == self._pas[i]:
                 break
@@ -76,13 +84,13 @@ class SpliceGraph():
 
     def restore_reverse(self, i):       #mainly for testing     
         idx=self._pas[i]
-        exons=[[self._graph[idx].begin, self._graph[idx].end]]
+        exons=[[self._graph[idx].start, self._graph[idx].end]]
         while True:
             idx=self._graph[idx].pre[i]
             if self._graph[idx].end==exons[-1][0]:#extend
-                exons[-1][0]=self._graph[idx].begin
+                exons[-1][0]=self._graph[idx].start
             else:
-                exons.append([self._graph[idx].begin, self._graph[idx].end])
+                exons.append([self._graph[idx].start, self._graph[idx].end])
             #print(exons)
             if idx == self._tss[i]:
                 break
@@ -91,19 +99,23 @@ class SpliceGraph():
 
     def find_ts_candidates(self):        
         for i, gnode in enumerate(self._graph[:-1]):
-            if self._graph[i+1].begin==gnode.end: #jump candidates: introns that start within an exon
-                jumps={idx:n for idx,n in gnode.suc.items() if n>i+1 and self._graph[n].begin==self._graph[n-1].end}
+            if self._graph[i+1].start==gnode.end: #jump candidates: introns that start within an exon
+                jumps={idx:n for idx,n in gnode.suc.items() if n>i+1 and self._graph[n].start==self._graph[n-1].end}
                 #find jumps (n>i+1) and check wether they end within an exon begin(jumptarget)==end(node before)
                 jump_weight={}
                 for idx, target in jumps.items():
                     jump_weight.setdefault(target, [0,[]])
-                    jump_weight[target][0]+=self.weights[idx]
+                    jump_weight[target][0]+=self.weights[:,idx].sum(0)
                     jump_weight[target][1].append(idx)
 
                 for target, (w,idx) in jump_weight.items():
                     long_idx=set(idx for idx,n in gnode.suc.items() if n==i+1) & set(idx for idx,n in self[target].pre.items() if n==target-1)
-                    longer_weight=sum(self.weights[i] for i in long_idx)
-                    yield gnode.end, self[target].begin,w, longer_weight, idx
+                    try:
+                        longer_weight=self.weights[:,list(long_idx)].sum()#sum(self.weights[i] for i in long_idx)
+                    except IndexError:
+                        print(long_idx)
+                        raise
+                    yield gnode.end, self[target].start,w, longer_weight, idx
         
     def splice_dependence(self, pval_th=0.05, min_sum=10):
         #starts[i]: list with paths that join at node i
@@ -127,7 +139,7 @@ class SpliceGraph():
                     ma=np.zeros((len(starts[i]),len(ends[j]))) #the contingency table
                     for ix, st in enumerate(starts[i]):
                         for iy, en in enumerate(ends[j]):
-                            ma[ix][iy]=sum(self.weights[k] for k in st[1] if k in en[1]) #sum the weight for the test
+                            ma[ix][iy]=self.weights[:,[k for k in st[1] if k in en[1]]].sum()  #sum the weight for the test
                     
                     #fisher test requires 2x2 tables, and filter by row and colum sum
                     ix=[i for i,s in enumerate(ma.sum(axis=1)) if s > min_sum]
@@ -150,14 +162,10 @@ class SpliceGraph():
                             if pvalue<pval_th:
                                 #print(f'found {i}:{starts[i]} vs {j}:{ends[j]}\n{ma}\n:p={pvalue}\n-------')
                                 alt_from=['tss' if k == -1 else self[k].end for k,_ in [starts[i][idx] for idx in ixpair]]
-                                alt_to=['pas' if k == -1 else self[k].begin for k,_ in [ends[j][idy] for idy in iypair]]
-                                found.append((pvalue,subma, alt_from,self[i].begin,self[j].end,alt_to))
+                                alt_to=['pas' if k == -1 else self[k].start for k,_ in [ends[j][idy] for idy in iypair]]
+                                found.append((pvalue,subma, alt_from,self[i].start,self[j].end,alt_to))
         return found
-            
-
-
-
-
+  
     '''
     def find_5truncations(self, is_reverse=False, dist_3=10):
         truncations=list()
@@ -191,12 +199,12 @@ class SpliceGraph():
     
     '''
     def unify_junctions(self, fuzzy_junction=5, reference=None):
-        start_ref={e.begin:i for i,e in enumerate(self)}
+        start_ref={e.start:i for i,e in enumerate(self)}
         end_ref={e.end:i for i,e in enumerate(self)}
         
         merge_to=[[i] for i,_ in enumerate(self)]
         for i,node in enumerate(self):
-            if node.end-node.begin < fuzzy_junction: # short psydoexon
+            if node.end-node.start < fuzzy_junction: # short psydoexon
                 pre=node.pre #todo: currently merge with predecessor has prioritiy, but considering junction support would be better
                 if len(pre)==1 and self[pre[0]].end == node.start:#merge with predesessor                
                     merge_to[node.pre]+=merge_to[i]
@@ -216,10 +224,10 @@ class SpliceGraph():
         for merge_set in merge_to:
             if id(merge_set) not in seen:
                 seen.add(id(merge_set))
-                starts=[self[i].begin for i in merge_set]
+                starts=[self[i].start for i in merge_set]
                 ends=[self[i].end for i in merge_set]
                 pos=(min(starts), max(ends)) #TODO: CURRENTLY WE TAKE THE OUTER, BUT JUNCTION with best support WOULD BE BETTER?
-                new_start.update({self[i].begin:pos[0] for i in merge_set})
+                new_start.update({self[i].start:pos[0] for i in merge_set})
                 new_end.update({self[i].end:pos[1] for i in merge_set})
                 pre={p for i in merge_set for p in self[i].pre if p not in starts}
                 suc={s for i in merge_set for s in self[i].suc if s not in ends}
@@ -234,16 +242,18 @@ class SpliceGraph():
         self._pas=pas
         return new_start, new_end
     '''
+    
+
 class SpliceGraphNode(tuple):
-    def __new__(cls,begin, end, pre=None, suc=None):
+    def __new__(cls,start, end, pre=None, suc=None):
         if pre is None:
             pre=dict()
         if suc is None:
             suc=dict()
-        return super(SpliceGraphNode,cls).__new__(cls,(begin,end,pre, suc))
+        return super(SpliceGraphNode,cls).__new__(cls,(start,end,pre, suc))
     
     @property
-    def begin(self):
+    def start(self):
         return self.__getitem__(0)
     @property
     def end(self):

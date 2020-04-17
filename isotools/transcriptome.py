@@ -28,18 +28,17 @@ log.addHandler(log_stream)
 
 
 class Transcriptome:
-    def __init__(self, pacbio_fn,ref_fn=None,ref=None,  chromosomes=None,groups=None, **kwargs):
+    def __init__(self, pacbio_fn,ref_fn=None,ref=None,  chromosomes=None, **kwargs):
         self._idx=dict()
         self.pacbio_fn=pacbio_fn
         self.chrom=chromosomes
-        self.groups=groups
         if ref is not None:
             self.reference=ref
         else:
             log.info('reading reference annotation from {}'.format(ref_fn))
             self.reference=import_transcripts(ref_fn, chromosomes=chromosomes)
         log.info('reading pacbio transcripts from {}'.format(pacbio_fn))
-        transcripts=self.import_pacbio_transcripts(groups=groups, **kwargs)
+        transcripts=self.import_pacbio_transcripts()
         log.info('annotating pacbio transcripts')
         self.data, novel=self.collapse_to_refgenes(transcripts)
         log.info('find genes for novel transcripts')
@@ -84,7 +83,8 @@ class Transcriptome:
     def find_biases(self, genome_fn):
         with FastaFile(genome_fn) as genome_fh:
             for g in tqdm(self):
-                g.data['splice_graph']=isotools.splice_graph.SpliceGraph(g)
+                if 'splice_graph' not in g.data:
+                    g.data['splice_graph']=isotools.splice_graph.SpliceGraph(g)
                 ts_candidates=g.data['splice_graph'].find_ts_candidates()
                 for start, end, js, ls, idx in ts_candidates:
                     for tr in (g.transcripts[i] for i in idx):
@@ -123,7 +123,7 @@ class Transcriptome:
         return (gene for tree in self.data.values() for gene in tree)
 
     
-    def import_pacbio_transcripts(self, groups=None, group_type='run'):
+    def import_pacbio_transcripts(self):
         n_chimeric=0
         n_secondary=0
         with AlignmentFile(self.pacbio_fn, "rb") as align:        
@@ -132,12 +132,7 @@ class Transcriptome:
             total_reads = sum([s.mapped for s in stats])
             if self.chrom is None:
                 self.chrom=align.references
-            if groups is not None:
-                group_nr=dict()
-                for i,grp  in enumerate(groups):
-                    for run in grp:
-                        group_nr.setdefault(run, [])
-                        group_nr[run].append(i)
+            self.runs=set()
             transcripts={c:[] for c in self.chrom}
             fusion=dict()
             for read in tqdm(align, total=total_reads, unit='transcripts'):
@@ -159,29 +154,27 @@ class Transcriptome:
 
 
                 info={'strand':strand, 'chr':chrom,
-                        'ID':read.query_name,'exons':exons,'source':[read.query_name], 'nZMW':tags['is'], 'source_len':len(read.seq), 'cigar':read.cigarstring}
-                
-                if groups is not None:
-                    cov=[0]* len(groups)
-                    if group_type=='run':
-                        for read_id in tags['im'].split(','):
-                            run=read_id[:read_id.find('/')]
-                            if run in group_nr:
-                                for grp in group_nr[run]:
-                                    cov[grp]+=1
-                    elif group_type=='barcode':
-                        for bcs in tags['ib'].split(';'):#barcode summary
-                            bc,_,n=bcs.rpartition(',')
-                            if bc in group_nr:
-                                for grp in group_nr[bc]:
-                                    cov[grp]+=int(n)
-                    info['grouped_nZMW']='/'.join(str(c) for c in cov)
+                        'ID':read.query_name,'exons':exons,'source':[read.query_name], 'total_coverage':tags['is'], 'source_len':len(read.seq), 'cigar':read.cigarstring}
+                cov={}
+                for read_id in tags['im'].split(','):
+                    run=read_id[:read_id.find('/')]
+                    self.runs.add(run)
+                    cov[run] = cov.get(run, 0) + 1
+                info['coverage']=cov
                 if read.flag & 0x800:
                     info['SA']=True
                 if 'SA'  in tags:
                     fusion.setdefault(read.query_name, []).append(info) 
                 if not read.flag & 0x800:                    
-                    transcripts[chrom].append( info)      
+                    transcripts[chrom].append( info)    
+        
+        # make coverage a list
+        self.runs=sorted(list(self.runs))
+        for tree in transcripts.values():
+            for tr in tree:
+                tr['coverage']=[tr['coverage'].get(run,0) for run in self.runs ]
+        
+        #link secondary alignments (chimeric genes)
         for tid,chimeric in fusion.items():
             try:
                 primary=[i for i in chimeric if 'SA' not in i][0]
@@ -254,19 +247,26 @@ class Transcriptome:
             yield g
 
     def gene_table(self, region=None ): #ideas: filter, extra_columns
-        colnames=['chr', 'begin', 'end', 'strand', 'gene_name', 'n_transcripts']        
-        rows=[(g.chrom, g.begin, g.end, g.strand, g.id, g.n_transcripts) for g in  self.get_genes(region)]
+        colnames=['chr', 'start', 'end', 'strand', 'gene_name', 'n_transcripts']        
+        rows=[(g.chrom, g.start, g.end, g.strand, g.id, g.n_transcripts) for g in  self.get_genes(region)]
         df = pd.DataFrame(rows, columns=colnames)
         return(df)
 
-    def transcript_table(self, region=None, extra_columns=None): #ideas: filter, 
+    def transcript_table(self, region=None, extra_columns=None,  include=None, remove=None): 
         if extra_columns is None:
             extra_columns=[]
         if not isinstance( extra_columns, list):
             raise ValueError('extra_columns should be provided as list')
-        extracolnames={'alt_splice':('splice_IoU', 'base_IoU','splice_type'),'grouped_nZMW':(f'nZMW_{i}' for i in range(len(self.groups)))}        
-        colnames=['chr', 'begin', 'end','strand','transcript_name', 'gene_name' ]     + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
-        rows=[(g.chrom, g.begin, g.end, g.strand, tr['ID'], g.name)+g.get_values(tidx,extra_columns) for g in  self.get_genes(region) for tidx, tr in enumerate(g.transcripts)]
+        extracolnames={'alt_splice':('splice_IoU', 'base_IoU','splice_type'),'coverage':(f'coverage_{r}' for r in self.runs)}        
+        colnames=['chr', 'gene_start', 'gene_end','strand', 'gene_id','gene_name' ,'transcript_name']     + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
+        rows=[]
+        for g in  self.get_genes(region):
+            for tidx, tr in enumerate(g.transcripts):
+                if include is not None and not all(i in tr['filter'] for i in include):
+                    continue
+                if remove is not None and any(e in tr['filter'] for tr in remove):
+                    continue
+                rows.append((g.chrom, g.start, g.end, g.strand,g.id, g.name, tr['ID'])+g.get_values(tidx,extra_columns))
         df = pd.DataFrame(rows, columns=colnames)
         return(df)
     
@@ -278,10 +278,10 @@ class Transcriptome:
                 pbar.set_postfix(chr=chrom)
                 idx=dict()
                 self.data.setdefault(chrom, IntervalTree())
-                for begin, end, tr in trtree:
+                for start, end, tr in trtree:
                     idx[tr['ID']]=tr
                     tr['merge']={tr['ID']}
-                    candidates=trtree.overlap(begin, end)
+                    candidates=trtree.overlap(start, end)
                     for _,_,ol_tr in candidates:
                         if ol_tr['ID'] in tr['merge'] or ol_tr['strand'] != tr['strand'] or 'merge' not in ol_tr:# other strand or not seen already
                             continue
@@ -340,7 +340,7 @@ class Gene(Interval):
     
     def __repr__(self):
         return object.__repr__(self)
-    def add_filters(self, a_th=.5, rtts_maxcov=10, rtts_ratio=5):   
+    def add_filters(self, a_th=.5, rtts_maxcov=10, rtts_ratio=5, min_alignment_cov=.1):   
         #possible filter flags: 'A_CONTENT','RTTS','NONCANONICAL_SPLICING','NOVEL_GENE','NOVEL_TRANSCRIPT','TRUNCATION'
      
         novel_gene=all(tr['support'] is None for tr in self.transcripts)
@@ -348,7 +348,7 @@ class Gene(Interval):
             tr_filter=[]
             if tr['downstream_A_content']>a_th:
                 tr_filter.append('A_CONTENT')
-            if abs(tr['source_len'] - sum(e-s for s,e in tr['exons']))/tr['source_len']>.1:
+            if abs(tr['source_len'] - sum(e-s for s,e in tr['exons']))/tr['source_len']>min_alignment_cov:
                 tr_filter.append('CLIPPED_ALIGNMENT')
             if 'template_switching' in tr:
                 for ts in tr['template_switching']:
@@ -391,8 +391,8 @@ class Gene(Interval):
             return lines
         info={'gene_id':self.name if use_gene_name else self.id}
         #gene_info={'gene_name':self.name if use_gene_name else self.id}
-        #lines.append((self.chrom, source, 'gene', self.begin+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for d in (info, gene_info) for k,v in d.items() )))
-        lines.append((self.chrom, source, 'gene', self.begin+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items() )))
+        #lines.append((self.chrom, source, 'gene', self.start+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for d in (info, gene_info) for k,v in d.items() )))
+        lines.append((self.chrom, source, 'gene', self.start+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items() )))
         for tr_idx in include_tr:
             tr=self.transcripts[tr_idx]
             trid=tr['ID']
@@ -534,28 +534,43 @@ class Gene(Interval):
 
                 vals=(support['sjIoU'],support['exIoU'],type_string)
                 return(vals)
-        elif what=='grouped_nZMW':
-            return(self.transcripts[tidx]['grouped_nZMW'].split('/'))
+        elif what=='coverage':
+            return(self.transcripts[tidx]['coverage'])
         #todo: splice junction type list
         # intron template switching scores
         elif what in self.transcripts[tidx]:
-            return str(self.transcripts[tidx][what]),
-        #raise ValueError('cannot extract value "{}"'.format(what))
+            val=str(self.transcripts[tidx][what])
+            try:
+                iter(val)
+            except TypeError:
+                return val, #atomic (e.g. numeric)
+            else:
+                return str(val), #iterables get converted to string
         return '',
-
-        
+    '''
+    def sashimi_plot(self, ax=None,bam=None,text_width=.02, text_height=1,title=None):
+        if 'splice_graph' not in self.data:
+            self.data['splice_graph']=isotools.splice_graph.SpliceGraph(self)
+        if title is None:
+            title=self.name
+        ax=self.data['splice_graph'].sashimi_plot( ax=ax,bam=bam, text_width=text_width, text_height=text_height, title=title)        
+        return(ax)
+    '''
     @property
     def chrom(self):
         try:
             return self.data['chr']
         except KeyError: 
             raise
-            
+ 
+    @property
+    def start(self):
+        return self.begin
     
     @property
     def region(self):
         try:
-            return '{}:{}-{}'.format(self.chrom,self.begin, self.end )
+            return '{}:{}-{}'.format(self.chrom,self.start, self.end )
         except KeyError:
             raise
 
@@ -572,7 +587,13 @@ class Gene(Interval):
         try:
             return self.data['Name']    
         except KeyError:
-            return self.id
+            pass
+        try:
+            return self.data['gene_name']    
+        except KeyError:
+            pass        
+        
+        return self.id
 
     #@id.setter
     #def id(self, new_id):
@@ -600,15 +621,15 @@ class Gene(Interval):
             return 0
          
     def __copy__(self):
-        return Gene(self.begin, self.end, self.data)        
+        return Gene(self.start, self.end, self.data)        
         
 
     def __deepcopy__(self, memo):
-        return Gene(self.begin, self.end, copy.deepcopy(self.data, memo))
+        return Gene(self.start, self.end, copy.deepcopy(self.data, memo))
         
 
     def __reduce__(self):
-        return Gene, (self.begin, self.end, self.data)  
+        return Gene, (self.start, self.end, self.data)  
 
     def copy(self):
         return self.__copy__()
@@ -626,7 +647,7 @@ def merge_genes(gene, candidates,spj_iou_th, reg_iou_th):
         same.add(gene)
         new_data={'strand': gene.strand, 'chr': gene.chrom, 'source':{g.id for g in same}, 'transcripts':dict(ChainMap(*(g.transcripts for g in same)))}
         #todo merge more properties
-        new_gene=Gene(min(g.begin for g in same), max(g.end for g in same),new_data )
+        new_gene=Gene(min(g.start for g in same), max(g.end for g in same),new_data )
         assert len(new_gene.transcripts)==sum(len(g.transcripts) for g in same), 'new gene has different number of transcripts compared to source!\nsource:\n{}\nmerged\n{}'.format(same, new_gene)
     return new_gene, same
 

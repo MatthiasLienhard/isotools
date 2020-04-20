@@ -88,10 +88,14 @@ def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,ti
             title=g.name
         if group is None:
             group=list(range(sg.weights.shape[0])) #all
+        
         boxes=[(node[0], node[1], sg.weights[np.ix_(group,[i for i in set(node[2]).union(node[3])])].sum()) for node in sg]
         if text_width<1:
             text_width=(sg[-1][1]-sg[0][0])*text_width
         total_weight=sg.weights[group,:].sum()
+        if min_junction_cov<1:
+            min_junction_cov=min_junction_cov*total_weight
+        
         idx=list(range(len(sg)))
         arcs=[]
         for i,(es,ee, pre, suc) in enumerate(sg._graph):
@@ -158,3 +162,25 @@ def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,ti
         #ax.set_xscale(1e-6, 'linear')
         ax.set_title(title)
         return(ax)
+    
+    
+def plot_altsplice(transcriptome,groups=None,  ax=None):    #todo: filter like in make table
+    if ax is None:
+        fig, ax=  plt.subplots()
+    stype=[(tr['support']['sType'],tr['coverage']) if tr['support'] is not None else (['novel/unknown'],tr['coverage'])  for g in transcriptome for tr in g.transcripts ]
+    stype=[(tr['support']['sType'] if tr['support'] is not None else ['novel/unknown'],tr['coverage'])  for g in transcriptome for tr in g.transcripts ]
+    weights=dict()
+    for stl,w in stype:
+        for st in stl:
+            weights.setdefault(st,np.zeros(len(w)))
+            weights[st]+=w
+    
+    df=pd.DataFrame(weights).T
+    (df/df.sum()*100).sort_values(0).plot.bar( ax=ax)
+    
+    for i,(n,v) in enumerate(type_counts):
+        small=D[n]<max(D.values())/2
+        ax.text(D[n], i, f'{v} ({D[n]}%)' ,horizontalalignment='left' if small else 'right', verticalalignment='center', color='black' if small else 'white', fontweight='bold')
+    #    print('{}:\t{}\t{}'.format(n,v, D[n]))
+    return ax
+

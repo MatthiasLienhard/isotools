@@ -16,7 +16,7 @@ import logging
 import scipy.stats as stats
 from math import log10,pi
 import isotools.transcriptome
-
+from scipy.stats import binom, chi2
 
 def overlap(pos1,pos2,width, height):
     if abs(pos1[0]-pos2[0])<width and abs(pos1[1]-pos2[1])<height:
@@ -165,7 +165,34 @@ class SpliceGraph():
                                 alt_to=['pas' if k == -1 else self[k].start for k,_ in [ends[j][idy] for idy in iypair]]
                                 found.append((pvalue,subma, alt_from,self[i].start,self[j].end,alt_to))
         return found
-  
+
+    def altsplice_test(self, groups,min_junction_cov=10):      #todo: considier min_junction_cov  
+        n=len(self)
+        starts=[list() for _ in range(n)]
+        ends=[list() for _ in range(n)]
+        assert len(groups)==2
+        assert all(isinstance(g,list) for g in groups)
+        p=dict()
+        #total_weight=[self.weights[grp,:].sum(1) for grp in groups]
+        for i,(es,ee, pre, suc) in enumerate(self):
+            for target in set(suc.values()):
+                if self[target][0]== ee: #only consider splice junctions (this excludes alternative tss and pas... todo)
+                    continue
+                relevant=[i for i,(tss,pas) in enumerate(zip(self._tss, self._pas)) if tss<=i and pas>=target]
+                total_weight=[self.weights[np.ix_(grp,relevant)].sum(1) for grp in groups]
+                weight=[self.weights[np.ix_(grp,[tr for tr in suc if suc[tr]==target])].sum(1) for grp in groups]
+                #proportion estimates
+                phat_0=sum(w+1 for wg in weight for w in wg)/sum(tw+2 for twg in total_weight for tw in twg) #null hypothesis (just one proportion)
+                phat_1=[sum(w+1 for w in wg)/sum(tw+2 for tw in twg) for wg,twg in zip(weight, total_weight)] #alternative: one proportion per group
+                # calculate the log likelihoods
+                l0 = binom.logpmf(weight, total_weight, phat_0).sum()
+                l1 = binom.logpmf(weight,total_weight,[[p]*len(groups[i]) for i,p in enumerate(phat_1)]).sum()
+                # calculate the pvalue (sf=1-csf(), 1df)
+                p[(ee,self[target][0])]=[chi2.sf(2*(l1-l0),1)]+phat_1+[tw.sum() for tw in total_weight]
+        return p
+
+    
+                
     '''
     def find_5truncations(self, is_reverse=False, dist_3=10):
         truncations=list()

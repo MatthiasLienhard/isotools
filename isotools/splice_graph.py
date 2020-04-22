@@ -24,17 +24,18 @@ def overlap(pos1,pos2,width, height):
     return False
 
 class SpliceGraph():
-    def __init__(self, exons, end=None, weights=None):      
+    def __init__(self, exons, end=None, weights=None, ids=None):      
         if isinstance(exons,isotools.transcriptome.Gene):
             #end=exons.end ?uncomment to increase performance
-            self.ids=list(exons.transcripts.keys())
+            ids=list(exons.transcripts.keys())
             weights=np.array([tr['coverage'] for tr in exons.transcripts.values()]).swapaxes(0,1)
             exons=[tr['exons'] for tr in exons.transcripts.values()]
-        else: #exons is a list of exons
-            self.ids=list(range(exons))
+        if ids is None: #exons is a list of exons
+            ids=list(range(len(exons)))
         if weights is None:
             weights=np.ones((1,len(exons)))
         self.weights=weights
+        self.ids=ids
         if end is None:
             end=max((e[-1][1] for e in exons))
         open_exons=dict()
@@ -169,6 +170,20 @@ class SpliceGraph():
                                 found.append((pvalue,subma, alt_from,self[i].start,self[j].end,alt_to))
         return found
 
+    def get_splice_coverage(self):
+        for i,(es,ee, pre, suc) in enumerate(self):
+            for target in set(suc.values()):
+                if self[target][0]== ee: #only consider splice junctions (this excludes alternative tss and pas... todo)
+                    continue
+                relevant=[i for i,(tss,pas) in enumerate(zip(self._tss, self._pas)) if tss<=i and pas>=target]
+                total_weight=self.weights[:,relevant].sum(1)
+                weight=self.weights[:,[tr for tr in suc if suc[tr]==target]].sum(1)
+                yield weight,total_weight
+
+
+
+
+    '''
     def altsplice_test(self, groups,min_junction_cov=10):      #todo: considier min_junction_cov  
         assert len(groups)==2
         assert all(isinstance(g,list) for g in groups)
@@ -191,7 +206,7 @@ class SpliceGraph():
                 p[(ee,self[target][0])]=[chi2.sf(2*(l1-l0),1)]+phat_1+[tw.sum() for tw in total_weight]
         return p
 
-    
+    '''   
                 
     '''
     def find_5truncations(self, is_reverse=False, dist_3=10):
@@ -278,7 +293,8 @@ class SpliceGraphNode(tuple):
         if suc is None:
             suc=dict()
         return super(SpliceGraphNode,cls).__new__(cls,(start,end,pre, suc))
-    
+    def __getnewargs__(self):
+        return tuple(self)
     @property
     def start(self):
         return self.__getitem__(0)

@@ -491,7 +491,15 @@ class Gene(Interval):
             return len(self.data['transcripts'])
         except KeyError:
             return 0
-         
+
+    @property
+    def splice_graph(self):
+        try:
+            return self.data['splice_graph']
+        except KeyError:
+            self.data['splice_graph']=isotools.splice_graph.SpliceGraph(self)
+            return self.data['splice_graph']
+
     def __copy__(self):
         return Gene(self.start, self.end, self.data)        
         

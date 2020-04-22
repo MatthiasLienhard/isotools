@@ -15,7 +15,7 @@ from tqdm import tqdm
 import logging
 import scipy.stats as stats
 from math import log10,pi
-import isotools.transcriptome
+import isotools.transcriptome 
 from scipy.stats import binom, chi2
 
 def overlap(pos1,pos2,width, height):
@@ -27,8 +27,11 @@ class SpliceGraph():
     def __init__(self, exons, end=None, weights=None):      
         if isinstance(exons,isotools.transcriptome.Gene):
             #end=exons.end ?uncomment to increase performance
-            weights=np.array([tr['coverage'] for tr in exons.transcripts]).swapaxes(0,1)
-            exons=[tr['exons'] for tr in exons.transcripts]
+            self.ids=list(exons.transcripts.keys())
+            weights=np.array([tr['coverage'] for tr in exons.transcripts.values()]).swapaxes(0,1)
+            exons=[tr['exons'] for tr in exons.transcripts.values()]
+        else: #exons is a list of exons
+            self.ids=list(range(exons))
         if weights is None:
             weights=np.ones((1,len(exons)))
         self.weights=weights
@@ -115,7 +118,7 @@ class SpliceGraph():
                     except IndexError:
                         print(long_idx)
                         raise
-                    yield gnode.end, self[target].start,w, longer_weight, idx
+                    yield gnode.end, self[target].start,w, longer_weight, [self.ids[i] for i in idx]
         
     def splice_dependence(self, pval_th=0.05, min_sum=10):
         #starts[i]: list with paths that join at node i
@@ -167,9 +170,6 @@ class SpliceGraph():
         return found
 
     def altsplice_test(self, groups,min_junction_cov=10):      #todo: considier min_junction_cov  
-        n=len(self)
-        starts=[list() for _ in range(n)]
-        ends=[list() for _ in range(n)]
         assert len(groups)==2
         assert all(isinstance(g,list) for g in groups)
         p=dict()

@@ -7,6 +7,7 @@ import numpy as np
 from pysam import  AlignmentFile
 from scipy.stats import binom,norm, chi2
 import statsmodels.stats.multitest as multi
+import splice_graph
 from tqdm import tqdm
 
 def overlap(pos1,pos2,width, height):
@@ -84,7 +85,7 @@ def sashimi_plot_bam(g, bam_fn,ax=None,text_width=.02, text_height=1, title=None
 
 def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,title=None,group=None,  exon_color='blue', junction_color='green',  min_junction_cov=1):
         if 'splice_graph' not in g.data:
-            g.data['splice_graph']=isotools.splice_graph.SpliceGraph(g)
+            g.data['splice_graph']=splice_graph.SpliceGraph(g)
         sg=g.data['splice_graph']
         if title is None:
             title=g.name
@@ -200,7 +201,7 @@ def plot_filter(transcriptome,plot=True, coverage=True,groups=None,  min_coverag
     except KeyError:
         runs=['transcriptome']
     weights=dict()
-    for g in transcriptome:
+    for g,trid,tr in transcriptome.iter_transcripts():
         for tr in g.transcripts.values():
             w=tr['coverage'] if coverage else [1 if wi>=min_coverage else 0 for wi in tr['coverage']]
             relevant_filter=[f for f in tr['filter'] if f in consider]
@@ -279,5 +280,25 @@ def altsplice_test(transcriptome,groups, min_cov=10, test=proportion_test,padj_m
     df=pd.DataFrame(res, columns=['gene','chrom', 'start', 'end','pvalue','x1','x2','n1','n2'])
     df.insert(5,'padj',multi.multipletests(df['pvalue'],method=padj_method)[1])
     return df
-            
+
+
+#QC plots
+def plot_transcript_len(transcriptome, plot=True, coverage=True,groups=None,min_coverage=1, include=None, remove=None):
+    pass
+
+def plot_transcript_coverage(transcriptome, plot=True, groups=None, include=None, remove=None):
+    pass
+
+def plot_transcripts_per_gene(transcriptome, plot=True, groups=None, min_coverage=1,include=None, remove=None ):
+    pass
+
+def plot_exons_per_transcript(transcriptome, plot=True, groups=None, min_coverage=1,include=None, remove=None ):
+    pass
+
+#biases plots
+
+
+
+
+
 

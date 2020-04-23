@@ -29,12 +29,13 @@ log.addHandler(log_stream)
 
 
 class Transcriptome:
-    def __init__(self, file_name, chromosomes=None, file_format='auto'):
-        self._idx=None        
+    def __init__(self, file_name, chromosomes=None, file_format='auto', groups=None):        
         self.data,self.infos=import_transcripts(file_name, chromosomes=chromosomes, file_format=file_format)
+        if groups is not None:
+            self.groups=groups
         if 'file_name' not in self.infos:
             self.infos['file_name']=file_name
-        #self._make_index()
+        self.make_index()
         
     def save(self, fn=None):
         if fn is None:
@@ -65,14 +66,14 @@ class Transcriptome:
                 print('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) ),file=f)
     '''
 
-    def _make_index(self):
+    def make_index(self,use_name=False):
         idx=dict()
         for g in self:
-            idx.setdefault(g.id, set()).add(g)
+            idx[g.name if use_name else g.id]=g
         self._idx=idx
         
     def __getitem__(self, key):
-        return set(self._idx[key])
+        return self._idx[key]
 
     def __len__(self):
         return self.n_genes
@@ -106,7 +107,19 @@ class Transcriptome:
         for g in tqdm(self):
             g.add_filters(**kwargs)
         self.infos['filter']=kwargs
-    
+
+    @property 
+    def groups(self):
+        try:
+            return(self.infos['groups'])
+        except KeyError:
+            return({r:[r] for r in self.infos['runs']})
+
+    @groups.setter
+    def groups(self, grp):
+        assert all(r in self.infos['runs'] for g in grp for r in g)
+        self.infos['groups']=grp
+
     @property
     def n_transcripts(self):
         if self.data==None:
@@ -211,7 +224,7 @@ class Transcriptome:
             extracolnames['coverage']=(f'coverage_{r}' for r in self.infos['runs'])
         colnames=['chr', 'gene_start', 'gene_end','strand', 'gene_id','gene_name' ,'transcript_name']     + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
         rows=[]
-        for g,trid, tr in g.iter_transcripts(region, include,remove):                
+        for g,trid, tr in self.iter_transcripts(region, include,remove):                
                 rows.append((g.chrom, g.start, g.end, g.strand,g.id, g.name, trid)+g.get_values(trid,extra_columns))
         df = pd.DataFrame(rows, columns=colnames)
         return(df)
@@ -623,7 +636,7 @@ def import_pacbio_transcripts(fn,chromosomes=None):
                     continue # use only primary alignments
 
                 chrom = read.reference_name
-                if chrom not in chromosomes:
+                if chrom not in chromosomes and not read.flag & 0x800: #allow secondary alignments form other chromosomes
                     continue
                 strand = '-' if read.is_reverse else '+'
                 exons = junctions_from_cigar(read.cigartuples,read.reference_start)

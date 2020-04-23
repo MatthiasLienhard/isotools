@@ -55,6 +55,7 @@ class Transcriptome:
                 if lines:
                     _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
 
+    '''
     def write_table(self, fn, source='isotools'):     
         header=['id','name', 'chrom','strand','txStart','txEnd','exonCount','exonStarts','exonEnds']
         with open(fn, 'w') as f:       
@@ -62,7 +63,8 @@ class Transcriptome:
             for gene in tqdm(self):
                 lines=gene.to_table()
                 print('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) ),file=f)
-    
+    '''
+
     def _make_index(self):
         idx=dict()
         for g in self:
@@ -96,11 +98,14 @@ class Transcriptome:
                 g.add_noncanonical_splicing(genome_fh)
                 g.add_threeprime_a_content(genome_fh)
                 g.add_truncations()
+        self.infos['biases']=True # flag to check that the function was called
 
     def add_filters(self,**kwargs):
         #biases are evaluated with respect to specific thresholds
+        assert 'biases' in self.infos or not self.infos['biases'], 'run add_biases() first'
         for g in tqdm(self):
             g.add_filters(**kwargs)
+        self.infos['filter']=kwargs
     
     @property
     def n_transcripts(self):
@@ -163,26 +168,36 @@ class Transcriptome:
                     genes[chrom].add(Gene(start, end, g))
             #todo:merge and add novel genes
         self.data=genes
+        self.infos['annotation']=reference.infos['file_name']
         
 
-    def get_genes(self, region):
+    def iter_genes(self, region):
         if region is None:
             genes=self
         elif region in self.data:
-            genes=self.data[region]
+            genes=self.data[region] #provide chromosome
         else:
             try:
                 chrom, pos=region.split(':')
                 start, end=[int(v) for v in pos.split('-')]
-                genes=self.data[chrom][start:end]
             except ValueError:
-                raise ValueError('incorrect region string {}'.format(region))
+                chrom,start,end=region
+            except:
+                raise ValueError('incorrect region {} - specify as string "chr:start-end" or tuple ("chr",start,end)'.format(region))
+            else:
+                genes=self.data[chrom][start:end]
         for g in genes:
             yield g
+    
+    def iter_transcripts(self,region=None,include=None, remove=None):
+        for g in self.iter_genes(region):
+            for trid in g.filter_transcripts(include, remove):
+                yield g,trid,g.transcripts[trid]
+
 
     def gene_table(self, region=None ): #ideas: filter, extra_columns
         colnames=['chr', 'start', 'end', 'strand', 'gene_name', 'n_transcripts']        
-        rows=[(g.chrom, g.start, g.end, g.strand, g.id, g.n_transcripts) for g in  self.get_genes(region)]
+        rows=[(g.chrom, g.start, g.end, g.strand, g.id, g.n_transcripts) for g in  self.iter_genes(region)]
         df = pd.DataFrame(rows, columns=colnames)
         return(df)
 
@@ -196,12 +211,7 @@ class Transcriptome:
             extracolnames['coverage']=(f'coverage_{r}' for r in self.infos['runs'])
         colnames=['chr', 'gene_start', 'gene_end','strand', 'gene_id','gene_name' ,'transcript_name']     + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
         rows=[]
-        for g in  self.get_genes(region):
-            for trid, tr in g.transcripts.items():
-                if include is not None and not all(i in tr['filter'] for i in include):
-                    continue
-                if remove is not None and any(r in tr['filter'] for r in remove):
-                    continue
+        for g,trid, tr in g.iter_transcripts(region, include,remove):                
                 rows.append((g.chrom, g.start, g.end, g.strand,g.id, g.name, trid)+g.get_values(trid,extra_columns))
         df = pd.DataFrame(rows, columns=colnames)
         return(df)
@@ -244,34 +254,33 @@ class Gene(Interval):
             tr['filter']=flags
         
 
-    def filter_transcripts(self, include=None, remove=None,idx=None):
+    def filter_transcripts(self, include=None, remove=None):
         #include: transcripts must have at least one of the flags
         #remove: transcripts must not have one of the flags (priority)
-        if idx is None:
-            idx=list(self.transcripts.keys())
-        filter_idx=list()
-        for trid in idx:
-            select=True
-            if include is not None:
+        if include is None and remove is None: # return all
+            for tr in self.transcripts.keys():
+                yield tr
+
+        for trid in self.transcripts.keys():            
+            try:
                 select =  any(f in self.transcripts[trid]['filter'] for f in include)
-            if remove is not None:
+            except TypeError:
+                select=True #None means include all
+            try:
                 select &= all(f not in self.transcripts[trid]['filter'] for f in remove)
+            except TypeError:
+                pass
             if select:
-                filter_idx.append(trid)
-        return(filter_idx)
+                yield trid
+        
 
 
     def to_gtf(self, source='isoseq', use_gene_name=False, include=None, remove=None):
         
-        include_tr=self.filter_transcripts(include, remove)
-        lines=list()
-        if not include_tr:
-            return lines
         info={'gene_id':self.name if use_gene_name else self.id}
-        #gene_info={'gene_name':self.name if use_gene_name else self.id}
-        #lines.append((self.chrom, source, 'gene', self.start+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for d in (info, gene_info) for k,v in d.items() )))
-        lines.append((self.chrom, source, 'gene', self.start+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items() )))
-        for trid in include_tr:
+        gene=(self.chrom, source, 'gene', self.start+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items() ))
+        lines=list()
+        for trid in self.filter_transcripts(include, remove):
             tr=self.transcripts[trid]
             info['transcript_id']=trid
             #todo: print only relevant infos
@@ -279,6 +288,8 @@ class Gene(Interval):
             for enr, pos in enumerate(tr['exons']):
                 info['exon_id']='{}_{}'.format(trid, enr)
                 lines.append((self.chrom, source, 'exon', pos[0]+1, pos[1], '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items())))
+        if lines:
+            lines.append(gene)
         return(lines)
     
     ''' does not work so far (depends on unimplemented splice graph functionality)

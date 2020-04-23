@@ -16,7 +16,6 @@ import logging
 import scipy.stats as stats
 from math import log10,pi
 import isotools.transcriptome 
-from scipy.stats import binom, chi2
 
 def overlap(pos1,pos2,width, height):
     if abs(pos1[0]-pos2[0])<width and abs(pos1[1]-pos2[1])<height:
@@ -171,14 +170,14 @@ class SpliceGraph():
         return found
 
     def get_splice_coverage(self):
-        for i,(es,ee, pre, suc) in enumerate(self):
-            for target in set(suc.values()):
-                if self[target][0]== ee: #only consider splice junctions (this excludes alternative tss and pas... todo)
+        for i,first in enumerate(self):
+            for j,second in ((idx,self[idx]) for idx in set(first.suc.values())):
+                if first.end== second.start: #only consider splice junctions (this excludes alternative tss and pas... todo)
                     continue
-                relevant=[i for i,(tss,pas) in enumerate(zip(self._tss, self._pas)) if tss<=i and pas>=target]
+                relevant=[idx for idx,(tss,pas) in enumerate(zip(self._tss, self._pas)) if tss<=i and pas>=j]
                 total_weight=self.weights[:,relevant].sum(1)
-                weight=self.weights[:,[tr for tr in suc if suc[tr]==target]].sum(1)
-                yield weight,total_weight
+                weight=self.weights[:,[tr for tr,idx in first.suc.items() if idx==j]].sum(1)
+                yield weight,total_weight,first.end,second.start
 
 
 

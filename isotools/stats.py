@@ -2,12 +2,13 @@ from math import log10
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
+import seaborn as sns
 import pandas as pd
 import numpy as np
 from pysam import  AlignmentFile
 from scipy.stats import binom,norm, chi2
 import statsmodels.stats.multitest as multi
-import splice_graph
+import isotools.splice_graph
 from tqdm import tqdm
 
 def overlap(pos1,pos2,width, height):
@@ -15,9 +16,12 @@ def overlap(pos1,pos2,width, height):
         return True
     return False
 
-def sashimi_plot_bam(g, bam_fn,ax=None,text_width=.02, text_height=1, title=None,group=None, exon_color='blue', junction_color='green', min_junction_width=10, min_junction_cov=1):
+def sashimi_plot_bam(g, bam_fn,ax=None,text_width=.02, text_height=1, title=None,group=None, exon_color='blue', junction_color='green', min_junction_width=10, min_junction_cov=1,chrom_map=None):
     delta=np.zeros(g.end-g.start)
-    reg=f'{g.chrom}:{g.start}-{g.end}'
+    chrom=g.chrom
+    if chrom_map is not None:
+        chrom=chrom_map[chrom]
+    reg=f'{chrom}:{g.start}-{g.end}'
     if title is None:
         title=g.name
     junctions={}
@@ -85,7 +89,7 @@ def sashimi_plot_bam(g, bam_fn,ax=None,text_width=.02, text_height=1, title=None
 
 def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,title=None,group=None,  exon_color='blue', junction_color='green',  min_junction_cov=1):
         if 'splice_graph' not in g.data:
-            g.data['splice_graph']=splice_graph.SpliceGraph(g)
+            g.data['splice_graph']=isotools.splice_graph.SpliceGraph(g)
         sg=g.data['splice_graph']
         if title is None:
             title=g.name
@@ -166,9 +170,9 @@ def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,ti
         ax.set_title(title)
         return(ax)
         
-def plot_altsplice(transcriptome,plot=True, coverage=True,groups=None,  min_coverage=1,drop_categories=None, region=None, include=None, remove=None,  ax=None):    #todo: filter like in make table
+def altsplice_stats(transcriptome, coverage=True,groups=None,  min_coverage=1, region=None, include=None, remove=None):    #todo: filter like in make table
     try:
-        runs=transcriptome.infos['runs']
+        runs=transcriptome.runs
     except KeyError:
         runs=['transcriptome']
 
@@ -187,45 +191,39 @@ def plot_altsplice(transcriptome,plot=True, coverage=True,groups=None,  min_cove
         # sum per group
     df=df.reindex(df.mean(1).sort_values(ascending=False).index, axis=0)
 
-    if not plot:
-        return None, df
+    return df,  {'ylabel':'fraction of reads' if coverage else 'fraction of different transcripts'}
     #
-    ax=plot_fractions(df=df, ax=ax, drop_categories=drop_categories)
-    ax.set_ylabel('fraction of reads' if coverage else 'fraction of different transcripts')
-    return ax,df
-
-def plot_filter(transcriptome,plot=True, coverage=True,groups=None,  min_coverage=1,drop_categories=None, consider=['TRUNCATION', 'A_CONTENT',  'CLIPPED_ALIGNMENT', 'RTTS'],  ax=None):    #todo: filter like in make table
     
+def filter_stats(transcriptome, coverage=True,groups=None,  min_coverage=1,consider=['TRUNCATION', 'A_CONTENT',  'CLIPPED_ALIGNMENT', 'RTTS']):    #todo: filter like in make table
     try:
-        runs=transcriptome.infos['runs']
+        runs=transcriptome.runs
     except KeyError:
         runs=['transcriptome']
     weights=dict()
     for g,trid,tr in transcriptome.iter_transcripts():
-        for tr in g.transcripts.values():
-            w=tr['coverage'] if coverage else [1 if wi>=min_coverage else 0 for wi in tr['coverage']]
-            relevant_filter=[f for f in tr['filter'] if f in consider]
-            if relevant_filter:
-                for f in relevant_filter:
-                    weights[f]=weights.get(f,np.zeros(len(w)))+w
-            else:
-                weights['PASS']=weights.get('PASS',np.zeros(len(w)))+w
-                
-
-    
+        w=tr['coverage'] if coverage else [1 if wi>=min_coverage else 0 for wi in tr['coverage']]
+        relevant_filter=[f for f in tr['filter'] if f in consider]
+        if relevant_filter:
+            for f in relevant_filter:
+                weights[f]=weights.get(f,np.zeros(len(w)))+w
+        else:
+            weights['PASS']=weights.get('PASS',np.zeros(len(w)))+w
+            
     df=pd.DataFrame(weights, index=runs).T
     if groups is not None:
         df=pd.DataFrame({grn:df[grp].sum(1) for grn, grp in groups.items()})
         # sum per group
     df=df.reindex(df.mean(1).sort_values(ascending=False).index, axis=0)
-    if not plot:
-        return None, df
-    #
-    ax=plot_fractions(df=df, ax=ax, drop_categories=drop_categories)
-    ax.set_ylabel('fraction of reads' if coverage else 'fraction of different transcripts')
-    return ax,df
-
-def plot_fractions(df,ax=None, drop_categories=None):    
+    ylab='fraction of reads' if coverage else 'fraction of different transcripts'
+    if coverage:
+        title='Expressed Transcripts'
+    else:
+        title='Different Transcripts'
+        if min_coverage>1:
+            title+=f' > {min_coverage} reads'
+    return df, {'ylabel':ylab,'title':title}
+   
+def plot_bar(df,ax=None, drop_categories=None, legend=True,**axparams):    
     if ax is None:
         fig, ax=  plt.subplots()
     fractions=(df/df.sum()*100)
@@ -242,6 +240,9 @@ def plot_fractions(df,ax=None, drop_categories=None):
         #contrast=tuple(1-cv for cv in p.get_facecolor()[:3])
         contrast='white' if np.mean(p.get_facecolor()[:3])<.5 else 'black'
         ax.annotate(f' {f/100:.2%} ({n}) ', (p.get_x()+p.get_width()/2 , p.get_height() ) ,ha='center',  va='bottom' if small else 'top' ,rotation=90, color='black' if small else contrast, fontweight='bold')
+    ax.set(**axparams)
+    if legend:
+        ax.legend()
     return ax
 
 def proportion_test(x,n):
@@ -267,7 +268,7 @@ def lr_test(x,n):
 
 def altsplice_test(transcriptome,groups, min_cov=10, test=proportion_test,padj_method='fdr_bh'):
     multitest_default={}
-    grp_idx={r:i for i,r in enumerate(transcriptome.infos['runs'])}
+    grp_idx={r:i for i,r in enumerate(transcriptome.runs)}
     grp=[[grp_idx[r] for r in g] for g in groups]
     res=[]
     for g in tqdm(transcriptome):
@@ -283,17 +284,113 @@ def altsplice_test(transcriptome,groups, min_cov=10, test=proportion_test,padj_m
 
 
 #QC plots
-def plot_transcript_len(transcriptome, plot=True, coverage=True,groups=None,min_coverage=1, include=None, remove=None):
-    pass
+def transcript_length_hist(transcriptome,reference=None,groups=None,bins=50,range=(100,10000),coverage=True,min_coverage=1,use_alignment=False, include=None, remove=None):
+    trlen=[]
+    cov=[]
+    for _,_,tr in transcriptome.iter_transcripts(include=include, remove=remove):
+        cov.append(tr['coverage'])
+        trlen.append(sum(e[1]-e[0] for e in tr['exons']) if use_alignment else tr['source_len'])
+    cov=pd.DataFrame(cov, columns=transcriptome.runs)
+    if groups is not None:
+        cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
+    if isinstance(bins,int):
+        bins=np.linspace(range[0],range[1],bins)
+    if not coverage:
+        cov[cov<min_coverage]=0
+        cov[cov>0]=1
+    counts=pd.DataFrame({gn:np.histogram(trlen, weights=g_cov, bins=bins)[0] for gn,g_cov in cov.items()})   
+    bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
+    params=dict(yscale='linear', title='transcript length',xlabel='transcript length [bp]', ylabel='# transcripts')
+    return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-def plot_transcript_coverage(transcriptome, plot=True, groups=None, include=None, remove=None):
-    pass
 
-def plot_transcripts_per_gene(transcriptome, plot=True, groups=None, min_coverage=1,include=None, remove=None ):
-    pass
+def transcript_coverage_hist(transcriptome, reference=None, groups=None,bins=50,range=(2,1000), include=None, remove=None):
+    # get the transcript coverage in bins for groups
+    # return count dataframe and suggested default parameters for plot_distr
+    cov=[]
+    for _,_,tr in transcriptome.iter_transcripts(include=include, remove=remove):
+        cov.append(tr['coverage'])
+    cov=pd.DataFrame(cov, columns=transcriptome.runs)
+    if groups is not None:
+        cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
+    if isinstance(bins,int):
+        bins=np.linspace(range[0],range[1],bins)
+    counts=pd.DataFrame({gn:np.histogram(g_cov, bins=bins)[0] for gn,g_cov in cov.items()})
+    #todo: add reference
+    bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
+    params=dict(yscale='log', title='transcript coverage',xlabel='reads per transcript', ylabel='# transcripts')
+    return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
+    #plot histogram
+    # cov.mask(cov.lt(range[0]) | cov.gt(range[1])).plot.hist(ax=ax, alpha=0.5, bins=n_bins)
+    # ax=counts.plot.bar() 
+    # ax.plot(x, counts)
+   
+def transcripts_per_gene_hist(transcriptome, reference=None, groups=None,bins=50,range=(.5,50.5), min_coverage=1,include=None, remove=None):
+    ntr=[]
+    cov=[]
+    if groups is not None:
+        names=list(groups)
+        run_nr={run:nr for nr,run in enumerate(transcriptome.runs)}
+        groups=[[run_nr[run] for run in grp] for grp in groups.values()]
+    else:
+        names=transcriptome.runs
+    for g in transcriptome:
+        g_ntr=np.zeros(len(names))
+        for trid in g.filter_transcripts(include, remove):
+            cov=g.transcripts[trid]['coverage']
+            if groups is not None:
+                cov=[sum([cov[run] for run in gr]) for gr in groups]
+            g_ntr[[i for i,c in enumerate(cov) if c > min_coverage]]+=1
+        ntr.append(g_ntr)
+    ntr=pd.DataFrame(ntr, columns=names)
+    if isinstance(bins,int):
+        bins=np.linspace(range[0],range[1],bins)
+    counts=pd.DataFrame({gn:np.histogram(trl, bins=bins)[0] for gn,trl in ntr.items()})   
+    bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
+    sub=f'counting transcripts covered by > {min_coverage} reads'
+    if include is not None:
+        sub+=f'; only the following categories:{include}'
+    if include is not None:
+        sub+=f'; without the following categories:{remove}'
+    params=dict(yscale='log',title='transcript per gene\n'+sub,xlabel='transcript per gene', ylabel='# transcripts')
+    return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
+    
+def exons_per_transcript_hist(transcriptome, reference=None, groups=None,bins=50,range=(1,50),coverage=True,  min_coverage=1,include=None, remove=None ):
+    n_exons=[]
+    cov=[]
+    for _,_,tr in transcriptome.iter_transcripts(include=include, remove=remove):
+        cov.append(tr['coverage'])
+        n_exons.append(len(tr['exons']))
+    cov=pd.DataFrame(cov, columns=transcriptome.runs)
+    if groups is not None:
+        cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
+    if isinstance(bins,int):
+        bins=np.linspace(range[0],range[1],bins)
+    if not coverage:
+        cov[cov<min_coverage]=0
+        cov[cov>0]=1
+    counts=pd.DataFrame({gn:np.histogram(n_exons, weights=g_cov, bins=bins)[0] for gn,g_cov in cov.items()})   
+    bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
+    params=dict(yscale='log', title='exons per transcript',xlabel='number of exons per transcript', ylabel='# transcripts')
+    return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-def plot_exons_per_transcript(transcriptome, plot=True, groups=None, min_coverage=1,include=None, remove=None ):
-    pass
+def plot_distr(counts,ax=None,legend=True,fill=True,**axparams):
+    #maybe add smoothing
+    x=[sum(bin)/2 for bin in counts.index]
+    sz=[bin[1]-bin[0] for bin in counts.index]
+    if ax is None:
+        fig, ax=  plt.subplots()
+    if fill:
+        for gn,gc in counts.items():
+            ax.fill_between(x, 0, gc/sz, label=gn, alpha=.5)
+    ax.plot(x, counts.divide(sz, axis=0))
+    ax.set(**axparams)
+    if legend:
+        ax.legend()
+    return ax
+
+
+
 
 #biases plots
 

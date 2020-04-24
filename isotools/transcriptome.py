@@ -109,6 +109,10 @@ class Transcriptome:
         self.infos['filter']=kwargs
 
     @property 
+    def runs(self):
+        return(self.infos['runs'])
+        
+    @property 
     def groups(self):
         try:
             return(self.infos['groups'])

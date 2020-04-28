@@ -27,7 +27,10 @@ class SpliceGraph():
         if isinstance(exons,isotools.transcriptome.Gene):
             #end=exons.end ?uncomment to increase performance
             ids=list(exons.transcripts.keys())
-            weights=np.array([tr['coverage'] for tr in exons.transcripts.values()]).swapaxes(0,1)
+            try:
+                weights=np.array([tr['coverage'] for tr in exons.transcripts.values()]).swapaxes(0,1)
+            except KeyError:
+                weights=None
             exons=[tr['exons'] for tr in exons.transcripts.values()]
         if ids is None: #exons is a list of exons
             ids=list(range(len(exons)))

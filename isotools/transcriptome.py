@@ -277,18 +277,18 @@ class Gene(Interval):
         if include is None and remove is None: # return all
             for tr in self.transcripts.keys():
                 yield tr
-
-        for trid in self.transcripts.keys():            
-            try:
-                select =  any(f in self.transcripts[trid]['filter'] for f in include)
-            except TypeError:
-                select=True #None means include all
-            try:
-                select &= all(f not in self.transcripts[trid]['filter'] for f in remove)
-            except TypeError:
-                pass
-            if select:
-                yield trid
+        else:
+            for trid in self.transcripts.keys():            
+                try:
+                    select =  any(f in self.transcripts[trid]['filter'] for f in include)
+                except TypeError:
+                    select=True #None means include all
+                try:
+                    select &= all(f not in self.transcripts[trid]['filter'] for f in remove)
+                except TypeError:
+                    pass
+                if select:
+                    yield trid
         
 
 

@@ -18,6 +18,7 @@ import isotools.splice_graph
 import logging
 import copy
 import pickle
+import operator as o
 
 log=logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -26,8 +27,16 @@ log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s:%(message)s'
 log_stream=logging.StreamHandler()
 log_stream.setFormatter(log_format)
 log.addHandler(log_stream)
-
-
+#a_th=.5, rtts_maxcov=10, rtts_ratio=5, min_alignment_cov=.1
+default_gene_filter={'NOVEL_GENE':'all(tr["annotation"] for tr in transcripts)'}
+default_transcript_filter={
+        'CLIPPED_ALIGNMENT':'clipped>50',#more then 50 bases or 20% clipped
+        'A_CONTENT':'downstream_A_content>.5', #more than 50% a
+        'RTTS':'any(ts[2]<=10 and ts[2]/(ts[2]+ts[3])<.2 for ts in template_switching)', #less than 10 reads and less then 20% of total reads for at least one junction
+        'NONCANONICAL_SPLICING':'noncanonical_splicing',
+        'NOVEL_TRANSCRIPT':'not annotation or "splice_identical" not in annotation["sType"]',
+        'TRUNCATION':'truncated'}
+        
 class Transcriptome:
     def __init__(self, file_name, chromosomes=None, file_format='auto', groups=None):        
         self.data,self.infos=import_transcripts(file_name, chromosomes=chromosomes, file_format=file_format)
@@ -86,7 +95,7 @@ class Transcriptome:
         del self.data[chromosome]
 
     def add_biases(self, genome_fn):
-        #populates transcript['biases'] which is the bases for the filters
+        #populates transcript['biases'] which is the bases for the filter
         with FastaFile(genome_fn) as genome_fh:
             for g in tqdm(self):
                 if 'splice_graph' not in g.data:
@@ -94,19 +103,28 @@ class Transcriptome:
                 ts_candidates=g.data['splice_graph'].find_ts_candidates()
                 for start, end, js, ls, idx in ts_candidates:
                     for tr in (g.transcripts[i] for i in idx):
-                        tr.setdefault('biases',{}).setdefault('template_switching', []).append('{}-{}:{}/{}'.format(start, end, js, ls))
+                        tr.setdefault('template_switching',[]).append((start, end, js, ls))
                 g.add_direct_repeat_len(genome_fh) 
                 g.add_noncanonical_splicing(genome_fh)
                 g.add_threeprime_a_content(genome_fh)
                 g.add_truncations()
         self.infos['biases']=True # flag to check that the function was called
 
-    def add_filters(self,**kwargs):
+    def add_filter(self, transcript_filter={},gene_filter={}):
+        #possible filter flags: 'A_CONTENT','RTTS','NONCANONICAL_SPLICING','NOVEL_GENE','NOVEL_TRANSCRIPT','TRUNCATION'
+        # a_th=.5, rtts_maxcov=10, rtts_ratio=5, min_alignment_cov=.1
         #biases are evaluated with respect to specific thresholds
-        assert 'biases' in self.infos or not self.infos['biases'], 'run add_biases() first'
+        gene_attributes={k for g in self for k in g.data.keys() }
+        tr_attributes={k for g in self for tr in g.transcripts.values() for k in tr.keys() }
+        tr_attributes.add('filter')
+        if not gene_filter and not transcript_filter:
+            gene_filter=default_gene_filter
+            transcript_filter=default_transcript_filter
+        gene_ffun={label:filter_function(gene_attributes, fun) for label,fun in gene_filter.items()}
+        tr_ffun={label:filter_function(tr_attributes, fun) for label,fun in transcript_filter.items()}
         for g in tqdm(self):
-            g.add_filters(**kwargs)
-        self.infos['filter']=kwargs
+            g.add_filter(tr_ffun,gene_ffun)
+        self.infos['filter']={'gene_filter':gene_filter, 'transcript_filter':transcript_filter}
 
     @property 
     def runs(self):
@@ -235,7 +253,11 @@ class Transcriptome:
     
     
         
-
+#def default_false(fun,**args):
+#    try:
+#        return fun(**args)
+#    except NameError:
+#        return False
 
 class Gene(Interval):
     def __str__(self):
@@ -244,10 +266,17 @@ class Gene(Interval):
     def __repr__(self):
         return object.__repr__(self)
 
-    def add_filters(self, a_th=.5, rtts_maxcov=10, rtts_ratio=5, min_alignment_cov=.1):   
-        #possible filter flags: 'A_CONTENT','RTTS','NONCANONICAL_SPLICING','NOVEL_GENE','NOVEL_TRANSCRIPT','TRUNCATION'
-        assert all('biases' in tr for tr in self.transcripts.values()), 'run add_biases() first'
-        novel_gene=all(tr['annotation'] is None for tr in self.transcripts.values())
+    def add_filter(self, transcript_filter,gene_filter):   
+        gene_tags=[name for name,fun in gene_filter.items() if  fun(**self.data)]
+        for tr in self.transcripts.values():
+            tr['filter']=gene_tags.copy()
+            tr['filter'].extend([name for name,fun in transcript_filter.items() if fun(**tr)])
+            if not tr['filter']:
+                tr['filter']=['PASS']
+
+    '''
+    def add_filter(self, a_th=.5, rtts_maxcov=10, rtts_ratio=5, min_alignment_cov=.1):   
+       novel_gene=all(tr['annotation'] is None for tr in self.transcripts.values())
         for tr in self.transcripts.values():
             flags=[]
             if abs(tr['source_len'] - sum(e-s for s,e in tr['exons']))/tr['source_len']>min_alignment_cov:
@@ -269,7 +298,7 @@ class Gene(Interval):
             if 'truncated' in tr['biases']:    
                 flags.append('TRUNCATION')
             tr['filter']=flags
-        
+    '''        
 
     def filter_transcripts(self, include=None, remove=None):
         #include: transcripts must have at least one of the flags
@@ -336,7 +365,7 @@ class Gene(Interval):
                 sj_seq=[str(Seq(d+a).reverse_complement()) for d,a in sj_seq]
             nc=[(i,seq) for i,seq in enumerate(sj_seq) if seq != 'GTAG']
             if nc:
-                tr.setdefault('biases',{})['noncanonical_splicing']=nc
+                tr['noncanonical_splicing']=nc
 
     def add_direct_repeat_len(self, genome_fh,delta=10):
         #perform a global alignment of the sequences at splice sites and report the score. Direct repeats indicate template switching
@@ -365,7 +394,7 @@ class Gene(Interval):
             #this is not optimal, since it does not account for the special requirements here: 
             #a direct repeat shoud start at the same position in the seqs, so start and end missmatches free, but gaps not
             #tr['ts_score']=list(zip(score,intron_seq))
-            tr.setdefault('biases',{})['direct_repeat_len']=[min(s, delta) for s in score]
+            tr['direct_repeat_len']=[min(s, delta) for s in score]
     
     def add_threeprime_a_content(self, genome_fh, length=30):
         #add the information of the genomic A content downstream the transcript. High values indicate genomic origin of the pacbio read        
@@ -376,9 +405,9 @@ class Gene(Interval):
                 pos=tr['exons'][0][0]-length
             seq=genome_fh.fetch(self.chrom, max(0,pos), pos+length) 
             if self.strand=='+':
-                tr.setdefault('biases',{})['downstream_A_content']=seq.upper().count('A')/length
+                tr['downstream_A_content']=seq.upper().count('A')/length
             else:
-                tr.setdefault('biases',{})['downstream_A_content']=seq.upper().count('T')/length
+                tr['downstream_A_content']=seq.upper().count('T')/length
 
     def add_truncations(self): 
         #check for truncations and save indices of truncated genes in transcripts
@@ -401,10 +430,10 @@ class Gene(Interval):
                 is_truncated.add(trid1)                
                 if self.strand=='+':
                     #if (dist5<0 or dist5>abs(delta1)) and (dist3<0 or dist3>abs(delta2)):
-                    self.transcripts[trid1].setdefault('biases',{})['truncated']=(trid2,delta1, delta2)
+                    self.transcripts[trid1]['truncated']=(trid2,delta1, delta2)
                 else:
                     #if (dist5<0 or dist5>abs(delta2)) and (dist3<0 or dist3>abs(delta1)):
-                    self.transcripts[trid1].setdefault('biases',{})['truncated']=(trid2,delta2, delta1)
+                    self.transcripts[trid1]['truncated']=(trid2,delta2, delta1)
         
                     
 
@@ -444,7 +473,7 @@ class Gene(Interval):
         elif what=='coverage':
             return self.transcripts[trid]['coverage']
         elif what=='downstream_A_content':
-            return self.transcripts[trid]['biases']['downstream_A_content'],
+            return self.transcripts[trid]['downstream_A_content'],
         elif what in self.transcripts[trid]:
             val=str(self.transcripts[trid][what])
             try:
@@ -645,7 +674,7 @@ def import_pacbio_transcripts(fn,chromosomes=None):
                 strand = '-' if read.is_reverse else '+'
                 exons = junctions_from_cigar(read.cigartuples,read.reference_start)
                 tags= dict(read.tags)
-                tr={'exons':exons, 'source_len':len(read.seq), 'cigar':read.cigarstring}
+                tr={'exons':exons, 'source_len':len(read.seq), 'cigar':read.cigarstring, 'clipped': sum(n for i,n in read.cigartuples if i in {4,5})} 
                 info={'strand':strand, 'chr':chrom,
                         'ID':read.query_name,'transcripts':{read.query_name:tr}}
                 cov={}
@@ -793,7 +822,9 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
             gene_set.add(info['ID'])
             genes[chrom].add(Gene(start,end,info))
         elif all([v in info for v in ['Parent', "ID"]]) and (ls[2] == 'transcript' or info['Parent'].startswith('gene')):# those denote transcripts
-            transcripts.setdefault(info["Parent"], list()).append( info["ID"])
+            tr_info={k:v for k,v in info.items() if k.startswith('transcript_')}
+            transcripts.setdefault(info["Parent"], {})[info["ID"]]=tr_info
+            
         else:
             skipped.add(ls[2])
     if skipped:
@@ -802,7 +833,7 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
     for tid in exons.keys():
         exons[tid].sort()
         
-    missed_genes={gid:tr for gid, tr in transcripts.items() if gid not in gene_set}    
+    missed_genes=[gid for gid in transcripts.keys() if gid not in gene_set]
     if missed_genes:        
         #log.debug('/n'.join(gid+str(tr) for gid, tr in missed_genes.items()))
         notfound=len(missed_genes)
@@ -812,13 +843,14 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
     for chrom in genes:
         for gene in genes[chrom]:
             g_id = gene.data['ID']
-            t_ids = transcripts.get(g_id,  g_id)
-            for t_id in t_ids:
+            tr=transcripts.get(g_id,  {g_id:{}})
+            for t_id,tr_info in tr.items():
                 try:
-                    gene.data.setdefault('transcripts', dict())[t_id]={'exons':exons[t_id]}
+                    tr_info['exons']=exons[t_id]
                 except KeyError:
                     # genes without transcripts get a single exons transcript
-                    gene.data['transcripts'] = {t_id:{'exons':[tuple(gene[:2])]}}
+                    tr_info['exons']=[tuple(gene[:2])]
+                gene.data.setdefault('transcripts', dict())[t_id]=tr_info
     return genes,dict()
 
 def get_gff_chrom_dict(gff, chromosomes):
@@ -876,6 +908,14 @@ def collapse_transcripts_to_genes( transcripts, spj_iou_th=0, reg_iou_th=.5, gen
                
 
 #utils
+
+def filter_function(argnames, expression):
+    #converts a string e.g. 'all x[0]/x[1]>3' into a function
+    #todo: is it save??
+    return eval (f'lambda {",".join(arg+"=None" for arg in argnames)}: bool({expression})\n',{},{})
+    
+
+
 def overlap(r1, r2):
     # do the two intervals overlap
     # assuming start < end
@@ -999,7 +1039,7 @@ def is_truncation(exons1, exons2):
     if last-first > 1 and any(relation[i][0][1]!=3 for i in range(first+1, last)): #
         log.debug('intermediate exons do not fit')
         return False
-    log.debug('all filters passed')
+    log.debug('all filter passed')
     return relation, first, last
 '''
 
@@ -1008,6 +1048,10 @@ def junctions_from_cigar(cigartuples, offset):
     for cigar in cigartuples:
         if cigar[0] == 3:  # N ->  Splice junction
             pos = exons[-1][1]+cigar[1]
+            if exons[-1][0]==exons[-1][1]: 
+                # delete zero length exons 
+                # (may occur if insertion within intron, e.g. 10M100N10I100N10M)
+                del exons[-1]
             exons.append([pos, pos])
         elif cigar[0] in (0, 2, 7, 8):  # MD=X -> move forward on reference
             exons[-1][1] += cigar[1]

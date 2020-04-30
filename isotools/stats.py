@@ -299,14 +299,14 @@ def plot_distr(counts,ax=None,density=False, legend=True,fill=True,**axparams):
     return ax
 
 # summary tables (can be used as input to plot_bar / plot_dist)
-def altsplice_stats(transcriptome, coverage=True,groups=None,  min_coverage=1, region=None, include=None, remove=None):    #todo: filter like in make table
+def altsplice_stats(transcriptome, coverage=True,groups=None,  min_coverage=1, isoseq_filter={}, reference_filter={}):    #todo: filter like in make table
     try:
         runs=transcriptome.runs
     except KeyError:
         runs=['transcriptome']
 
     weights=dict()
-    for _,_,tr in transcriptome.iter_transcripts(region, include=include, remove=remove):
+    for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         w=tr['coverage'] if coverage else [1 if wi>=min_coverage else 0 for wi in tr['coverage']]
         if tr['annotation'] is None:
             weights['novel/unknown']=weights.get('novel/unknown',np.zeros(len(w)))+w
@@ -351,32 +351,12 @@ def filter_stats(transcriptome, coverage=True,groups=None,  min_coverage=1,consi
         if min_coverage>1:
             title+=f' > {min_coverage} reads'
     return df, {'ylabel':ylab,'title':title}
-   
-    if ax is None:
-        fig, ax=  plt.subplots()
-    fractions=(df/df.sum()*100)
-    if drop_categories is None:
-        dcat=[]
-    else:
-        dcat=[d for d in drop_categories if d in df.index]
-    fractions.drop(dcat).plot.bar( ax=ax)   
-    #add numbers 
-    numbers=[int(v) for c in df.drop(dcat).T.values for v in c]
-    frac=[v for c in fractions.drop(dcat).T.values for v in c]
-    for n,f,p in zip(numbers,frac,ax.patches):
-        small=f<max(frac)/2
-        #contrast=tuple(1-cv for cv in p.get_facecolor()[:3])
-        contrast='white' if np.mean(p.get_facecolor()[:3])<.5 else 'black'
-        ax.annotate(f' {f/100:.2%} ({n}) ', (p.get_x()+p.get_width()/2 , p.get_height() ) ,ha='center',  va='bottom' if small else 'top' ,rotation=90, color='black' if small else contrast, fontweight='bold')
-    ax.set(**axparams)
-    if legend:
-        ax.legend()
-    return ax
 
-def transcript_length_hist(transcriptome,reference=None,groups=None,bins=50,range=(100,10000),coverage=True,min_coverage=1,use_alignment=False, include=None, remove=None):
+
+def transcript_length_hist(transcriptome,reference=None,groups=None,bins=50,range=(100,10000),coverage=True,min_coverage=1,use_alignment=False, isoseq_filter={}, reference_filter={}):
     trlen=[]
     cov=[]
-    for _,_,tr in transcriptome.iter_transcripts(include=include, remove=remove):
+    for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         cov.append(tr['coverage'])
         trlen.append(sum(e[1]-e[0] for e in tr['exons']) if use_alignment else tr['source_len'])
     cov=pd.DataFrame(cov, columns=transcriptome.runs)
@@ -389,17 +369,17 @@ def transcript_length_hist(transcriptome,reference=None,groups=None,bins=50,rang
         cov[cov>0]=1
     counts=pd.DataFrame({gn:np.histogram(trlen, weights=g_cov, bins=bins)[0] for gn,g_cov in cov.items()})   
     if reference is not None:
-        ref_len=[sum(e[1]-e[0] for e in tr['exons']) for g in reference for tr in g.transcripts.values()]
+        ref_len=[sum(e[1]-e[0] for e in tr['exons']) for _,_,tr in reference.iter_transcripts(**reference_filter)]
         counts['reference']=np.histogram(ref_len, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     params=dict(yscale='linear', title='transcript length',xlabel='transcript length [bp]', ylabel='density', density=True)
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-def transcript_coverage_hist(transcriptome, groups=None,bins=50,range=(0.5,1000), include=None, remove=None):
+def transcript_coverage_hist(transcriptome, groups=None,bins=50,range=(0.5,1000), isoseq_filter={}, reference_filter={}):
     # get the transcript coverage in bins for groups
     # return count dataframe and suggested default parameters for plot_distr
     cov=[]
-    for _,_,tr in transcriptome.iter_transcripts(include=include, remove=remove):
+    for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         cov.append(tr['coverage'])
     cov=pd.DataFrame(cov, columns=transcriptome.runs)
     if groups is not None:
@@ -415,10 +395,10 @@ def transcript_coverage_hist(transcriptome, groups=None,bins=50,range=(0.5,1000)
     # ax=counts.plot.bar() 
     # ax.plot(x, counts)
    
-def transcripts_per_gene_hist(transcriptome, reference=None, groups=None,bins=50,range=(.5,49.5), min_coverage=1,include=None, remove=None):
+def transcripts_per_gene_hist(transcriptome, reference=None, groups=None,bins=50,range=(.5,49.5), min_coverage=1, isoseq_filter={}, reference_filter={}):
     ntr=[]
     for g in transcriptome:        
-        cov=np.array([g.transcripts[trid]['coverage'] for trid in g.filter_transcripts(include, remove)]).T
+        cov=np.array([g.transcripts[trid]['coverage'] for trid in g.filter_transcripts(**isoseq_filter)]).T
         ntr.append([(c>=min_coverage).sum() for c in cov])
     ntr=pd.DataFrame(ntr, columns=transcriptome.runs)
     if groups is not None:
@@ -431,17 +411,18 @@ def transcripts_per_gene_hist(transcriptome, reference=None, groups=None,bins=50
         counts['reference']=np.histogram(ref_ntr, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     sub=f'counting transcripts covered by >= {min_coverage} reads'
-    if include is not None:
-        sub+=f'; only the following categories:{include}'
-    if include is not None:
-        sub+=f'; without the following categories:{remove}'
+    if isoseq_filter is not None:
+        if 'include' in isoseq_filter:
+            sub+=f'; only the following categories:{isoseq_filter["include"]}'
+        if 'remove' in isoseq_filter:
+            sub+=f'; without the following categories:{isoseq_filter["remove"]}'
     params=dict(yscale='log',title='transcript per gene\n'+sub,xlabel='transcript per gene', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
     
-def exons_per_transcript_hist(transcriptome, reference=None, groups=None,bins=35,range=(0.5,69.5),coverage=True,  min_coverage=2,include=None, remove=None ):
+def exons_per_transcript_hist(transcriptome, reference=None, groups=None,bins=35,range=(0.5,69.5),coverage=True,  min_coverage=2, isoseq_filter={}, reference_filter={}):
     n_exons=[]
     cov=[]
-    for _,_,tr in transcriptome.iter_transcripts(include=include, remove=remove):
+    for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         cov.append(tr['coverage'])
         n_exons.append(len(tr['exons']))
     cov=pd.DataFrame(cov, columns=transcriptome.runs)
@@ -460,13 +441,12 @@ def exons_per_transcript_hist(transcriptome, reference=None, groups=None,bins=35
     params=dict(yscale='log', title='exons per transcript',xlabel='number of exons per transcript', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-
-def downstream_a_hist(transcriptome, reference=None, groups=None,bins=30,range=(0,1),coverage=True,  min_coverage=2,include=None, remove=None ):
+def downstream_a_hist(transcriptome, reference=None, groups=None,bins=30,range=(0,1),coverage=True,  min_coverage=2, isoseq_filter={}, reference_filter={}):
     acontent=[]
     cov=[]
-    for _,_,tr in transcriptome.iter_transcripts(include=include, remove=remove):
+    for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         cov.append(tr['coverage'])
-        acontent.append(tr['biases']['downstream_A_content'])
+        acontent.append(tr['downstream_A_content'])
     cov=pd.DataFrame(cov, columns=transcriptome.runs)
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
@@ -478,7 +458,7 @@ def downstream_a_hist(transcriptome, reference=None, groups=None,bins=30,range=(
     counts=pd.DataFrame({gn:np.histogram(acontent, weights=g_cov, bins=bins)[0] for gn,g_cov in cov.items()})   
     if reference is not None:
         try:
-            ref_acontent=[tr['biases']['downstream_A_content'] for g in reference for tr in g.transcripts.values()]
+            ref_acontent=[tr['downstream_A_content'] for g in reference for tr in g.transcripts.values()]
         except KeyError:
             log.warn('No A content for reference found. Run add_biases for reference first')
         else:
@@ -487,7 +467,6 @@ def downstream_a_hist(transcriptome, reference=None, groups=None,bins=30,range=(
     params=dict(yscale='log', title='downstream genomic A content',xlabel='fraction of A downstream the transcript', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-#biases plots
 
 
 

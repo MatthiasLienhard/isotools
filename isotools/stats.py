@@ -101,6 +101,7 @@ def sashimi_plot_bam(g, bam_fn,ax=None,text_width=.02, text_height=1, title=None
     ax.set_yticklabels([1,10,100,1000])
     ax.ticklabel_format(axis='x', style='sci',scilimits=(6,6))
     ax.set_title(title)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
     return(ax)
 
 def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,title=None,group=None,  high_cov_th=.1,junctions_of_interest=None,  exon_color='blue', 
@@ -185,13 +186,9 @@ def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,ti
     ax.set(frame_on=False)
     ax.set_yticks([0,1,2,3])
     ax.set_yticklabels([1,10,100,1000])
-    
-    def mega(x, pos):
-        #'The two args are the value and tick position'
-        return f'{x*1e-6} MB'
 
-    mega_form = FuncFormatter(mega)
-    ax.xaxis.set_major_formatter(mega_form)
+
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
 
     #ax.ticklabel_format(axis='x', style='sci',scilimits=(6,6))
     #ax.set_xscale(1e-6, 'linear')
@@ -210,6 +207,8 @@ def gene_track(g, ax=None,title=None, draw_exon_numbers=True, color='blue'):
             if draw_exon_numbers:
                 enr=j+1 if g.strand=='+' else len(tr['exons'])-j
                 ax.text((st+end)/2,i+.25,enr,ha='center', va='center',bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)).set_clip_on(True)    
+    if title is None:
+        title=f'{g.name} {g.chrom}:{g.start}-{g.end}'
     ax.set_title(title)
     ax.set(frame_on=False)
     ax.set_yticks([i+.25 for i in range(g.n_transcripts)])
@@ -217,6 +216,7 @@ def gene_track(g, ax=None,title=None, draw_exon_numbers=True, color='blue'):
     ax.tick_params(left=False)
     ax.set_ylim(-.5,g.n_transcripts+1)
     ax.set_xlim(g.start-100, g.end+100)
+    ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
     return ax
 
 
@@ -262,7 +262,12 @@ def altsplice_test(transcriptome,groups, min_cov=10, test=proportion_test,padj_m
 def plot_bar(df,ax=None, drop_categories=None, legend=True,**axparams):    
     if ax is None:
         fig, ax=  plt.subplots()
-    fractions=(df/df.sum()*100)
+    if 'total' in df.index:
+        total=df.loc['total']
+        df=df.drop('total')
+    else:
+        total=df.sum()
+    fractions=(df/total*100)
     if drop_categories is None:
         dcat=[]
     else:
@@ -281,7 +286,7 @@ def plot_bar(df,ax=None, drop_categories=None, legend=True,**axparams):
         ax.legend()
     return ax
 
-def plot_distr(counts,ax=None,density=False, legend=True,fill=True,**axparams):
+def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,**axparams):
     #maybe add smoothing
     x=[sum(bin)/2 for bin in counts.index]
     sz=[bin[1]-bin[0] for bin in counts.index]
@@ -289,6 +294,8 @@ def plot_distr(counts,ax=None,density=False, legend=True,fill=True,**axparams):
         fig, ax=  plt.subplots()
     if density: 
         counts=(counts/counts.sum())
+    if smooth:
+        counts=counts.ewm(span=smooth).mean()
     if fill:
         for gn,gc in counts.items():
             ax.fill_between(x, 0, gc/sz, label=gn, alpha=.5)
@@ -299,24 +306,32 @@ def plot_distr(counts,ax=None,density=False, legend=True,fill=True,**axparams):
     return ax
 
 # summary tables (can be used as input to plot_bar / plot_dist)
-def altsplice_stats(transcriptome, coverage=True,groups=None,  min_coverage=1, isoseq_filter={}, reference_filter={}):    #todo: filter like in make table
+def altsplice_stats(transcriptome, coverage=True,groups=None,  min_coverage=1, isoseq_filter={}):    #todo: filter like in make table
     try:
         runs=transcriptome.runs
     except KeyError:
         runs=['transcriptome']
 
     weights=dict()
+    if groups is not None:
+        gi={r:i for i,r in enumerate(runs)}
+        groups={gn:[gi[r] for r in gr] for gn,gr in groups.items()}
     for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
-        w=tr['coverage'] if coverage else [1 if wi>=min_coverage else 0 for wi in tr['coverage']]
+        w=tr['coverage'] 
+        if groups is not None:
+            w=[sum(w[gi] for gi in g) for g in groups.values()]
+        if not coverage:
+            w=[1 if wi>=min_coverage else 0 for wi in w]
         if tr['annotation'] is None:
             weights['novel/unknown']=weights.get('novel/unknown',np.zeros(len(w)))+w
         else:
             for stype in tr['annotation']['sType']:
                 weights[stype]=weights.get(stype,np.zeros(len(w)))+w
-                    
-    df=pd.DataFrame(weights, index=runs).T
-    if groups is not None:
-        df=pd.DataFrame({grn:df[grp].sum(1) for grn, grp in groups.items()})
+        weights['total']=weights.get('total',np.zeros(len(w)))+w
+
+    df=pd.DataFrame(weights, index=runs if groups is None else groups.keys()).T
+    #if groups is not None:
+    #    df=pd.DataFrame({grn:df[grp].sum(1) for grn, grp in groups.items()})
         # sum per group
     df=df.reindex(df.mean(1).sort_values(ascending=False).index, axis=0)
 
@@ -329,19 +344,26 @@ def filter_stats(transcriptome, coverage=True,groups=None,  min_coverage=1,consi
     except KeyError:
         runs=['transcriptome']
     weights=dict()
+    if groups is not None:
+        gi={r:i for i,r in enumerate(runs)}
+        groups={gn:[gi[r] for r in gr] for gn,gr in groups.items()}
     for g,trid,tr in transcriptome.iter_transcripts():
-        w=tr['coverage'] if coverage else [1 if wi>=min_coverage else 0 for wi in tr['coverage']]
+        w=tr['coverage'] 
+        if groups is not None:
+            w=[sum(w[gi] for gi in g) for g in groups.values()]
+        if not coverage:
+            w=[1 if wi>=min_coverage else 0 for wi in w]
+        
         relevant_filter=[f for f in tr['filter'] if f in consider]
         if relevant_filter:
             for f in relevant_filter:
                 weights[f]=weights.get(f,np.zeros(len(w)))+w
         else:
             weights['PASS']=weights.get('PASS',np.zeros(len(w)))+w
+        weights['total']=weights.get('total',np.zeros(len(w)))+w
             
-    df=pd.DataFrame(weights, index=runs).T
-    if groups is not None:
-        df=pd.DataFrame({grn:df[grp].sum(1) for grn, grp in groups.items()})
-        # sum per group
+    df=pd.DataFrame(weights, index=runs if groups is None else groups.keys()).T
+
     df=df.reindex(df.mean(1).sort_values(ascending=False).index, axis=0)
     ylab='fraction of reads' if coverage else 'fraction of different transcripts'
     if coverage:
@@ -353,9 +375,10 @@ def filter_stats(transcriptome, coverage=True,groups=None,  min_coverage=1,consi
     return df, {'ylabel':ylab,'title':title}
 
 
-def transcript_length_hist(transcriptome,reference=None,groups=None,bins=50,range=(100,10000),coverage=True,min_coverage=1,use_alignment=False, isoseq_filter={}, reference_filter={}):
+def transcript_length_hist(transcriptome=None,reference=None,groups=None,bins=50,range=(100,10000),coverage=True,min_coverage=1,use_alignment=False, isoseq_filter={}, reference_filter={}):
     trlen=[]
     cov=[]
+    iso_filter=[]
     for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         cov.append(tr['coverage'])
         trlen.append(sum(e[1]-e[0] for e in tr['exons']) if use_alignment else tr['source_len'])
@@ -464,7 +487,7 @@ def downstream_a_hist(transcriptome, reference=None, groups=None,bins=30,range=(
         else:
             counts['reference']=np.histogram(ref_acontent, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
-    params=dict(yscale='log', title='downstream genomic A content',xlabel='fraction of A downstream the transcript', ylabel='# transcripts')
+    params=dict( title='downstream genomic A content',xlabel='fraction of A downstream the transcript', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
 

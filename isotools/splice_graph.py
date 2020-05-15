@@ -3,10 +3,8 @@ import itertools
 import warnings
 from itertools import combinations
 import argparse
-from pysam import TabixFile, AlignmentFile
 import pandas as pd
 import numpy as np
-#from Bio import SeqIO, Seq, SeqRecord
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
@@ -103,6 +101,83 @@ class SpliceGraph():
         exons.reverse()
         return exons
 
+    def get_alternative_splicing(self, exons,fuzzy_junction=0): 
+        #returns a list of novel splicing events or splice_identical or combination
+        #t='novel exon','intron retention', 'novel exonic', 'novel intronic','splice identical','combination', 'truncation', 'extention'
+        j1=0
+        altsplice={}
+        while j1 < len(self) and self[j1][1] <= exons[0][0]:#index of first segment ending after exon start (i.e. first overlapping segment)
+            j1+=1
+        if any (len(set(self[k].pre.values()))>1 for k in range(j1)): #splice junction in sg befor first exon starts
+            altsplice={'truncation':[exons[0][0]]} #at start (lower position)
+        for i,e in enumerate(exons):            
+            j2=j1# index of last segment starting befor exon end (i.e. last overlapping  segment)
+            while j2 < len(self) and self[j2][0] < e[1]:
+                j2+=1
+            j2-=1
+            print(f'{i} {j1}, {j2}')
+            j1, exon_altsplice=self._check_exon(j1,j2,* exons[i:(i+2)])
+            for k,v in exon_altsplice.items(): #e and the next if any
+                altsplice.setdefault(k,[]).extend(v)
+
+        return altsplice
+            
+    def _check_exon(self,j1,j2, e, e2=None):
+        #checks weather exon is supported by splice graph between nodes j1 and j2
+        #j1: index of first segment ending after exon start (i.e. first overlapping segment)
+        #j2: index of last segment starting befor exon end (i.e. last overlapping  segment)
+        if j1>j2: #e is not contained at all  -> intronic   
+            altsplice={'novel exon':[e]}
+        else:
+            altsplice={}
+            if self[j1][0]!=e[0]:
+                pos="intronic" if self[j1][0]>e[0] else "exonic"
+                altsplice[f'novel {pos} splice']=[e[0]] #todo: distinguish intronic/exonic/upstream/downstream
+            if self[j2][1]!=e[1]:
+                pos="intronic" if self[j2][1]<e[1] else "exonic"
+                altsplice.setdefault(f'novel {pos} splice',[]).append(e[1])
+            for j in range(j1,j2):
+                gap,j_suc=min(((self[j_suc][0]-self[j][1],j_suc) for j_suc in set(self[j].suc.values())), key=lambda x: x[0])
+                if gap>0:
+                    altsplice.setdefault('retained intron',[]).append([self[j][1],self[j_suc][0]])
+               
+        j1=j2 #j1=index of last segment starting befor e ends
+        if e2 is not None: #check presence of junction
+            introns=[]
+            while j2 < len(self) and self[j2][1]<=e2[0]:
+                if self[j2-1][1]<self[j2][0]:
+                    introns.append([self[j2-1][1],self[j2][0]])
+                j2+=1    #j2 is index of first segment ending after e2 starts 
+                
+            if self[j1][1]==e[1] and self[j2][0]==e2[0] and j2 not in self[j1].suc.values():#junciton not present...
+                if len(introns)>1: #strictly we would need to check the path from j1 to j2
+                    for i in range(len(introns)-1):
+                        altsplice.setdefault('exon skipping',[]).append([introns[i][1], introns[i+1][0]])
+                else:
+                    altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter
+      
+        return j2, altsplice
+            
+
+    def get_intersects(self, exons,fuzzy_junction=0):
+        #returns the splice junction and exonic base intersects
+        intersect=[0,0]
+        i=j=0
+        while True:            
+            if self[j][0] == exons[i][0] and any(self[k][1] < self[j][0] for k in self[j].pre.values()):
+                intersect[0]+=1 # same position and actual splice junction(not just tss or pas and internal junction)
+            if self[j][1] == exons[i][1] and any(self[k][0] > self[j][1] for k in self[j].suc.values()):
+                intersect[0]+=1
+            if self[j][1] > exons[i][0] and exons[i][1] > self[j][0]: #overlap
+                intersect[1]+=min(self[j][1], exons[i][1])-max(self[j][0], exons[i][0])
+            if exons[i][1]<self[j][1]:
+                i+=1
+            else:
+                j+=1
+            if i==len(exons) or j==len(self):
+                return(intersect)
+
+
     def find_ts_candidates(self):        
         for i, gnode in enumerate(self._graph[:-1]):
             if self._graph[i+1].start==gnode.end: #jump candidates: introns that start within an exon
@@ -185,44 +260,6 @@ class SpliceGraph():
 
 
 
-    '''
-    def altsplice_test(self, groups,min_junction_cov=10):      #todo: considier min_junction_cov  
-        assert len(groups)==2
-        assert all(isinstance(g,list) for g in groups)
-        p=dict()
-        #total_weight=[self.weights[grp,:].sum(1) for grp in groups]
-        for i,(es,ee, pre, suc) in enumerate(self):
-            for target in set(suc.values()):
-                if self[target][0]== ee: #only consider splice junctions (this excludes alternative tss and pas... todo)
-                    continue
-                relevant=[i for i,(tss,pas) in enumerate(zip(self._tss, self._pas)) if tss<=i and pas>=target]
-                total_weight=[self.weights[np.ix_(grp,relevant)].sum(1) for grp in groups]
-                weight=[self.weights[np.ix_(grp,[tr for tr in suc if suc[tr]==target])].sum(1) for grp in groups]
-                #proportion estimates
-                phat_0=sum(w+1 for wg in weight for w in wg)/sum(tw+2 for twg in total_weight for tw in twg) #null hypothesis (just one proportion)
-                phat_1=[sum(w+1 for w in wg)/sum(tw+2 for tw in twg) for wg,twg in zip(weight, total_weight)] #alternative: one proportion per group
-                # calculate the log likelihoods
-                l0 = binom.logpmf(weight, total_weight, phat_0).sum()
-                l1 = binom.logpmf(weight,total_weight,[[p]*len(groups[i]) for i,p in enumerate(phat_1)]).sum()
-                # calculate the pvalue (sf=1-csf(), 1df)
-                p[(ee,self[target][0])]=[chi2.sf(2*(l1-l0),1)]+phat_1+[tw.sum() for tw in total_weight]
-        return p
-
-    '''   
-                
-    '''
-    def find_5truncations(self, is_reverse=False, dist_3=10):
-        truncations=list()
-        next_idx=2 if is_reverse else 3
-        grps=dict()
-        start_idx=self._tss if is_reverse else self._pas
-        for i,v in enumerate(start_idx):
-            grps.setdefault(v, set()).add(i)
-        for idx, grp in grps.items():
-            pass
-            #
-        return truncations
-    ''' 
         
     def __getitem__(self, key):
         return self._graph[key]

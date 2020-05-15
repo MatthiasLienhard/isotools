@@ -28,14 +28,16 @@ log_stream=logging.StreamHandler()
 log_stream.setFormatter(log_format)
 log.addHandler(log_stream)
 #a_th=.5, rtts_maxcov=10, rtts_ratio=5, min_alignment_cov=.1
-default_gene_filter={'NOVEL_GENE':'all(tr["annotation"] for tr in transcripts)'}
+default_gene_filter={'NOVEL_GENE':'all(tr["annotation"] for tr in transcripts.values())'}
 default_transcript_filter={
         'CLIPPED_ALIGNMENT':'clipped>50',#more then 50 bases or 20% clipped
         'A_CONTENT':'downstream_A_content>.5', #more than 50% a
-        'RTTS':'any(ts[2]<=10 and ts[2]/(ts[2]+ts[3])<.2 for ts in template_switching)', #less than 10 reads and less then 20% of total reads for at least one junction
+        'RTTS':'template_switching and any(ts[2]<=10 and ts[2]/(ts[2]+ts[3])<.2 for ts in template_switching)', #less than 10 reads and less then 20% of total reads for at least one junction
         'NONCANONICAL_SPLICING':'noncanonical_splicing',
-        'NOVEL_TRANSCRIPT':'not annotation or "splice_identical" not in annotation["sType"]',
-        'TRUNCATION':'truncated'}
+        'NOVEL_TRANSCRIPT':'annotation is None or "splice_identical" not in annotation["sType"]',
+        'TRUNCATION':'truncated',
+        'REFERENCE':'annotation',# and "splice_identical" in annotation',
+        'UNSPLICED':'len(exons)==1','MULTIEXON':'len(exons)>1'}
         
 class Transcriptome:
     def __init__(self, file_name, chromosomes=None, file_format='auto', groups=None):        
@@ -826,7 +828,7 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
             transcripts.setdefault(info["Parent"], {})[info["ID"]]=tr_info
             
         else:
-            skipped.add(ls[2])
+            skipped.add(ls[2]) #transcript infos?
     if skipped:
         log.info('skipped the following categories: {}'.format(skipped))
     # sort the exons
@@ -1088,12 +1090,28 @@ def get_support(exons, ref_genes, chrom, is_reverse):
         return None
     strand='-' if is_reverse else '+'
     ref_genes_ol = [g for g in ref_genes.data[chrom][exons[0][0]: exons[-1][1]] if g.strand==strand]
+    #for each referecne gene get the number of intersecting splice junctions and bases
+    intersect=[g.splice_graph.get_intersects(exons) for g in ref_genes_ol]
+    best_idx = max(enumerate(intersect, key=lambda x:x[1][0]))[0]
+    if intersect[best_idx][1] == 0 :
+        return None
+    g = ref_genes_ol[best_idx]
+    anno={'name': g.name, 'id':g.id, 'as': g.splice_graph.get_alternative_splicing(exons)}
+    
+
+
+def get_support_old(exons, ref_genes, chrom, is_reverse):        
+    if chrom not in ref_genes.data:
+        return None
+    strand='-' if is_reverse else '+'
+    ref_genes_ol = [g for g in ref_genes.data[chrom][exons[0][0]: exons[-1][1]] if g.strand==strand]
     #compute support for all transcripts of overlapping genes
     support_dict, novel_sj1, novel_sj2 = compute_support(ref_genes_ol, exons)
     #chose the best transcript
     try:
         # https://stackoverflow.com/questions/2474015/getting-the-index-of-the-returned-max-or-min-item-using-max-min-on-a-list
-        best_idx = max(enumerate(zip(support_dict['sjIoU'], support_dict['exIoU'])), key=lambda x: x[1])[0]
+        #best_idx = max(enumerate(zip(support_dict['sjIoU'], support_dict['exIoU'])), key=lambda x: x[1])[0]
+        best_idx = max(enumerate(zip(support_dict['sjIoU'], support_dict['exIoU'])), key=lambda x: x[1][0]*x[1][1])[0] # use the product of IoUs as criterium
     except ValueError:
         return None
     else:

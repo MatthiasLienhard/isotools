@@ -110,52 +110,60 @@ class SpliceGraph():
             j1+=1
         if any (len(set(self[k].pre.values()))>1 for k in range(j1)): #splice junction in sg befor first exon starts
             altsplice={'truncation':[exons[0][0]]} #at start (lower position)
-        for i,e in enumerate(exons):            
+        for i,e in enumerate(exons):                   
             j2=j1# index of last segment starting befor exon end (i.e. last overlapping  segment)
             while j2 < len(self) and self[j2][0] < e[1]:
                 j2+=1
-            j2-=1
-            print(f'{i} {j1}, {j2}')
-            j1, exon_altsplice=self._check_exon(j1,j2,* exons[i:(i+2)])
+            #if self[j2][0] >= e[1]:
+            j2-=1   
+            #print(f'{i} {j1}, {j2}')
+            j1, exon_altsplice=self._check_exon(j1,j2,i==0,* exons[i:(i+2)])
             for k,v in exon_altsplice.items(): #e and the next if any
                 altsplice.setdefault(k,[]).extend(v)
+            if j1==len(self):
+                for remain in exons[(i+1):]:
+                    altsplice.setdefault('novel exon',[]).extend(remain)
+                break
+        if j2 < len(self) and j2 not in self._pas:
+            altsplice.setdefault('truncation',[]).append(exons[-1][1])
 
         return altsplice
             
-    def _check_exon(self,j1,j2, e, e2=None):
+    def _check_exon(self,j1,j2,is_first, e, e2=None):
         #checks weather exon is supported by splice graph between nodes j1 and j2
         #j1: index of first segment ending after exon start (i.e. first overlapping segment)
         #j2: index of last segment starting befor exon end (i.e. last overlapping  segment)
         if j1>j2: #e is not contained at all  -> intronic   
             altsplice={'novel exon':[e]}
+            j2=j1
         else:
             altsplice={}
-            if self[j1][0]!=e[0]:
+            if (not is_first) and self[j1][0]!=e[0]:
                 pos="intronic" if self[j1][0]>e[0] else "exonic"
                 altsplice[f'novel {pos} splice']=[e[0]] #todo: distinguish intronic/exonic/upstream/downstream
-            if self[j2][1]!=e[1]:
+            if e2 is not None and self[j2][1]!=e[1]:
                 pos="intronic" if self[j2][1]<e[1] else "exonic"
                 altsplice.setdefault(f'novel {pos} splice',[]).append(e[1])
             for j in range(j1,j2):
-                gap,j_suc=min(((self[j_suc][0]-self[j][1],j_suc) for j_suc in set(self[j].suc.values())), key=lambda x: x[0])
-                if gap>0:
-                    altsplice.setdefault('retained intron',[]).append([self[j][1],self[j_suc][0]])
-               
-        j1=j2 #j1=index of last segment starting befor e ends
+                if self[j].suc:
+                    gap,j_suc=min(((self[j_suc][0]-self[j][1],j_suc) for j_suc in set(self[j].suc.values())), key=lambda x: x[0])
+                    if gap>0:
+                        altsplice.setdefault('retained intron',[]).append([self[j][1],self[j_suc][0]])               
+            j1=j2 #j1 becomes index of last segment starting befor e ends
         if e2 is not None: #check presence of junction
             introns=[]
             while j2 < len(self) and self[j2][1]<=e2[0]:
                 if self[j2-1][1]<self[j2][0]:
                     introns.append([self[j2-1][1],self[j2][0]])
-                j2+=1    #j2 is index of first segment ending after e2 starts 
+                j2+=1    #j2 now is index of first segment ending after e2 starts 
                 
-            if self[j1][1]==e[1] and self[j2][0]==e2[0] and j2 not in self[j1].suc.values():#junciton not present...
+            if j2<len(self) and self[j1][1]==e[1] and self[j2][0]==e2[0] and j2 not in self[j1].suc.values():#junciton not present...
                 if len(introns)>1: #strictly we would need to check the path from j1 to j2
                     for i in range(len(introns)-1):
                         altsplice.setdefault('exon skipping',[]).append([introns[i][1], introns[i+1][0]])
                 else:
                     altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter
-      
+        
         return j2, altsplice
             
 
@@ -267,14 +275,14 @@ class SpliceGraph():
     def __len__(self):
         return len(self._graph)
 
-    def pre(self,key):
-        return (self._graph[pre_key] for pre_key in self._graph[key][2])
-        
-    def suc(self,key):
-        if self._graph[key][3]:
-            return (self._graph[suc_key] for suc_key in self._graph[key][3])
-        else:
-            return self._graph[key][3]
+    #def pre(self,key):
+    #    return (self._graph[pre_key] for pre_key in self._graph[key][2])
+    #    
+    #def suc(self,key):
+    #    if self._graph[key][3]:
+    #        return (self._graph[suc_key] for suc_key in self._graph[key][3])
+    #    else:
+    #        return self._graph[key][3]
     
     
     

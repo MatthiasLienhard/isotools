@@ -1091,13 +1091,15 @@ def get_support(exons, ref_genes, chrom, is_reverse):
     strand='-' if is_reverse else '+'
     ref_genes_ol = [g for g in ref_genes.data[chrom][exons[0][0]: exons[-1][1]] if g.strand==strand]
     #for each referecne gene get the number of intersecting splice junctions and bases
+    if len(ref_genes_ol)==0:
+        return None
     intersect=[g.splice_graph.get_intersects(exons) for g in ref_genes_ol]
-    best_idx = max(enumerate(intersect, key=lambda x:x[1][0]))[0]
+    best_idx = max(enumerate(intersect), key=lambda x:x[1])[0]
     if intersect[best_idx][1] == 0 :
         return None
     g = ref_genes_ol[best_idx]
-    anno={'name': g.name, 'id':g.id, 'as': g.splice_graph.get_alternative_splicing(exons)}
-    
+    anno={'ref_gene_name': g.name, 'ref_gene_id':g.id, 'as': g.splice_graph.get_alternative_splicing(exons)}
+    return anno
 
 
 def get_support_old(exons, ref_genes, chrom, is_reverse):        

@@ -141,7 +141,7 @@ class SpliceGraph():
 
 
 
-    def get_alternative_splicing(self, exons,strand,fuzzy_junction=0): 
+    def get_alternative_splicing(self, exons,strand): 
         #returns a list of novel splicing events or splice_identical or combination
         #t='novel exon','intron retention', 'novel exonic', 'novel intronic','splice identical','combination', 'truncation', 'extention'
         tr=self.search_transcript(exons)
@@ -162,7 +162,7 @@ class SpliceGraph():
             tr_nr, j0=max(((trid,self._tss[trid]) for trid in self[j1].pre), key=lambda x:x[1])#j0 is the closest start node
             if not self.is_same_exon(j0,j1,tr_nr):
                 end='3' if is_reverse else '5'
-                altsplice.setdefault(f'{end}\' truncation',[]).append([self[j0].start, exons[0][0]])} #at start (lower position)
+                altsplice.setdefault(f'{end}\' truncation',[]).append([self[j0].start, exons[0][0]]) #at start (lower position)
         for i,_ in enumerate(exons[:-1]):                               
             #print(f'{i} {j1}, {j2}')
             j1, exon_altsplice=self._check_exon(j1,j2,i==0,is_reverse,exons[i], exons[i+1])
@@ -236,8 +236,20 @@ class SpliceGraph():
         
         return j2, altsplice
             
+    def fuzzy_junction(self,exons,size):
+        #assuming size is smaller than introns
+        fuzzy={}
+        j1=0
+        for i,e1 in enumerate(exons[:-1]):
+            e2=exons[i+1]
+            j1=next(j for j in range(j1,len(self)) if self[j].end-size >=e1[1] )
+            while self[j1].end - e1[1] <= size:
+                if any (self[j1].end - e1[1] == self[j2].start - e2[0] for j2 in set(self[j2].suc.values()) ):
+                    fuzzy[i]=self[j1].end - e1[1]
+                j1+=1
+        return fuzzy
 
-    def get_intersects(self, exons,fuzzy_junction=0):
+    def get_intersects(self, exons):
         #returns the splice junction and exonic base intersects
         intersect=[0,0]
         i=j=0

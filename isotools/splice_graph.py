@@ -101,49 +101,118 @@ class SpliceGraph():
         exons.reverse()
         return exons
 
-    def get_alternative_splicing(self, exons,fuzzy_junction=0): 
+    def search_transcript(self, exons):
+        #test if a transcript is contained in sg and returns the id(s)
+        #fst special case: exons extends splice graph 
+        if exons[0][1]<=self[0].start or exons[-1][0]>=self[-1].end:
+            return [] 
+        #snd special case: single exon transcript: return all overlapping single exon transcripts form sg
+        if len(exons)==1: 
+            return [self.ids[trid] for trid,(j1,j2) in enumerate(zip(self._tss,self._pas)) 
+                    if self.is_same_exon(j1,j2,trid) and self[j1].start<exons[0][1] and self[j2].end > exons[0][0]]
+        # all junctions must be contained and no additional 
+        tr=set(range(len(self._tss)))
+        j=0
+        for i,e in enumerate(exons[:-1]):
+            while j<len(self) and self[j].end<e[1]:#check exon (no junction allowed)
+                tr -= set(trid for trid, j2 in self[j].suc.items() if self[j].end != self[j2].start)
+                j+=1
+            if  self[j].end!=e[1]:
+                return []
+            #check junction (must be present)
+            tr &= set(trid for trid, j2 in self[j].suc.items() if self[j2].start == exons[i+1][0])
+            j+=1
+            if len(tr)==0:
+                return tr
+
+        while j<len(self):#check last exon (no junction allowed)
+            tr -= set(trid for trid, j2 in self[j].suc.items() if self[j].end != self[j2].start)
+            j+=1    
+        return [self.ids[trid] for trid in tr]
+
+
+    def is_same_exon(self, j1,j2,tr_nr):
+        #test if nodes j1 and j2 belong to same exon in transcript tr_nr
+        for j in range(j1,j2):
+            if tr_nr not in self[j].suc or self[j].suc[tr_nr]>j+1 or self[j].end!= self[j+1].start:
+                return False
+        return True
+
+
+
+
+    def get_alternative_splicing(self, exons,strand,fuzzy_junction=0): 
         #returns a list of novel splicing events or splice_identical or combination
         #t='novel exon','intron retention', 'novel exonic', 'novel intronic','splice identical','combination', 'truncation', 'extention'
-        j1=0
+        tr=self.search_transcript(exons)
+        if tr:
+            return {'splice_identical':tr}
+        is_reverse=strand=='-'
         altsplice={}
-        while j1 < len(self) and self[j1][1] <= exons[0][0]:#index of first segment ending after exon start (i.e. first overlapping segment)
-            j1+=1
-        if any (len(set(self[k].pre.values()))>1 for k in range(j1)): #splice junction in sg befor first exon starts
-            altsplice={'truncation':[exons[0][0]]} #at start (lower position)
-        for i,e in enumerate(exons):                   
-            j2=j1# index of last segment starting befor exon end (i.e. last overlapping  segment)
-            while j2 < len(self) and self[j2][0] < e[1]:
-                j2+=1
-            #if self[j2][0] >= e[1]:
-            j2-=1   
+        
+        j1=next(j for j,n in enumerate(self) if n.end > exons[0][0])
+        #j1: index of first segment ending after exon start (i.e. first overlapping segment)        
+        try:
+            j2=next(j-1 for j in range(j1,len(self)) if self[j].start >= exons[0][1])
+        except StopIteration:
+            j2=len(self)-1
+        #j2: index of last segment starting befor exon end (i.e. last overlapping segment)        
+
+        if self[j1].pre and not any(j in self._tss for j in range(j1,j2+1)):
+            tr_nr, j0=max(((trid,self._tss[trid]) for trid in self[j1].pre), key=lambda x:x[1])#j0 is the closest start node
+            if not self.is_same_exon(j0,j1,tr_nr):
+                end='3' if is_reverse else '5'
+                altsplice.setdefault(f'{end}\' truncation',[]).append([self[j0].start, exons[0][0]])} #at start (lower position)
+        for i,_ in enumerate(exons[:-1]):                               
             #print(f'{i} {j1}, {j2}')
-            j1, exon_altsplice=self._check_exon(j1,j2,i==0,* exons[i:(i+2)])
+            j1, exon_altsplice=self._check_exon(j1,j2,i==0,is_reverse,exons[i], exons[i+1])
             for k,v in exon_altsplice.items(): #e and the next if any
                 altsplice.setdefault(k,[]).extend(v)
             if j1==len(self):
-                for remain in exons[(i+1):]:
+                for remain in exons[(i+1):-1]:
                     altsplice.setdefault('novel exon',[]).extend(remain)
+                if i<len(exons)-1:
+                    site='TSS' if is_reverse else 'PAS'
+                    altsplice.setdefault(f'novel {site}',[]).extend(exons[-1])
                 break
-        if j2 < len(self) and j2 not in self._pas:
-            altsplice.setdefault('truncation',[]).append(exons[-1][1])
-
+            # find j2: index of last segment starting befor exon end (i.e. last overlapping  segment)
+            try:
+                j2=next(j-1 for j in range(j1,len(self)) if self[j].start >= exons[i+1][1])
+            except StopIteration:
+                j2=len(self)-1
+        else:# check last exon
+            j1, exon_altsplice=self._check_exon(j1,j2,False,is_reverse,exons[-1])
+            for k,v in exon_altsplice.items(): #e and the next if any
+                altsplice.setdefault(k,[]).extend(v)
+        if self[j2].suc and not any(j in self._pas for j in range(j1,j2+1)):
+            tr_nr, j3=min(((trid,self._pas[trid]) for trid in self[j2].suc), key=lambda x:x[1]) #j3 is the next end node (pas/tss on fwd/rev)
+            if not self.is_same_exon(j2,j3,tr_nr):
+                end='5' if is_reverse else '3'
+                altsplice.setdefault(f'{end}\' truncation',[]).append([exons[-1][1],self[j3].end])
+        if not altsplice:#all junctions are contained but search_transcript() did not find it
+            altsplice={'novel combination'}
         return altsplice
             
-    def _check_exon(self,j1,j2,is_first, e, e2=None):
+    def _check_exon(self,j1,j2,is_first,is_reverse, e, e2=None):
         #checks weather exon is supported by splice graph between nodes j1 and j2
         #j1: index of first segment ending after exon start (i.e. first overlapping segment)
         #j2: index of last segment starting befor exon end (i.e. last overlapping  segment)
         if j1>j2: #e is not contained at all  -> intronic   
-            altsplice={'novel exon':[e]}
+            if is_first:
+                altsplice={'novel PAS' if is_first==is_reverse else 'novel TSS':[e]}
+            else:
+                altsplice={'novel exon':[e]}
             j2=j1
         else:
             altsplice={}
             if (not is_first) and self[j1][0]!=e[0]:
                 pos="intronic" if self[j1][0]>e[0] else "exonic"
-                altsplice[f'novel {pos} splice']=[e[0]] #todo: distinguish intronic/exonic/upstream/downstream
+                kind='acceptor' if is_reverse else 'donor'
+                altsplice[f'novel {pos} splice {kind}']=[e[0]] #todo: distinguish intronic/exonic/upstream/downstream
             if e2 is not None and self[j2][1]!=e[1]:
                 pos="intronic" if self[j2][1]<e[1] else "exonic"
-                altsplice.setdefault(f'novel {pos} splice',[]).append(e[1])
+                kind='donor' if is_reverse else 'acceptor'
+                altsplice.setdefault(f'novel {pos} splice {kind}',[]).append(e[1])
             for j in range(j1,j2):
                 if self[j].suc:
                     gap,j_suc=min(((self[j_suc][0]-self[j][1],j_suc) for j_suc in set(self[j].suc.values())), key=lambda x: x[0])
@@ -153,10 +222,11 @@ class SpliceGraph():
         if e2 is not None: #check presence of junction
             introns=[]
             while j2 < len(self) and self[j2][1]<=e2[0]:
-                if self[j2-1][1]<self[j2][0]:
+                if j2 in self[j2-1].suc.values() and self[j2-1][1]<self[j2][0]:
                     introns.append([self[j2-1][1],self[j2][0]])
                 j2+=1    #j2 now is index of first segment ending after e2 starts 
-                
+            if j2 in self[j2-1].suc.values() and self[j2-1][1]<self[j2][0]:
+                introns.append([self[j2-1][1],self[j2][0]])    
             if j2<len(self) and self[j1][1]==e[1] and self[j2][0]==e2[0] and j2 not in self[j1].suc.values():#junciton not present...
                 if len(introns)>1: #strictly we would need to check the path from j1 to j2
                     for i in range(len(introns)-1):

@@ -325,7 +325,7 @@ def altsplice_stats(transcriptome, coverage=True,groups=None,  min_coverage=1, i
         if tr['annotation'] is None:
             weights['novel/unknown']=weights.get('novel/unknown',np.zeros(len(w)))+w
         else:
-            for stype in tr['annotation']['sType']:
+            for stype in tr['annotation']['as']:
                 weights[stype]=weights.get(stype,np.zeros(len(w)))+w
         weights['total']=weights.get('total',np.zeros(len(w)))+w
 

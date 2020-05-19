@@ -18,7 +18,7 @@ import isotools.splice_graph
 import logging
 import copy
 import pickle
-import operator as o
+#import operator as o
 
 log=logging.getLogger(__name__)
 log.setLevel(logging.INFO)
@@ -184,7 +184,7 @@ class Transcriptome:
                 pbar.set_postfix(chr=chrom)
                 for g in tree:    
                     for trid,tr in g.transcripts.items():                
-                        tr['annotation']=get_support(tr['exons'], reference, chrom=chrom,is_reverse=g.strand == '-')
+                        tr['annotation']=get_support(tr['exons'], reference, chrom=chrom,strand=g.strand)
                         #todo: what about fusion?                
                         if tr['annotation'] is not None:
                             gname=tr['annotation']['ref_gene_name']
@@ -248,7 +248,7 @@ class Transcriptome:
             extracolnames['coverage']=(f'coverage_{r}' for r in self.infos['runs'])
         colnames=['chr', 'gene_start', 'gene_end','strand', 'gene_id','gene_name' ,'transcript_name']     + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
         rows=[]
-        for g,trid, tr in self.iter_transcripts(region, include,remove):                
+        for g,trid, _ in self.iter_transcripts(region, include,remove):                
                 rows.append((g.chrom, g.start, g.end, g.strand,g.id, g.name, trid)+g.get_values(trid,extra_columns))
         df = pd.DataFrame(rows, columns=colnames)
         return(df)
@@ -465,7 +465,7 @@ class Gene(Interval):
                 return ('NA',)*len(sel)
             else:
                 #vals=support[n] if n in support else 'NA' for n in sel
-                stype=support['sType']
+                stype=support['as']
                 if isinstance(stype, dict):
                     type_string=';'.join('{}:{}'.format(k,v) for k,v in stype.items())
                 else:
@@ -1085,10 +1085,10 @@ def splice_identical(tr1, tr2):
             return False
     return True
 
-def get_support(exons, ref_genes, chrom, is_reverse):        
+def get_support(exons, ref_genes, chrom, strand):        
     if chrom not in ref_genes.data:
         return None
-    strand='-' if is_reverse else '+'
+    #strand='-' if is_reverse else '+'
     ref_genes_ol = [g for g in ref_genes.data[chrom][exons[0][0]: exons[-1][1]] if g.strand==strand]
     #for each referecne gene get the number of intersecting splice junctions and bases
     if len(ref_genes_ol)==0:
@@ -1098,7 +1098,7 @@ def get_support(exons, ref_genes, chrom, is_reverse):
     if intersect[best_idx][1] == 0 :
         return None
     g = ref_genes_ol[best_idx]
-    anno={'ref_gene_name': g.name, 'ref_gene_id':g.id, 'as': g.splice_graph.get_alternative_splicing(exons)}
+    anno={'ref_gene_name': g.name, 'ref_gene_id':g.id, 'as': g.splice_graph.get_alternative_splicing(exons, strand)}
     return anno
 
 

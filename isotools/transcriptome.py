@@ -171,7 +171,7 @@ class Transcriptome:
 
     
 
-    def annotate(self, reference,novel_params=None):  
+    def annotate(self, reference,fuzzy_junction=5,novel_params=None):  
         genes=dict()
         novel_default=dict(spj_iou_th=0, reg_iou_th=0, gene_prefix='PB_novel_')
         if novel_params is not None:
@@ -183,18 +183,27 @@ class Transcriptome:
                 novel=IntervalTree()
                 pbar.set_postfix(chr=chrom)
                 for g in tree:    
-                    for trid,tr in g.transcripts.items():                
-                        tr['annotation']=get_support(tr['exons'], reference, chrom=chrom,strand=g.strand)
-                        #todo: what about fusion?                
-                        if tr['annotation'] is not None:
-                            gname=tr['annotation']['ref_gene_name']
-                            gid=tr['annotation']['ref_gene_id']          
-                            if gname not in gene_idx:
-                                gene_idx[gname]={'chr':chrom, 'ID':gid, 'Name': gname, 'strand':g.strand ,'transcripts': dict()}
-                            gene_idx[gname]['transcripts'][trid]=tr
-                        else:                         
-                            novel.add(g)
-                        pbar.update(1)
+                    for trid,tr in g.transcripts.items():    
+                        exons=tr['exons']
+                        if chrom in reference.data:
+                            ref_genes_ol = [rg for rg in reference.data[chrom][exons[0][0]: exons[-1][1]] if rg.strand==g.strand]
+                            if len(ref_genes_ol)>0:                                
+                                intersect=[rg.splice_graph.get_intersects(exons) for rg in ref_genes_ol]
+                                best_idx ,(sj_i, base_i)= max(enumerate(intersect), key=lambda x:x[1])           #first criterion: sj overlap, second: base overlap                     
+                                if base_i > 0 :    # at least some overlap
+                                    ref_g = ref_genes_ol[best_idx]
+                                    g.correct_fuzzy_junctions(trid,ref_g, fuzzy_junction)
+                                    altsplice= ref_g.splice_graph.get_alternative_splicing(exons, g.strand)
+                                    tr['annotation']={'ref_gene_name': ref_g.name, 'ref_gene_id':ref_g.id, 'as':altsplice}
+                                    #todo: what about fusion?  
+                                    gene_idx.setdefault(ref_g.name,{'chr':chrom, 'ID':ref_g.id, 'Name': ref_g.name, 'strand':g.strand ,'transcripts': dict()})
+                                    gene_idx[ref_g.name]['transcripts'][trid]=tr
+                                    continue
+                        tr['annotation']=None
+                    if all(tr['annotation'] is None for tr in g.transcripts.values()):
+                        novel.add(g)     
+                    pbar.update(1)
+                    
                 #merge the novel genes for the chromosome
                 genes[chrom]=collapse_transcripts_to_genes(novel,offset=offset,**novel_default)
                 offset+=len(genes[chrom])
@@ -321,7 +330,16 @@ class Gene(Interval):
                 if select:
                     yield trid
         
-
+    def correct_fuzzy_junctions(self,trid,ref_g, size):
+        exons=self.transcripts[trid]['exons']
+        shifts=ref_g.splice_graph.fuzzy_junction(exons,size)
+        if shifts:
+            if 'splice_graph' in self.data:
+                del self.data['splice_graph']
+            self.transcripts[trid]['fuzzy_junction']=shifts #save info for analysis of the effect
+            for i,sh in shifts.items():
+                exons[i][1]+=sh
+                exons[i+1][0]+=sh
 
     def to_gtf(self, source='isoseq', use_gene_name=False, include=None, remove=None):
         
@@ -340,18 +358,6 @@ class Gene(Interval):
             lines.append(gene)
         return(lines)
     
-    ''' does not work so far (depends on unimplemented splice graph functionality)
-    def unify_junctions(self, fuzzy_junction=5, reference=None):
-        if 'splice_graph' not in self.data:
-            self.data['splice_graph']=isotools.splice_graph.SpliceGraph((tr['exons'] for tr in self.transcripts), self.end)
-        new_start, new_end=self.data['splice_graph'].unify_junctions(fuzzy_junction)  
-        for tr in self.transcripts:
-            try:
-                tr['exons']=[(new_start[e[0]], new_end[e[1]]) for e in tr['exons']] #todo: simply use zip?
-            except KeyError:
-                logging.info('no new values for transcript {}: {}\nnew starts:{}\nnew ends:{}'.format(tr['name'],tr['exons'],new_start, new_end))
-                raise
-    '''
 
     def add_noncanonical_splicing(self, genome_fh):
         #for all transcripts, add the the index and sequence of noncanonical (i.e. not GT-AG)

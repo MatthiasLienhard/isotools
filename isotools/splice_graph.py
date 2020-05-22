@@ -237,16 +237,34 @@ class SpliceGraph():
         return j2, altsplice
             
     def fuzzy_junction(self,exons,size):
+        #for each intron from "exons", look for introns in the splice graph shifted by less than "size".
+        # these shifts may be produced by ambigious alignments.
+        #return a dict with the intron number as key and the shift as value 
         #assuming size is smaller than introns
         fuzzy={}
+        if size < 1: #no need to check
+            return fuzzy
         j1=0
         for i,e1 in enumerate(exons[:-1]):
             e2=exons[i+1]
-            j1=next(j for j in range(j1,len(self)) if self[j].end-size >=e1[1] )
-            while self[j1].end - e1[1] <= size:
-                if any (self[j1].end - e1[1] == self[j2].start - e2[0] for j2 in set(self[j2].suc.values()) ):
-                    fuzzy[i]=self[j1].end - e1[1]
+            try:
+                j1=next(j for j in range(j1,len(self)) if self[j].end+size >=e1[1] )
+                #j1: first node intersecting size range of e1 end
+            except StopIteration:
+                break
+            
+            shift=None
+            while j1 < len(self) and self[j1].end - e1[1] <= size: # in case there are several nodes starting in the range around e1
+                shift_e1=self[j1].end - e1[1]
+                #print(f'{i} {e1[1]}-{e2[0]} {shift_e1}')
+                if shift_e1==0:
+                    break
+                if any( self[j2].start - e2[0] == shift_e1 for j2 in set(self[j1].suc.values()) ):
+                    shift=shift_e1
                 j1+=1
+            else:
+                if shift is not None:
+                    fuzzy[i]=shift
         return fuzzy
 
     def get_intersects(self, exons):
@@ -367,53 +385,7 @@ class SpliceGraph():
     #        return self._graph[key][3]
     
     
-    
-    '''
-    def unify_junctions(self, fuzzy_junction=5, reference=None):
-        start_ref={e.start:i for i,e in enumerate(self)}
-        end_ref={e.end:i for i,e in enumerate(self)}
         
-        merge_to=[[i] for i,_ in enumerate(self)]
-        for i,node in enumerate(self):
-            if node.end-node.start < fuzzy_junction: # short psydoexon
-                pre=node.pre #todo: currently merge with predecessor has prioritiy, but considering junction support would be better
-                if len(pre)==1 and self[pre[0]].end == node.start:#merge with predesessor                
-                    merge_to[node.pre]+=merge_to[i]
-                    merge_to[i]=merge_to[node.pre]
-                else:
-                    suc=node.suc
-                    if len(suc)==1 and self[suc[0]].start ==node.end:#merge with successor
-                        merge_to[node.suc]+=merge_to[i]
-                        merge_to[i]=merge_to[node.suc]
-        seen=set()
-        graph=list()
-        new_start={}
-        new_end={}
-        i=0
-        tss=[]
-        pas=[]
-        for merge_set in merge_to:
-            if id(merge_set) not in seen:
-                seen.add(id(merge_set))
-                starts=[self[i].start for i in merge_set]
-                ends=[self[i].end for i in merge_set]
-                pos=(min(starts), max(ends)) #TODO: CURRENTLY WE TAKE THE OUTER, BUT JUNCTION with best support WOULD BE BETTER?
-                new_start.update({self[i].start:pos[0] for i in merge_set})
-                new_end.update({self[i].end:pos[1] for i in merge_set})
-                pre={p for i in merge_set for p in self[i].pre if p not in starts}
-                suc={s for i in merge_set for s in self[i].suc if s not in ends}
-                graph.append(SpliceGraphNode(*pos,pre, suc))
-                if any(idx in self._tss for idx in merge_set):
-                    tss.append(i)
-                if any(idx in self._pas for idx in merge_set):
-                    pas.append(i)            
-                i+=1
-        self._graph =graph
-        self._tss=tss
-        self._pas=pas
-        return new_start, new_end
-    '''
-    
 
 class SpliceGraphNode(tuple):
     def __new__(cls,start, end, pre=None, suc=None):

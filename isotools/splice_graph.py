@@ -190,7 +190,7 @@ class SpliceGraph():
                 end='5' if is_reverse else '3'
                 altsplice.setdefault(f'{end}\' truncation',[]).append([exons[-1][1],self[j3].end])
         if not altsplice:#all junctions are contained but search_transcript() did not find it
-            altsplice={'novel combination'}
+            altsplice={'novel combination':None }
         return altsplice
             
     def _check_exon(self,j1,j2,is_first,is_reverse, e, e2=None):
@@ -205,14 +205,16 @@ class SpliceGraph():
             j2=j1
         else:
             altsplice={}
-            if (not is_first) and self[j1][0]!=e[0]:
+            if not is_first and self[j1][0]!=e[0]:
                 pos="intronic" if self[j1][0]>e[0] else "exonic"
-                kind='acceptor' if is_reverse else 'donor'
-                altsplice[f'novel {pos} splice {kind}']=[e[0]] #todo: distinguish intronic/exonic/upstream/downstream
+                kind='donor' if is_reverse else 'acceptor'
+                dist=self[j1][0]-e[0] if (e[0]-self[j1][0]<self[j1][1]-e[0]) else self[j1][1]-e[0] #the smaller of the two distances to next junction
+                altsplice[f'novel {pos} splice {kind}']=[(e[0],dist)] 
             if e2 is not None and self[j2][1]!=e[1]:
                 pos="intronic" if self[j2][1]<e[1] else "exonic"
-                kind='donor' if is_reverse else 'acceptor'
-                altsplice.setdefault(f'novel {pos} splice {kind}',[]).append(e[1])
+                kind='acceptor' if is_reverse else 'donor'
+                dist= self[j2][0]-e[1] if (e[1]-self[j2][0]<self[j2][1]-e[1]) else self[j2][1]-e[1] 
+                altsplice.setdefault(f'novel {pos} splice {kind}',[]).append((e[1],dist))
             for j in range(j1,j2):
                 if self[j].suc:
                     gap,j_suc=min(((self[j_suc][0]-self[j][1],j_suc) for j_suc in set(self[j].suc.values())), key=lambda x: x[0])

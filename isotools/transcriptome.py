@@ -22,7 +22,7 @@ import pickle
 
 log=logging.getLogger(__name__)
 log.setLevel(logging.INFO)
-log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s:%(message)s')
+log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s: %(message)s')
 #log_file=logging.FileHandler('logfile.txt')
 log_stream=logging.StreamHandler()
 log_stream.setFormatter(log_format)
@@ -34,7 +34,7 @@ default_transcript_filter={
         'A_CONTENT':'downstream_A_content>.5', #more than 50% a
         'RTTS':'template_switching and any(ts[2]<=10 and ts[2]/(ts[2]+ts[3])<.2 for ts in template_switching)', #less than 10 reads and less then 20% of total reads for at least one junction
         'NONCANONICAL_SPLICING':'noncanonical_splicing',
-        'NOVEL_TRANSCRIPT':'annotation is None or "splice_identical" not in annotation["sType"]',
+        'NOVEL_TRANSCRIPT':'annotation is None or "splice_identical" not in annotation["as"]',
         'TRUNCATION':'truncated',
         'REFERENCE':'annotation',# and "splice_identical" in annotation',
         'UNSPLICED':'len(exons)==1','MULTIEXON':'len(exons)>1'}
@@ -67,20 +67,13 @@ class Transcriptome:
                 if lines:
                     _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
 
-    '''
-    def write_table(self, fn, source='isotools'):     
-        header=['id','name', 'chrom','strand','txStart','txEnd','exonCount','exonStarts','exonEnds']
-        with open(fn, 'w') as f:       
-            print('\t'.join(header))
-            for gene in tqdm(self):
-                lines=gene.to_table()
-                print('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) ),file=f)
-    '''
 
-    def make_index(self,use_name=False):
+
+    def make_index(self):
         idx=dict()
         for g in self:
-            idx[g.name if use_name else g.id]=g
+            idx[g.name] = g
+            idx[g.id]=g
         self._idx=idx
         
     def __getitem__(self, key):
@@ -95,6 +88,24 @@ class Transcriptome:
             if not self._idx[n]:
                 del self._idx[n]
         del self.data[chromosome]
+    
+    def add_illumina_coverage(self, illumina_fn, load=False):
+        if load:
+            for bamfile in illumina_fn:            
+                log.info(bamfile)
+                with AlignmentFile(bamfile, "rb") as align:
+                    try:
+                        for g in tqdm(self):
+                            g.data.setdefault('illumina',list()).append(Coverage.from_alignment(align,g))
+                    except:
+                        for g in self:
+                            g.data.pop('illumina', None)
+                        raise
+        else:
+            for g in self:
+                g.data['illumina']=[Coverage.from_bam(bamfile,g, load=False) for bamfile in illumina_fn]
+        self.infos['illumina_fn']=illumina_fn
+
 
     def add_biases(self, genome_fn):
         #populates transcript['biases'] which is the bases for the filter
@@ -194,14 +205,14 @@ class Transcriptome:
                                     ref_g = ref_genes_ol[best_idx]
                                     g.correct_fuzzy_junctions(trid,ref_g, fuzzy_junction)
                                     altsplice= ref_g.splice_graph.get_alternative_splicing(exons, g.strand)
-                                    tr['annotation']={'ref_gene_name': ref_g.name, 'ref_gene_id':ref_g.id, 'as':altsplice}
+                                    tr['annotation']={'ref_gene_name': ref_g.name, 'ref_gene_id':ref_g.id, 'sj_i': sj_i, 'base_i':base_i,'as':altsplice}
                                     #todo: what about fusion?  
                                     gene_idx.setdefault(ref_g.name,{'chr':chrom, 'ID':ref_g.id, 'Name': ref_g.name, 'strand':g.strand ,'transcripts': dict()})
                                     gene_idx[ref_g.name]['transcripts'][trid]=tr
                                     continue
                         tr['annotation']=None
                     if all(tr['annotation'] is None for tr in g.transcripts.values()):
-                        novel.add(g)     
+                        novel.add(g)
                     pbar.update(1)
                     
                 #merge the novel genes for the chromosome
@@ -212,7 +223,6 @@ class Transcriptome:
                     start=min(t['exons'][0][0] for t in g['transcripts'].values())
                     end=max(t['exons'][-1][1] for t in g['transcripts'].values())
                     genes[chrom].add(Gene(start, end, g))
-            #todo:merge and add novel genes
         self.data=genes
         self.infos['annotation']=reference.infos['file_name']
         
@@ -252,7 +262,7 @@ class Transcriptome:
             extra_columns=[]
         if not isinstance( extra_columns, list):
             raise ValueError('extra_columns should be provided as list')
-        extracolnames={'alt_splice':('splice_IoU', 'base_IoU','splice_type')}
+        extracolnames={'annotation':('splice_intersect', 'base_intersect','splicing_comparison')}
         if 'runs' in self.infos:
             extracolnames['coverage']=(f'coverage_{r}' for r in self.infos['runs'])
         colnames=['chr', 'gene_start', 'gene_end','strand', 'gene_id','gene_name' ,'transcript_name']     + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
@@ -262,13 +272,81 @@ class Transcriptome:
         df = pd.DataFrame(rows, columns=colnames)
         return(df)
     
+class Coverage: #stores the illumina read coverage of a gene 
+    #plan: make a binned version, or use run length encoding
+    def __init__(self, cov, junctions, offset):
+        self._cov=cov
+        self._junctions=junctions
+        self.offset=offset
     
+    @classmethod
+    def from_bam(cls, bam_fn,g, load=False):
+        if load:
+            with AlignmentFile(bam_fn, 'rb') as align:
+                return cls.from_alignment(g,align)
+        else: #load on demand
+            obj = cls.__new__(cls)  
+            obj.__init__(None, None, None)
+            obj.bam_fn=bam_fn
+            obj.reg=(g.chrom, g.start,g.end)
+            return obj
+
+    @classmethod
+    def from_alignment(cls, align_fh,g):
+        cov,junctions=cls._import_coverage(align_fh,(g.chrom, g.start,g.end))
+        obj = cls.__new__(cls)  
+        obj.__init__(cov,junctions, g.start )
+        return obj
+
+    @classmethod #this is slow...
+    def _import_coverage(cls,align_fh, reg):
+        delta=np.zeros(reg[2]-reg[1])        
+        junctions={}
+        for read in align_fh.fetch(*reg):        
+            exons=junctions_from_cigar(read.cigartuples,read.reference_start) #alternative: read.get_blocks() should be more efficient.. -todo: is it different?
+            for i, exon in enumerate(exons):
+                s=max(reg[1],min(reg[2]-1,exon[0]))-reg[1]
+                e=max(reg[1],min(reg[2]-1,exon[1]))-reg[1]
+                delta[s]+=1
+                delta[e]-=1            
+                if i>0:
+                    jpos=(exons[i-1][1],exon[0])
+                    if jpos[1]-jpos[0]<1:
+                        continue
+                    junctions[jpos]=junctions.get(jpos,0)+1            
+        cov=np.cumsum(delta)   
+        return cov,junctions
+    
+    def load(self):
+        with AlignmentFile(self.bam_fn, 'rb') as align:
+            log.debug('Illumina coverage is loaded on demand')
+            self.cov, self.junctions=type(self)._import_coverage(align, self.reg)
+            self.offset=self.reg[1]
+
+    @property
+    def junctions(self):
+        if self._junctions is None:
+            self.load()
+        return self._junctions
+    
+    @property
+    def coverage(self):
+        if self._cov is None:
+            self.load()
+        return self._cov
+
+    def __getitem__(self, subscript):
+            
+        try:
+            if isinstance(subscript, slice): 
+                return self.coverage[slice(None if subscript.start is None else subscript.start-offset,
+                                           None if subscript.stop is None else subscript.stop-offset,
+                                           subscript.step)] #does not get extended if outside range       
+            return(self.coverage[subscript-self.offset])
+        except KeyError:
+            log.warning('requested coverage outside range')
+            return 0
         
-#def default_false(fun,**args):
-#    try:
-#        return fun(**args)
-#    except NameError:
-#        return False
 
 class Gene(Interval):
     def __str__(self):
@@ -285,31 +363,6 @@ class Gene(Interval):
             if not tr['filter']:
                 tr['filter']=['PASS']
 
-    '''
-    def add_filter(self, a_th=.5, rtts_maxcov=10, rtts_ratio=5, min_alignment_cov=.1):   
-       novel_gene=all(tr['annotation'] is None for tr in self.transcripts.values())
-        for tr in self.transcripts.values():
-            flags=[]
-            if abs(tr['source_len'] - sum(e-s for s,e in tr['exons']))/tr['source_len']>min_alignment_cov:
-                flags.append('CLIPPED_ALIGNMENT')
-            if tr['biases']['downstream_A_content']>a_th:
-                flags.append('A_CONTENT')                
-            if 'template_switching' in tr['biases']:
-                for ts in tr['biases']['template_switching']:
-                    s, l=(int(i) for i in ts[ts.rfind(':')+1:].split('/',1))
-                    if s<rtts_maxcov and l/s>rtts_ratio:
-                        flags.append('RTTS')
-                        break
-            if 'noncanonical_splicing' in tr['biases']:
-                flags.append('NONCANONICAL_SPLICING')
-            if novel_gene:
-                flags.append('NOVEL_GENE')
-            elif tr['annotation'] is None or 'splice_identical' not in tr['annotation']['sType']:
-                flags.append('NOVEL_TRANSCRIPT')
-            if 'truncated' in tr['biases']:    
-                flags.append('TRUNCATION')
-            tr['filter']=flags
-    '''        
 
     def filter_transcripts(self, include=None, remove=None):
         #include: transcripts must have at least one of the flags
@@ -464,19 +517,19 @@ class Gene(Interval):
             return ','.join(str(e[0]) for e in self.transcripts[trid]['exons']),
         elif what=='exon_ends':
             return ','.join(str(e[1]) for e in self.transcripts[trid]['exons']),
-        elif what=='alt_splice':
-            sel=['sjIoU','exIoU', 'sType']
+        elif what=='annotation':
+            #sel=['sj_i','base_i', 'as']
             support=self.transcripts[trid]['annotation']
             if support is None:
-                return ('NA',)*len(sel)
+                return ('NA',)*3
             else:
                 #vals=support[n] if n in support else 'NA' for n in sel
                 stype=support['as']
                 if isinstance(stype, dict):
-                    type_string=';'.join('{}:{}'.format(k,v) for k,v in stype.items())
+                    type_string=';'.join(k if v is None else '{}:{}'.format(k,v) for k,v in stype.items())
                 else:
                     type_string=';'.join(str(x) for x in stype)
-                vals=(support['sjIoU'],support['exIoU'],type_string)
+                vals=(support['sj_i'],support['base_i'],type_string)
                 return(vals)
         elif what=='coverage':
             return self.transcripts[trid]['coverage']
@@ -501,7 +554,7 @@ class Gene(Interval):
             raise
  
     @property
-    def start(self):
+    def start(self): #alias for begin
         return self.begin
     
     @property
@@ -541,14 +594,14 @@ class Gene(Interval):
         try:
             return self.data['strand']
         except KeyError:
-            return 'NA'
+            return {}
 
     @property
     def transcripts(self):
         try:
             return self.data['transcripts']
         except KeyError:
-            return 'NA'
+            return {}
 
     @property
     def n_transcripts(self):
@@ -578,53 +631,6 @@ class Gene(Interval):
 
     def copy(self):
         return self.__copy__()
-
-'''
-def merge_genes(gene, candidates,spj_iou_th, reg_iou_th):
-    same=set()
-    new_gene=False
-    for ol_gene in candidates:
-        if ol_gene.strand != gene.strand or gene == ol_gene :
-            continue
-        if any(is_same_gene(tr1['exons'], tr2['exons'],spj_iou_th, reg_iou_th) for tr1, tr2 in itertools.product(gene.transcripts(), ol_gene.transcripts())):
-            same.add(ol_gene)
-    if len(same)>0:
-        same.add(gene)
-        new_data={'strand': gene.strand, 'chr': gene.chrom, 'source':{g.id for g in same}, 'transcripts':dict(ChainMap(*(g.transcripts for g in same)))}
-        #todo merge more properties
-        new_gene=Gene(min(g.start for g in same), max(g.end for g in same),new_data )
-        assert len(new_gene.transcripts)==sum(len(g.transcripts) for g in same), 'new gene has different number of transcripts compared to source!\nsource:\n{}\nmerged\n{}'.format(same, new_gene)
-    return new_gene, same
-
-def merge_transcripts(tr1, tr2):
-    #print('merging {} {}'.format(tr1, tr2))
-    merged={'exons':list()}
-    e2iter=iter(tr2['exons'])
-    e1enum=enumerate(tr1['exons'])
-    e2=next(e2iter)
-    for i,e1 in e1enum:
-        if overlap(e1,e2):
-            merged['exons'].append( ( min(e1[0], e2[0]), max(e1[1], e2[1]) ) )
-        elif e1[0]<e2[0]:
-            merged['exons'].append(e1)
-            continue
-        else:
-            merged['exons'].append(e2)
-        try:
-            e2=next(e2iter)
-        except StopIteration:
-            merged['exons']+=[e for j,e in e1enum if j> i]
-            break
-    else:
-        merged['exons'].append(e2)
-        merged['exons']+=list(e2iter)
-
-    for n in tr1.keys()|tr2.keys():
-        if n not in ['exons', 'annotation']:
-            merged[n]=tr1.get(n,[])+tr2.get(n,[]) #carefull, might not be possible for all datatypes
-
-    return merged
-'''        
 
 
 
@@ -910,8 +916,10 @@ def collapse_transcripts_to_genes( transcripts, spj_iou_th=0, reg_iou_th=.5, gen
             n_novel+=1
             new_transcripts={tid:idx[tid] for tid in merge[trid]}
             seen.update(merge[trid])
+            start=min(tr['exons'][0][0] for tr in new_transcripts.values())
+            end=max(tr['exons'][-1][1] for tr in new_transcripts.values())
             new_data={'chr':g.chrom, 'ID':f'{gene_prefix}{n_novel+offset}', 'strand':g.strand, 'transcripts':new_transcripts}
-            genes.add(Gene(g.start,g.end,new_data ))
+            genes.add(Gene(start,end,new_data ))
     return genes
                
 
@@ -1010,47 +1018,6 @@ def is_truncation(long_tr, short_tr):
     delta2+=long_tr[relation[-1][0][0]][1]-short_tr[-1][1]#last overlapping exon
     return True, delta1, delta2
 
-'''
-def is_truncation(exons1, exons2):    
-    relation=get_relation(exons1, exons2)
-    if any(len(r) > 1 for r in relation):#
-        log.debug('one exon from 1 has several corresponding exons from 2')
-        return False  
-    if not any(r for r in relation ): #
-        log.debug('no relation')
-        return False 
-    first=next(iter([i for i,r in enumerate(relation) if r]))
-    last=len(relation)-next(iter([i for i,r in enumerate(reversed(relation)) if r]))-1
-    #if sum(1 for r in relation if r) != last-first+1:  # 
-    if any(len(r)!=1 for r in relation[first:(last+1)]):
-        log.debug('some exons in 1 do not have corresponding exons in 2')
-        return False
-    if first>0 and relation[first][0][0]>0:
-        log.debug('start exons do not correspond to each other')
-        return False # 
-    if last < len(exons1)-1 and relation[last][0][0]<len(exons2)-1 :
-        log.debug('last exons do not correspond to each other')
-        return False # 
-    if last!=first and ( #more than one exon
-            (relation[first][0][1] & 1 ==0) or # 2nd splice junction must match
-            (relation[last][0][1] & 2 == 0)): # fst splice junction must match
-        log.debug('more than one exon, 2nd splice junction must match, fst splice junction must match')
-        return False        
-    if (relation[first][0][0]!=first and # one of the transcripts has extra exons at start
-            (first==0 ) == (exons1[first][0] < exons2[relation[first][0][0]][0])): # check the begin of the shorter
-        log.debug('first exon of trunkated version is actually longer')
-        return False
-    if (relation[last][0][0] != len(exons2)-1 and # one of the transcripts has extra exons at the end
-            (last==len(exons1)-1) == (exons1[last][1] > exons2[relation[last][0][0]][1])):  #check the end of the shorter
-        log.debug('last exon of trunkated version is actually longer')
-        return False
-    if last-first > 1 and any(relation[i][0][1]!=3 for i in range(first+1, last)): #
-        log.debug('intermediate exons do not fit')
-        return False
-    log.debug('all filter passed')
-    return relation, first, last
-'''
-
 def junctions_from_cigar(cigartuples, offset):
     exons = list([[offset, offset]])
     for cigar in cigartuples:
@@ -1091,7 +1058,12 @@ def splice_identical(tr1, tr2):
             return False
     return True
 
-def get_support(exons, ref_genes, chrom, strand):        
+#################################################
+# everything from here should be obsolete
+##################################################
+
+def get_support(exons, ref_genes, chrom, strand):    
+    log.debug('Call of depricated function get_support')        
     if chrom not in ref_genes.data:
         return None
     #strand='-' if is_reverse else '+'
@@ -1108,7 +1080,10 @@ def get_support(exons, ref_genes, chrom, strand):
     return anno
 
 
-def get_support_old(exons, ref_genes, chrom, is_reverse):        
+
+
+def get_support_old(exons, ref_genes, chrom, is_reverse):    
+    log.debug('Cll of depricated function get_support_old')    
     if chrom not in ref_genes.data:
         return None
     strand='-' if is_reverse else '+'
@@ -1132,6 +1107,7 @@ def get_support_old(exons, ref_genes, chrom, is_reverse):
     return support
 
 def compute_support(ref_genes, query_exons): #compute the support of all transcripts in ref_genes
+    log.debug('Call of depricated function compute_support')    
     # get overlapping genes:
     query_len = sum([e[1]-e[0] for e in query_exons])
     query_nsj = len(query_exons)*2-2
@@ -1164,6 +1140,7 @@ def compute_support(ref_genes, query_exons): #compute the support of all transcr
     return support, novel_sj1, novel_sj2
 
 def get_alternative_splicing(support_dict, best_idx,exons, ref_genes_ol, is_reverse):
+    log.debug('Call of depricated function get_alternative_splicing') 
     if support_dict["sjIoU"][best_idx] == 1:
         splice_type = ['splice_identical']
     elif support_dict["exIoU"][best_idx] == 0:
@@ -1182,20 +1159,22 @@ def get_alternative_splicing(support_dict, best_idx,exons, ref_genes_ol, is_reve
     return splice_type
 
 def get_fusion(support_dict, ref_genes_ol, min_iou=.5):
-        covered_gene_ids = {id for id, iou in zip(
-            support_dict['ref_gene_id'], support_dict['sjIoU']) if iou >= min_iou}
-        covered_genes = {
-            g for g in ref_genes_ol if g.id in covered_gene_ids}        
-        fusion=[]
-        if len(covered_genes) > 1:
-            # remove overlapping genes
-            for g1, g2 in combinations(covered_genes, 2):
-                if not overlap(g1[:2], g2[:2]):
-                    fusion.append('{}|{}'.format(g1.name, g2.name))
-        return fusion
+    log.debug('Call of depricated function get_alternative_splicing') 
+    covered_gene_ids = {id for id, iou in zip(
+        support_dict['ref_gene_id'], support_dict['sjIoU']) if iou >= min_iou}
+    covered_genes = {
+        g for g in ref_genes_ol if g.id in covered_gene_ids}        
+    fusion=[]
+    if len(covered_genes) > 1:
+        # remove overlapping genes
+        for g1, g2 in combinations(covered_genes, 2):
+            if not overlap(g1[:2], g2[:2]):
+                fusion.append('{}|{}'.format(g1.name, g2.name))
+    return fusion
     
 
 def get_splice_type(ref, alt, is_reversed=False):
+    log.debug('Call of depricated function get_alternative_splicing') 
     if len(ref) == 0:
         return(['novel/unknown'])
     if len(alt) ==1:

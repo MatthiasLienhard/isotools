@@ -124,7 +124,7 @@ def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,ti
     if high_cov_th<1:
         high_cov_th=high_cov_th*total_weight
     
-    idx=list(range(len(sg)))
+    #idx=list(range(len(sg)))
     arcs=[]
     for i,(es,ee, pre, suc) in enumerate(sg._graph):
         weights={}
@@ -178,7 +178,7 @@ def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,ti
         #bbox_list.append(txt.get_tightbbox(renderer = fig.canvas.renderer))
 
     #ax.set_yscale('log') 
-    ax.set_xlim(sg[0][0]-100, sg[-1][1]+100)
+    ax.set_xlim(g.start-100, g.end+100)
     if textpositions:
         ax.set_ylim(-text_height,max(tp[1] for tp in textpositions)+2*text_height)
     else:
@@ -243,7 +243,7 @@ def lr_test(x,n):
     return chi2.sf(2*(l1-l0),1)
 
 def altsplice_test(transcriptome,groups, min_cov=10, test=proportion_test,padj_method='fdr_bh'):
-    multitest_default={}
+    #multitest_default={}
     grp_idx={r:i for i,r in enumerate(transcriptome.runs)}
     grp=[[grp_idx[r] for r in g] for g in groups]
     res=[]
@@ -253,8 +253,8 @@ def altsplice_test(transcriptome,groups, min_cov=10, test=proportion_test,padj_m
             n=[total_cov[g].sum() for g in grp]            
             if sum(x) > min_cov and sum(n)-sum(x) > min_cov and all(ni>0 for ni in n):
                 p=test(x,n)
-                res.append((g.name,g.chrom, start, end,p,*x,*n))
-    df=pd.DataFrame(res, columns=['gene','chrom', 'start', 'end','pvalue','x1','x2','n1','n2'])
+                res.append((g.name,g.id,g.chrom, start, end,p,*x,*n))
+    df=pd.DataFrame(res, columns=['gene','gene_id','chrom', 'start', 'end','pvalue','x1','x2','n1','n2'])
     df.insert(5,'padj',multi.multipletests(df['pvalue'],method=padj_method)[1])
     return df
 
@@ -334,8 +334,16 @@ def altsplice_stats(transcriptome, coverage=True,groups=None,  min_coverage=1, i
     #    df=pd.DataFrame({grn:df[grp].sum(1) for grn, grp in groups.items()})
         # sum per group
     df=df.reindex(df.mean(1).sort_values(ascending=False).index, axis=0)
+    if coverage:
+        title='Expressed Transcripts'
+        ylab='fraction of reads'
+    else:
+        title='Different Transcripts'
+        ylab='fraction of  different transcripts'
+        if min_coverage>1:
+            title+=f' > {min_coverage} reads'
 
-    return df,  {'ylabel':'fraction of reads' if coverage else 'fraction of different transcripts'}
+    return df, {'ylabel':ylab,'title':title}
     #
     
 def filter_stats(transcriptome, coverage=True,groups=None,  min_coverage=1,consider=['TRUNCATION', 'A_CONTENT',  'CLIPPED_ALIGNMENT', 'RTTS']):    #todo: filter like in make table
@@ -378,7 +386,7 @@ def filter_stats(transcriptome, coverage=True,groups=None,  min_coverage=1,consi
 def transcript_length_hist(transcriptome=None,reference=None,groups=None,bins=50,range=(100,10000),coverage=True,min_coverage=1,use_alignment=False, isoseq_filter={}, reference_filter={}):
     trlen=[]
     cov=[]
-    iso_filter=[]
+    #iso_filter=[]
     for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         cov.append(tr['coverage'])
         trlen.append(sum(e[1]-e[0] for e in tr['exons']) if use_alignment else tr['source_len'])

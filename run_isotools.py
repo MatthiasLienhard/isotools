@@ -62,7 +62,7 @@ def filter_plots(isoseq, groups, out_stem):
     f_stats.append(isotools.stats.filter_stats(isoseq, groups=groups, coverage=False))
     f_stats.append(isotools.stats.filter_stats(isoseq, groups=groups, coverage=False,min_coverage=50))
     f_stats.append(isotools.stats.filter_stats(isoseq, groups=groups, coverage=False,min_coverage=100))
-    plt.rcParams["figure.figsize"] = (15,15)
+    plt.rcParams["figure.figsize"] = (12+len(groups),15)
     f, ax = plt.subplots(2, 2)
     ax=ax.flatten()
     for i,fs in enumerate(f_stats):
@@ -97,7 +97,7 @@ def altsplice_plots(isoseq, groups, out_stem):
         isotools.stats.altsplice_stats(isoseq, groups=groups),
         isotools.stats.altsplice_stats(isoseq, groups=groups,coverage=False),
         isotools.stats.altsplice_stats(isoseq, groups=groups, coverage=False,min_coverage=100)]
-    plt.rcParams["figure.figsize"] = (20,15)
+    plt.rcParams["figure.figsize"] = (15+2*len(groups),15)
 
     f, ax = plt.subplots(3,1)
     for i,(as_counts, as_params) in enumerate(altsplice):
@@ -129,15 +129,15 @@ def altsplice_examples(isoseq, n):#return the top n covered genes for each categ
     examples={k:sorted(v,key=lambda x:-x[0] ) for k,v in examples.items()}
     return{k:v[:n] for k,v in examples.items()}
 
-def plot_altsplice_examples(isoseq,reference,illumina,groups,examples, out):
+def plot_altsplice_examples(isoseq,reference,groups,illu_groups,examples, out):
     nplots=len(groups)+1
-    if illumina is not None:
-        if any(gn in illumina for gn in groups):
-            illumina={gn:illumina[gn] for gn in groups if gn in illumina}
-        nplots += len(illumina) #illumina is a dict with bam filenames
+    run_num={r:i for i,r in enumerate(isoseq.infos['runs'])}
+    if illu_groups:
+        illu_run_num={r:i for i,r in enumerate(isoseq.infos['illumina_fn'])}
+        nplots += len(illu_groups) #illumina is a dict with bam filenames
     
     plt.rcParams["figure.figsize"] = (20,5*nplots)
-    run_num={r:i for i,r in enumerate(isoseq.infos['runs'])}
+    
     jparams=dict(low_cov_junctions={'color':'gainsboro','lwd':1,'draw_label':False} , 
             high_cov_junctions={'color':'green','lwd':2,'draw_label':True}, 
             interest_junctions={'color':'purple','lwd':3,'draw_label':True})
@@ -169,9 +169,9 @@ def plot_altsplice_examples(isoseq,reference,illumina,groups,examples, out):
                 _=isotools.stats.sashimi_plot(g, ax=ax[offset], title='isoseq '+sn, group=[run_num[r] for r in groups[sn]], text_width=150, arc_type='both', exon_color=exon_color,junctions_of_interest=joi, **jparams)
                 offset+=1
             #illumina
-            for sn,fn in illumina.items():
+            for sn in illu_groups:
                 #sn=fn.split('/')[-1].replace('.bam','')
-                _=isotools.stats.sashimi_plot_bam(g,fn, ax=ax[offset], title='illumina '+sn, text_width=150, exon_color=exon_color, junctions_of_interest=joi, **jparams)
+                _=isotools.stats.sashimi_plot_bam(g, ax=ax[offset], title='illumina '+sn, group=[illu_run_num[r] for r in illu_groups[sn]],text_width=150, exon_color=exon_color, junctions_of_interest=joi, **jparams)
                 offset+=1
             # Temporary hack: for novel genes, g.start and end is not correct!!!
             start, end=g.splice_graph[0][0],g.splice_graph[-1][1]           
@@ -202,15 +202,15 @@ def plot_altsplice_examples(isoseq,reference,illumina,groups,examples, out):
 
 
 
-def plot_diffsplice(isoseq, reference,illumina, de_tab,gr,out):
+def plot_diffsplice(isoseq, reference, de_tab,gr,illu_gr,out):
 
     nplots=len(gr)+1
-    if illumina is not None:
-        if any(gn in illumina for gn in groups):
-            illumina={gn:illumina[gn] for gn in gr if gn in illumina}
-        nplots += len(illumina) #illumina is a list with bam filenames
-
     run_num={r:i for i,r in enumerate(isoseq.infos['runs'])}
+    if illu_gr:
+        illu_run_num={r:i for i,r in enumerate(isoseq.infos['illumina_fn'])}
+        nplots += len(illu_gr) 
+
+    
     
     exon_color='green'
     jparams=dict(low_cov_junctions={'color':'gainsboro','lwd':1,'draw_label':False} , 
@@ -231,9 +231,9 @@ def plot_diffsplice(isoseq, reference,illumina, de_tab,gr,out):
             _=isotools.stats.sashimi_plot(g, ax=ax[offset], title='isoseq '+sn, group=[run_num[r] for r in gr[sn]], text_width=150, arc_type='both', exon_color=exon_color,junctions_of_interest=joi, **jparams)
             offset+=1
         #illumina
-        for sn,fn in illumina.items():
+        for sn in illu_gr:
             #sn=fn.split('/')[-1].replace('.bam','')
-            _=isotools.stats.sashimi_plot_bam(g,fn, ax=ax[offset], title='illumina '+ sn, text_width=150, exon_color=exon_color,junctions_of_interest=joi, **jparams)
+            _=isotools.stats.sashimi_plot_bam(g, ax=ax[offset], title='illumina '+ sn, group=[illu_run_num[r] for r in illu_gr[sn]], text_width=150, exon_color=exon_color,junctions_of_interest=joi, **jparams)
             offset+=1
         # Temporary hack: for novel genes, g.start and end is not correct!!!
         start, end=g.splice_graph[0][0],g.splice_graph[-1][1]           
@@ -257,6 +257,7 @@ if __name__=='__main__':
     parser.add_argument('--genome', metavar='<file.fasta>', help='specify reference genome file')    
     parser.add_argument('--out', metavar='</output/directory/prefix>',default='./isotools', help='specify output path and prefix')
     parser.add_argument('--samples',metavar='<samples.csv>', help='specify csv with sample / group information')
+    parser.add_argument('--illu_samples',metavar='<samples.csv>', help='specify csv with illumina sample / group information')    
     parser.add_argument('--pickle', help='pickle/unpickle intermediate results', action='store_true')
     parser.add_argument('--qc_plots', help='make qc plots', action='store_true')
     parser.add_argument('--altsplice_stats', help='alternative splicing barplots', action='store_true')
@@ -266,21 +267,14 @@ if __name__=='__main__':
     parser.add_argument('--chrom', nargs='*' , help='list of chromosomes to be considered')
     parser.add_argument('--diff_plots', metavar='<n>', type=int,help='make sashimi plots for <n> top differential genes')
     parser.add_argument('--altsplice_plots', metavar='<n>', type=int,help='make sashimi plots for <n> top covered alternative spliced genes for each category')
-    parser.add_argument("--illumina", nargs='*',type=lambda kv: kv.split('=',2))
+    #parser.add_argument("--illumina", nargs='*',type=lambda kv: kv.split('=',2))
 
     
     args = parser.parse_args()
 
     log.debug(f'arguments: {args}')
-    illumina=dict(args.illumina) if args.illumina  else {}
-    if args.samples:
-        samples=pd.read_csv(args.samples)
-        groups=dict(samples.groupby('group')['run'].apply(list))
-    else: 
-        groups=None
-        
-    
-    log.debug(f'sample group definition: {groups}') 
+    #illumina=dict(args.illumina) if args.illumina  else {}
+
 
     reference=load_reference(args)
     isoseq=load_isoseq(args, reference=reference)
@@ -290,6 +284,26 @@ if __name__=='__main__':
     reference.add_filter(transcript_filter={'HIGH_SUPPORT':'transcript_support_level=="1"', 'PROTEIN_CODING':'transcript_type=="protein_coding"'})
     isoseq.make_index()
     reference.make_index()
+
+    if args.samples:
+        samples=pd.read_csv(args.samples)
+        groups=dict(samples.groupby('group')['run'].apply(list))
+    else: 
+        groups=None
+
+    if args.illu_samples:
+        illu_samples=pd.read_csv(args.illu_samples)
+        if 'illumina_fn' not in isoseq.infos or not all(sn in isoseq.infos['illumina_fn'] for sn in illu_samples):
+            isoseq.add_illumina_coverage(dict(zip(illu_samples['name'], illu_samples['file_name'])))
+            new_illu=True
+        else:
+            new_illu=False
+        illu_groups=dict(illu_samples.groupby('group')['name'].apply(list))
+    else: 
+        illu_groups={}
+        
+    
+    log.debug(f'sample group definition: {groups}') 
     
     if args.transcript_table:
         log.info(f'writing transcript table to {args.out}_transcripts.csv')
@@ -309,8 +323,9 @@ if __name__=='__main__':
         altsplice_plots(isoseq, groups, args.out)
     
     if args.altsplice_plots:
-        examples=altsplice_examples(isoseq, args.altsplice_plots)        
-        plot_altsplice_examples(isoseq, reference, illumina, groups, examples, args.out)
+        examples=altsplice_examples(isoseq, args.altsplice_plots)    
+        #isoseq,reference,groups,illu_groups,examples, out    
+        plot_altsplice_examples(isoseq, reference, groups, illu_groups, examples, args.out)
 
 
     if args.diff is not None:
@@ -330,4 +345,12 @@ if __name__=='__main__':
             log.info(f'{sum(sig)} differential splice sites in {len(res.loc[sig,"gene"].unique())} genes for {" vs ".join(gr)}')
             res.to_csv(f'{args.out}_diff_{"_".join(gr)}.csv')
             if args.diff_plots is not None:
-                plot_diffsplice(isoseq, reference,illumina, res.head(args.diff_plots),gr, args.out)
+                if all(gn in illu_groups for gn in gr):
+                    illu_gr={gn:illu_groups[gn] for gn in gr}
+                else:
+                    illu_gr=illu_groups
+                plot_diffsplice(isoseq, reference, res.head(args.diff_plots),gr,illu_gr, args.out)
+    if args.pickle and new_illu:
+        log.info('saving transcripts as pickle file (including loaded illumina profiles)')    
+        isoseq.save(args.bam+'_isotools.pkl')
+

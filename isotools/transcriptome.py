@@ -18,6 +18,7 @@ import isotools.splice_graph
 import logging
 import copy
 import pickle
+import re
 #import operator as o
 
 log=logging.getLogger(__name__)
@@ -90,8 +91,8 @@ class Transcriptome:
         del self.data[chromosome]
     
     def add_illumina_coverage(self, illumina_fn, load=False):
-        if load:
-            for bamfile in illumina_fn:            
+        if load: # when loading coverage for all genes keep the filehandle open, hopefully a bit faster
+            for bamfile in illumina_fn.values():            
                 log.info(bamfile)
                 with AlignmentFile(bamfile, "rb") as align:
                     try:
@@ -103,7 +104,7 @@ class Transcriptome:
                         raise
         else:
             for g in self:
-                g.data['illumina']=[Coverage.from_bam(bamfile,g, load=False) for bamfile in illumina_fn]
+                g.data['illumina']=[Coverage.from_bam(bamfile,g, load=load) for bamfile in illumina_fn.values()]
         self.infos['illumina_fn']=illumina_fn
 
 
@@ -274,10 +275,11 @@ class Transcriptome:
     
 class Coverage: #stores the illumina read coverage of a gene 
     #plan: make a binned version, or use run length encoding
-    def __init__(self, cov, junctions, offset):
+    def __init__(self, cov, junctions, offset, chrom=None):
         self._cov=cov
         self._junctions=junctions
-        self.offset=offset
+        self.reg=None if cov is None else (chrom,offset, offset+len(cov)) 
+        self.bam_fn=None
     
     @classmethod
     def from_bam(cls, bam_fn,g, load=False):
@@ -286,7 +288,9 @@ class Coverage: #stores the illumina read coverage of a gene
                 return cls.from_alignment(g,align)
         else: #load on demand
             obj = cls.__new__(cls)  
-            obj.__init__(None, None, None)
+            #obj.__init__(None, None, None)
+            obj._cov=None
+            obj._junctions=None
             obj.bam_fn=bam_fn
             obj.reg=(g.chrom, g.start,g.end)
             return obj
@@ -298,7 +302,7 @@ class Coverage: #stores the illumina read coverage of a gene
         obj.__init__(cov,junctions, g.start )
         return obj
 
-    @classmethod #this is slow...
+    @classmethod #this is slow - called only if coverage is requested
     def _import_coverage(cls,align_fh, reg):
         delta=np.zeros(reg[2]-reg[1])        
         junctions={}
@@ -319,10 +323,9 @@ class Coverage: #stores the illumina read coverage of a gene
     
     def load(self):
         with AlignmentFile(self.bam_fn, 'rb') as align:
-            log.debug('Illumina coverage is loaded on demand')
-            self.cov, self.junctions=type(self)._import_coverage(align, self.reg)
-            self.offset=self.reg[1]
-
+            log.info(f'Illumina coverage of region {self.reg[0]}:{self.reg[1]}-{self.reg[2]} is loaded from {self.bam_fn}') #info or debug?
+            self._cov, self._junctions=type(self)._import_coverage(align, self.reg)
+            
     @property
     def junctions(self):
         if self._junctions is None:
@@ -330,22 +333,24 @@ class Coverage: #stores the illumina read coverage of a gene
         return self._junctions
     
     @property
-    def coverage(self):
+    def profile(self):
         if self._cov is None:
             self.load()
         return self._cov
 
-    def __getitem__(self, subscript):
-            
-        try:
-            if isinstance(subscript, slice): 
-                return self.coverage[slice(None if subscript.start is None else subscript.start-offset,
-                                           None if subscript.stop is None else subscript.stop-offset,
-                                           subscript.step)] #does not get extended if outside range       
-            return(self.coverage[subscript-self.offset])
-        except KeyError:
+    def __getitem__(self, subscript):            
+        
+        if isinstance(subscript, slice): 
+            return self.profile[slice(None if subscript.start is None else subscript.start-self.reg[1],
+                                        None if subscript.stop is None else subscript.stop-self.reg[1],
+                                        subscript.step)] #does not get extended if outside range       
+        elif subscript < self.reg[1] or subscript >= self.reg[2]:
             log.warning('requested coverage outside range')
-            return 0
+            return None
+        else:
+            return(self.profile[subscript-self.reg[1]])
+        
+            
         
 
 class Gene(Interval):
@@ -496,7 +501,18 @@ class Gene(Interval):
                     #if (dist5<0 or dist5>abs(delta2)) and (dist3<0 or dist3>abs(delta1)):
                     self.transcripts[trid1]['truncated']=(trid2,delta2, delta1)
         
-                    
+    def coding_len(self, trid):
+        #returns length of 5'UTR, coding sequence and 3'UTR
+        try:            
+            exons=self.transcripts[trid]['exons']
+            cds=self.transcripts[trid]['CDS']
+        except KeyError:
+            return None
+        else:
+            coding_len=_coding_len(exons, cds)
+        if self.strand=='-':
+            coding_len.reverse()
+        return coding_len
 
     def get_values(self ,trid, what):
         if what is None:
@@ -564,6 +580,13 @@ class Gene(Interval):
         except KeyError:
             raise
 
+    @property 
+    def illumina_coverage(self):
+        try:
+            return self.data['illumina']
+        except KeyError:
+            log.info('add illumina bam files first')
+            raise
 
     @property
     def id(self):
@@ -632,7 +655,37 @@ class Gene(Interval):
     def copy(self):
         return self.__copy__()
 
+def genomic_position(exons, tr_pos):
+    # gets a sorted list of transcript positions and finds the corresponding genomic positions
+    offset=0
+    g_pos=list()
+    exon_iter=iter(exons)
+    for pos in tr_pos:
+        while offset<pos:
+            try:
+                e=next(exon_iter)        
+            except StopIteration:
+                raise ValueError(f'tr_pos {pos} outside transcript of length {sum(e[1]-e[0] for e in exons)}')
+            offset+=e[1]-e[0]
+        g_pos.append(e[1]+pos-offset)
+    return g_pos
 
+def _coding_len(exons, cds):
+    coding_len=[0,0,0]            
+    state=0
+    for e in exons:
+        if state<2 and e[1]>=cds[state]:
+            coding_len[state]+=cds[state]-e[0]
+            if state==0 and cds[1]<=e[1]: # special case: CDS start and end in same exon
+                coding_len[1]=cds[1]-cds[0]
+                coding_len[2]=e[1]-cds[1]
+                state+=2
+            else:
+                coding_len[state+1]=e[1]-cds[state]
+                state+=1
+        else:
+            coding_len[state]+=e[1]-e[0]
+    return coding_len
 
 
 #io
@@ -688,18 +741,24 @@ def import_pacbio_transcripts(fn,chromosomes=None):
                 strand = '-' if read.is_reverse else '+'
                 exons = junctions_from_cigar(read.cigartuples,read.reference_start)
                 tags= dict(read.tags)
-                tr={'exons':exons, 'source_len':len(read.seq), 'cigar':read.cigarstring, 'clipped': sum(n for i,n in read.cigartuples if i in {4,5})} 
-                info={'strand':strand, 'chr':chrom,
-                        'ID':read.query_name,'transcripts':{read.query_name:tr}}
                 cov={}
                 for read_id in tags['im'].split(','):
                     run=read_id[:read_id.find('/')]
                     runs.add(run)
                     cov[run] = cov.get(run, 0) + 1
-                tr['coverage']=cov
+                cds=find_orf(read.query_sequence)
+                mut=get_mutations(read.cigartuples, read.query_sequence)
+                #transcript infos
+                tr={'exons':exons, 'source_len':len(read.query_sequence), 'cigar':read.cigarstring, 
+                    'clipped': sum(n for i,n in read.cigartuples if i in (4,5)),
+                    'coverage':cov, 'CDS':cds, 'mutations':mut} 
+                #gene infos
+                info={'strand':strand, 'chr':chrom,
+                        'ID':read.query_name,'transcripts':{read.query_name:tr}}
+                
                 if 'SA' in tags: #part of a fusion gene   
                     if read.flag & 0x800: #secondary part
-                        fusion.setdefault(read.query_name, []).append({'chr':chrom,'exons':tr['exons'],'cigar':tr['cigar']}) #cigar is required to sort out the order 
+                        fusion.setdefault(read.query_name, []).append({'chr':chrom,'exons':tr['exons'],'cigar':tr['cigar'],'strand':strand}) #cigar is required to sort out the order 
                     else: #primary part
                         fusion_primary[read.query_name]=tr
                 if not read.flag & 0x800:
@@ -717,6 +776,52 @@ def import_pacbio_transcripts(fn,chromosomes=None):
         if n_secondary>0:
             log.info(f"skipped {n_secondary} secondary transcripts {n_secondary/total_reads*100}%")
         return genes,{'runs':runs}
+
+def get_mutations(cigartuples, seq=None, ref=None):
+    #cigar numbers:
+    #012345678
+    #MIDNSHPX=
+    mutations=[]
+    pos=0
+    for cigar in cigartuples:
+        if cigar[0] == 1:#I(ins)
+            mutations.append((pos,'','X'*cigar[1] if seq is None else seq[pos:(pos+cigar[1])]))
+        elif cigar[0] == 2:#D(del)
+            mutations.append((pos,'X'*cigar[1],''))
+        elif cigar[0]==7:#X(missmatch)
+            mutations.append((pos,'X'*cigar[1],'X'*cigar[1] if seq is None else seq[pos:(pos+cigar[1])]))
+        if cigar[0] in (0, 2, 7, 8):  # MDX= -> move forward on reference
+            pos += cigar[1]
+    return mutations        
+
+def find_orf(seq, min_len=3):
+    # look for open reading frames and return the longest
+    # todo: incorperate codon usage to filter false positives
+    # assuming seq is upper case and stranded
+    # this is quite inefficient, can be improved:
+    #end=[0,0,0]
+    #find start
+    #if end[start%3]<start:
+    #find next end[start%3]
+    #if largest/best: save
+    #repeat until end of seq -len(best)
+    start_codon=[m.start() for m in re.finditer('ATG', seq)] #neglect rare alternative start codons: TTG and CTG
+    stop_codon=sorted([m.start() for m in re.finditer('T[AA|AG|GA]', seq)])
+    orf=list()
+    for start in start_codon:
+        try:
+            stop=next(stop+3 for stop in stop_codon if stop>=start+min_len and stop%3 == start%3)
+        except StopIteration:
+            continue
+        else:
+            orf.append((start,stop))
+    #orf.sort(key=lambda x:[x[0]-x[1]])
+    if orf:
+        return max(orf,key=lambda x:x[1]-x[0])
+    return None
+
+
+
 
 def import_gtf_transcripts(fn, genes=None,chromosomes=None):
     gtf = TabixFile(fn)   
@@ -810,6 +915,8 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
     skipped = set()    
     genes=dict()
     gene_set=set()
+    cds_start=dict()
+    cds_stop=dict()
     #takes quite some time... add a progress bar?
     for line in tqdm(gff.fetch(), smoothing=.1):  
         ls = line.split(sep="\t")
@@ -838,21 +945,25 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
         elif all([v in info for v in ['Parent', "ID"]]) and (ls[2] == 'transcript' or info['Parent'].startswith('gene')):# those denote transcripts
             tr_info={k:v for k,v in info.items() if k.startswith('transcript_')}
             transcripts.setdefault(info["Parent"], {})[info["ID"]]=tr_info
-            
+        elif ls[2]  == 'start_codon' and 'Parent' in info:
+            cds_start[info['Parent']]=end if ls[6]=='-' else start
+        elif ls[2]  == 'stop_codon' and 'Parent' in info:
+            cds_stop[info['Parent']]=start if ls[6]=='-' else end            
         else:
             skipped.add(ls[2]) #transcript infos?
     if skipped:
         log.info('skipped the following categories: {}'.format(skipped))
     # sort the exons
-    for tid in exons.keys():
+    log.info('sorting exon positions...')
+    for tid in tqdm(exons):
         exons[tid].sort()
-        
     missed_genes=[gid for gid in transcripts.keys() if gid not in gene_set]
     if missed_genes:        
         #log.debug('/n'.join(gid+str(tr) for gid, tr in missed_genes.items()))
         notfound=len(missed_genes)
         found=sum((len(t) for t in genes.values()) )
         log.warning('found specific gene information with category {} for {}/{} genes'.format(gene_categories,found, found+notfound))
+    log.info('building gene data structure...')
     # add transcripts to genes
     for chrom in genes:
         for gene in genes[chrom]:
@@ -862,17 +973,20 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
                 try:
                     tr_info['exons']=exons[t_id]
                 except KeyError:
-                    # genes without transcripts get a single exons transcript
+                    # genes without exons get a single exons transcript
                     tr_info['exons']=[tuple(gene[:2])]
+                #add cds
+                if t_id in cds_start and t_id in cds_stop:
+                    tr_info['CDS']=(cds_start[t_id], cds_stop[t_id]) if cds_start[t_id]< cds_stop[t_id] else (cds_stop[t_id],cds_start[t_id])
                 gene.data.setdefault('transcripts', dict())[t_id]=tr_info
     return genes,dict()
 
 def get_gff_chrom_dict(gff, chromosomes):
-    # fetch chromosome ids
+    # fetch chromosome ids - in case they use ids in gff for the chormosomes
     chrom = {}
     for c in gff.contigs:
         #loggin.debug ("---"+c)
-        for line in gff.fetch(c, 1, 2):
+        for line in gff.fetch(c, 1, 2): #chromosomes span the entire chromosome, so they can be fetched like that
             if line[1] == "C":
                 ls = line.split(sep="\t")
                 if ls[2] == "region":
@@ -883,7 +997,7 @@ def get_gff_chrom_dict(gff, chromosomes):
                             chrom[ls[0]] = info["chromosome"]
                         break
                         
-        else:# no specific regions entrie - no aliases
+        else:# no specific regions entries - no aliases
             if chromosomes is None or c in chromosomes:
                 chrom[c]=c
     return(chrom)

@@ -9,8 +9,16 @@ from pysam import  AlignmentFile
 from scipy.stats import binom,norm, chi2
 import statsmodels.stats.multitest as multi
 import isotools.splice_graph
-from isotools.transcriptome import log,junctions_from_cigar
+from isotools.transcriptome import junctions_from_cigar
 from tqdm import tqdm
+import logging
+log=logging.getLogger(__name__)
+log.setLevel(logging.DEBUG)
+log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s: %(message)s')
+#log_file=logging.FileHandler('logfile.txt')
+log_stream=logging.StreamHandler()
+log_stream.setFormatter(log_format)
+log.addHandler(log_stream)
 
 def overlap(pos1,pos2,width, height):
     if abs(pos1[0]-pos2[0])<width and abs(pos1[1]-pos2[1])<height:
@@ -18,45 +26,34 @@ def overlap(pos1,pos2,width, height):
     return False
 
 #sashimi plots
-def sashimi_plot_bam(g, bam_fn,ax=None,text_width=.02, text_height=1, title=None,group=None, high_cov_th=.1,chrom_map=None,junctions_of_interest=None, exon_color='blue', 
+def sashimi_plot_bam(g,ax=None,text_width=.02, text_height=1, title=None,group=None, high_cov_th=.1,chrom_map=None,junctions_of_interest=None, exon_color='blue', 
                 low_cov_junctions={'color':'grey','lwd':1,'draw_label':False} , 
                 high_cov_junctions={'color':'green','lwd':1,'draw_label':True}, 
                 interest_junctions={'color':'purple','lwd':2,'draw_label':True}):
     jparams=[low_cov_junctions,high_cov_junctions,interest_junctions]
     delta=np.zeros(g.end-g.start)
     chrom=g.chrom
-    if chrom_map is not None:
-        chrom=chrom_map[chrom]
-    reg=f'{chrom}:{g.start}-{g.end}'
     if title is None:
-        title=g.name
-    junctions={}
-    with AlignmentFile(bam_fn, "rb") as align:
-        for read in align.fetch(region=reg):        
-            blocks=junctions_from_cigar(read.cigartuples,read.reference_start) #alternative: read.get_blocks() 
-            for i, block in enumerate(blocks):
-                s=max(g.start,min(g.end-1,block[0]))-g.start
-                e=max(g.start,min(g.end-1,block[1]))-g.start
-                delta[s]+=1
-                delta[e]-=1            
-                if i>0:
-                    jpos=(blocks[i-1][1],block[0])
-                    if jpos[1]-jpos[0]<1:
-                        continue
-                    junctions.setdefault(jpos,0)
-                    junctions[jpos]+=1            
-    cov=np.cumsum(delta)   
+        title=g.name    
     if text_width<1:
         text_width=(g.end-g.start)*text_width
+    #cov=np.array([sum(illu[pos] for i, illu in enumerate(g.illumina_coverage) if groups is None or i in groups) for pos in range(g.start, g.end)])
+    cov=np.zeros(g.end-g.start)
+    junctions={}
+    for i,illu in enumerate(g.illumina_coverage):
+        if group is None or i in group:
+            cov+=illu.profile
+            for k,v in illu.junctions.items():            
+                junctions[k]=junctions.get(k,0)+v     
+                   
     total_weight=max(cov)
     if high_cov_th<1:
         high_cov_th=high_cov_th*total_weight
-    junctions={k:v for k,v in junctions.items() if not v<1}
 
     if ax is None:
         fig,ax = plt.subplots(1)
         
-    ax.fill_between(range(g.start, g.end), 0, np.log10(cov+.5),facecolor=exon_color )
+    ax.fill_between(range(g.start, g.end), 0, np.log10(cov, where=cov>0, out=np.nan*cov),facecolor=exon_color )
     
     textpositions=[]
     for (x1,x2),w in junctions.items():
@@ -90,7 +87,7 @@ def sashimi_plot_bam(g, bam_fn,ax=None,text_width=.02, text_height=1, title=None
             txt=ax.text(center,log10(max(y1,y2)+.5)+min(bow_height)+text_height/3,w,horizontalalignment='center', verticalalignment='bottom',bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)).set_clip_on(True)
         #bbox_list.append(txt.get_tightbbox(renderer = fig.canvas.renderer))
 
-    #ax.set_yscale('log') 
+    
     ax.set_xlim(g.start-100, g.end+100)
     if textpositions:
         ax.set_ylim(-text_height,max(tp[1] for tp in textpositions)+2*text_height)

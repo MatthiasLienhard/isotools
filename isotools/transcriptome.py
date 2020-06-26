@@ -1,5 +1,7 @@
 #!/usr/bin/python3
 import os
+import os.path
+
 import itertools
 import warnings
 from itertools import combinations, product
@@ -15,6 +17,7 @@ import matplotlib.pyplot as plt
 from intervaltree import IntervalTree, Interval
 from tqdm import tqdm
 import isotools.splice_graph 
+from isotools.pacbio_bam import PacbioBam
 import logging
 import copy
 import pickle
@@ -22,7 +25,7 @@ import re
 #import operator as o
 
 log=logging.getLogger(__name__)
-log.setLevel(logging.INFO)
+log.setLevel(logging.DEBUG)
 log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s: %(message)s')
 #log_file=logging.FileHandler('logfile.txt')
 log_stream=logging.StreamHandler()
@@ -41,10 +44,8 @@ default_transcript_filter={
         'UNSPLICED':'len(exons)==1','MULTIEXON':'len(exons)>1'}
         
 class Transcriptome:
-    def __init__(self, file_name, chromosomes=None, file_format='auto', groups=None):        
-        self.data,self.infos=import_transcripts(file_name, chromosomes=chromosomes, file_format=file_format)
-        if groups is not None:
-            self.groups=groups
+    def __init__(self, file_name, file_format='auto',**kwargs):        
+        self.data,self.infos=import_transcripts(file_name, file_format=file_format, **kwargs)
         if 'file_name' not in self.infos:
             self.infos['file_name']=file_name
         self.make_index()
@@ -142,20 +143,12 @@ class Transcriptome:
 
     @property 
     def runs(self):
-        return(self.infos['runs'])
+        return dict(zip(self.infos['sample_table'].name, self.infos['sample_table'].run))
         
-    @property 
-    def groups(self):
-        try:
-            return(self.infos['groups'])
-        except KeyError:
-            return({r:[r] for r in self.infos['runs']})
-
-    @groups.setter
-    def groups(self, grp):
-        assert all(r in self.infos['runs'] for g in grp for r in g)
-        self.infos['groups']=grp
-
+    def get_sample_idx(self, group_column='name'):
+        #returns a dict with group names as keys and index lists as values
+        return self.infos['sample_table'].groupby(group_column).groups
+        
     @property
     def n_transcripts(self):
         if self.data==None:
@@ -264,8 +257,8 @@ class Transcriptome:
         if not isinstance( extra_columns, list):
             raise ValueError('extra_columns should be provided as list')
         extracolnames={'annotation':('splice_intersect', 'base_intersect','splicing_comparison')}
-        if 'runs' in self.infos:
-            extracolnames['coverage']=(f'coverage_{r}' for r in self.infos['runs'])
+        if 'sample_table' in self.infos:
+            extracolnames['coverage']=(f'coverage_{sn}' for sn in self.infos['sample_table'].name)
         colnames=['chr', 'gene_start', 'gene_end','strand', 'gene_id','gene_name' ,'transcript_name']     + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
         rows=[]
         for g,trid, _ in self.iter_transcripts(region, include,remove):                
@@ -416,6 +409,7 @@ class Gene(Interval):
             lines.append(gene)
         return(lines)
     
+
 
     def add_noncanonical_splicing(self, genome_fh):
         #for all transcripts, add the the index and sequence of noncanonical (i.e. not GT-AG)
@@ -689,15 +683,11 @@ def _coding_len(exons, cds):
 
 
 #io
-def get_read_sequence(bam_fn,reg=None, name=None):
-    with AlignmentFile(bam_fn, "rb") as align:
-        for read in align.fetch(region=reg):
-            chrom = read.reference_name
-            strand = '-' if read.is_reverse else '+'
-            exons = junctions_from_cigar(read.cigartuples,read.reference_start)
-            if name is None or name == read.query_name:
-                yield  read.query_name, read.query_sequence, chrom,strand, exons
-
+def query_bam(bam_fn,use_pbi=True,**kwargs):
+        with PacbioBam.open(bam_fn, use_pbi) as align:
+            for read in align.fetch(**kwargs):
+                yield read
+                
 
 
 def import_transcripts(fn, file_format='auto', **kwargs):
@@ -718,80 +708,100 @@ def import_transcripts(fn, file_format='auto', **kwargs):
         raise ValueError('unsupportet file format: {}'.format(file_format))    
     return genes,infos
 
-def import_pacbio_transcripts(fn,chromosomes=None):
+def import_pacbio_transcripts(fn,sample_table,genome_fn=None, chromosomes=None):
         n_secondary=0
-        with AlignmentFile(fn, "rb") as align:        
-            stats = align.get_index_statistics()
-            # try catch if sam/ no index /not pacbio?
-            total_reads = sum([s.mapped for s in stats])
-            if chromosomes is None:
-                chromosomes=align.references
-            runs=set()
-            genes={c:IntervalTree() for c in chromosomes}
-            fusion=dict()
-            fusion_primary=dict()
-            for read in tqdm(align, total=total_reads, unit='transcripts'):
-                if read.flag & 0x100:
-                    n_secondary+=1
-                    continue # use only primary alignments
+        neglected_runs=set()
+        #runs=pd.DataFrame(runs)
+        assert isinstance(sample_table, pd.DataFrame) and 'name' in sample_table.columns and 'run' in sample_table.columns, '\"sample_table\" must be a pandas DataFrame with columns \"name\" and \"run\"'
+        sample_table.reset_index(drop=True)# make sure the index is 0..n
+        run_idx={v:k for k,v in sample_table.run.items()}
+        #with FastaFile(genome_fn) if genome_fn is not None else None as genome_fh: #none has no open, does not work
+        try:
+            genome_fh=FastaFile(genome_fn) if genome_fn is not None else None
+            with AlignmentFile(fn, "rb") as align:        
+                stats = align.get_index_statistics()
+                # try catch if sam/ no index /not pacbio?
+                total_reads = sum([s.mapped for s in stats])
+                if chromosomes is None:
+                    chromosomes=align.references
+                #runs=set()
+                genes={c:IntervalTree() for c in chromosomes}
+                fusion=dict()
+                fusion_primary=dict()
+                for read in tqdm(align, total=total_reads, unit='transcripts'):
+                    if read.flag & 0x100:
+                        n_secondary+=1
+                        continue # use only primary alignments
 
-                chrom = read.reference_name
-                if chrom not in chromosomes and not read.flag & 0x800: #allow secondary alignments form other chromosomes
-                    continue
-                strand = '-' if read.is_reverse else '+'
-                exons = junctions_from_cigar(read.cigartuples,read.reference_start)
-                tags= dict(read.tags)
-                cov={}
-                for read_id in tags['im'].split(','):
-                    run=read_id[:read_id.find('/')]
-                    runs.add(run)
-                    cov[run] = cov.get(run, 0) + 1
-                cds=find_orf(read.query_sequence)
-                mut=get_mutations(read.cigartuples, read.query_sequence)
-                #transcript infos
-                tr={'exons':exons, 'source_len':len(read.query_sequence), 'cigar':read.cigarstring, 
-                    'clipped': sum(n for i,n in read.cigartuples if i in (4,5)),
-                    'coverage':cov, 'CDS':cds, 'mutations':mut} 
-                #gene infos
-                info={'strand':strand, 'chr':chrom,
-                        'ID':read.query_name,'transcripts':{read.query_name:tr}}
-                
-                if 'SA' in tags: #part of a fusion gene   
-                    if read.flag & 0x800: #secondary part
-                        fusion.setdefault(read.query_name, []).append({'chr':chrom,'exons':tr['exons'],'cigar':tr['cigar'],'strand':strand}) #cigar is required to sort out the order 
-                    else: #primary part
-                        fusion_primary[read.query_name]=tr
-                if not read.flag & 0x800:
-                    genes[chrom].add(Gene(exons[0][0],exons[-1][1],info))
-        
-        # make coverage a list
-        runs=sorted(list(runs))
-        for tree in genes.values():
-            for g in tree:
-                tr=next(iter(g.transcripts.values()))
-                tr['coverage']=[tr['coverage'].get(run,0) for run in runs ]        
+                    chrom = read.reference_name
+                    if chrom not in chromosomes and not read.flag & 0x800: #allow secondary alignments form other chromosomes
+                        continue
+                    strand = '-' if read.is_reverse else '+'
+                    exons = junctions_from_cigar(read.cigartuples,read.reference_start)
+                    tags= dict(read.tags)
+                    cov=np.zeros(len(sample_table))
+                    for read_id in tags['im'].split(','):
+                        run=read_id[:read_id.find('/')]
+                        try:
+                            cov[ run_idx[run] ]+=1
+                        except KeyError:
+                            neglected_runs.add(run)
+                    cds=find_orf(read.query_sequence)
+                    
+                    #transcript infos
+                    tr={'exons':exons, 'source_len':len(read.query_sequence), 'cigar':read.cigarstring, 
+                        'clipped': sum(n for i,n in read.cigartuples if i in (4,5)),
+                        'coverage':cov, 'CDS':cds} 
+                    if genome_fh is not None:
+                        tr['mutations']=get_mutations(read.cigartuples, read.query_sequence, genome_fh, chrom,read.reference_start)
+                    #gene infos
+                    info={'strand':strand, 'chr':chrom,
+                            'ID':read.query_name,'transcripts':{read.query_name:tr}}
+                    
+                    if 'SA' in tags: #part of a fusion gene   
+                        if read.flag & 0x800: #secondary part
+                            fusion.setdefault(read.query_name, []).append({'chr':chrom,'exons':tr['exons'],'cigar':tr['cigar'],'strand':strand}) #cigar is required to sort out the order 
+                        else: #primary part
+                            fusion_primary[read.query_name]=tr
+                    if not read.flag & 0x800:
+                        genes[chrom].add(Gene(exons[0][0],exons[-1][1],info))
+        except:
+            if genome_fh is not None:
+                genome_fh.close()
+            raise
+        if genome_fh is not None:
+            genome_fh.close()
+        if neglected_runs:
+            log.warning(f'found the follwing runs in pacbio file, which where not specified in the run table: {neglected_runs}')    
         #link secondary alignments (chimeric genes)
         for tid,primary in fusion_primary.items():
             primary['fusion']=fusion[tid]
         if n_secondary>0:
             log.info(f"skipped {n_secondary} secondary transcripts {n_secondary/total_reads*100}%")
-        return genes,{'runs':runs}
+        return genes,{'sample_table':sample_table}
 
-def get_mutations(cigartuples, seq=None, ref=None):
+
+def get_transcript_sequence(chrom,exons,genome_fh):
+    seq=[genome_fh.fetch(chrom, *e) for e in exons]
+    return ''.join(seq)
+
+
+def get_mutations(cigartuples, seq, ref, chrom,ref_start):
     #cigar numbers:
     #012345678
-    #MIDNSHPX=
+    #MIDNSHP=X
     mutations=[]
-    pos=0
+    ref_pos=ref_start
+    seq_pos=0
     for cigar in cigartuples:
-        if cigar[0] == 1:#I(ins)
-            mutations.append((pos,'','X'*cigar[1] if seq is None else seq[pos:(pos+cigar[1])]))
-        elif cigar[0] == 2:#D(del)
-            mutations.append((pos,'X'*cigar[1],''))
-        elif cigar[0]==7:#X(missmatch)
-            mutations.append((pos,'X'*cigar[1],'X'*cigar[1] if seq is None else seq[pos:(pos+cigar[1])]))
-        if cigar[0] in (0, 2, 7, 8):  # MDX= -> move forward on reference
-            pos += cigar[1]
+        if cigar[0] in (1,2,8):#I(ins), D(del) or X (missmatch): 
+            ref_base='' if cigar[0] == 1 else ref.fetch(chrom, ref_pos,ref_pos+cigar[1])
+            alt_base='' if cigar[0] == 2 else seq[seq_pos:(seq_pos+cigar[1])]
+            mutations.append((ref_pos,ref_base, alt_base))
+        if cigar[0] in (0, 2, 3, 7, 8):  # MDN=X -> move forward on reference
+            ref_pos += cigar[1]
+        if cigar[0] in (0, 1, 4,7, 8):  # MIS=X -> move forward on seq
+            seq_pos += cigar[1]
     return mutations        
 
 def find_orf(seq, min_len=3):

@@ -25,11 +25,12 @@ import re
 #import operator as o
 
 log=logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
+log.setLevel(logging.INFO)
 log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s: %(message)s')
 #log_file=logging.FileHandler('logfile.txt')
 log_stream=logging.StreamHandler()
 log_stream.setFormatter(log_format)
+log.handlers=[]
 log.addHandler(log_stream)
 #a_th=.5, rtts_maxcov=10, rtts_ratio=5, min_alignment_cov=.1
 default_gene_filter={'NOVEL_GENE':'all(tr["annotation"] for tr in transcripts.values())'}
@@ -258,7 +259,8 @@ class Transcriptome:
             raise ValueError('extra_columns should be provided as list')
         extracolnames={'annotation':('splice_intersect', 'base_intersect','splicing_comparison')}
         if 'sample_table' in self.infos:
-            extracolnames['coverage']=(f'coverage_{sn}' for sn in self.infos['sample_table'].name)
+            extracolnames['coverage']=(f'coverage_{sn}' for sn in self.infos['sample_table'].name)            
+            #extracolnames['group_coverage']=(f'coverage_{sn}' for sn in self.infos['sample_table'].groups)
         colnames=['chr', 'gene_start', 'gene_end','strand', 'gene_id','gene_name' ,'transcript_name']     + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
         rows=[]
         for g,trid, _ in self.iter_transcripts(region, include,remove):                
@@ -579,8 +581,7 @@ class Gene(Interval):
         try:
             return self.data['illumina']
         except KeyError:
-            log.info('add illumina bam files first')
-            raise
+            raise ValueError(f'no illumina coverage for gene {self.name} add illumina bam files first')
 
     @property
     def id(self):
@@ -1181,190 +1182,3 @@ def splice_identical(tr1, tr2):
         if e1[0] != e2[0] or e1[1] != e2[1]:
             return False
     return True
-
-#################################################
-# everything from here should be obsolete
-##################################################
-
-def get_support(exons, ref_genes, chrom, strand):    
-    log.debug('Call of depricated function get_support')        
-    if chrom not in ref_genes.data:
-        return None
-    #strand='-' if is_reverse else '+'
-    ref_genes_ol = [g for g in ref_genes.data[chrom][exons[0][0]: exons[-1][1]] if g.strand==strand]
-    #for each referecne gene get the number of intersecting splice junctions and bases
-    if len(ref_genes_ol)==0:
-        return None
-    intersect=[g.splice_graph.get_intersects(exons) for g in ref_genes_ol]
-    best_idx = max(enumerate(intersect), key=lambda x:x[1])[0]
-    if intersect[best_idx][1] == 0 :
-        return None
-    g = ref_genes_ol[best_idx]
-    anno={'ref_gene_name': g.name, 'ref_gene_id':g.id, 'as': g.splice_graph.get_alternative_splicing(exons, strand)}
-    return anno
-
-
-
-
-def get_support_old(exons, ref_genes, chrom, is_reverse):    
-    log.debug('Cll of depricated function get_support_old')    
-    if chrom not in ref_genes.data:
-        return None
-    strand='-' if is_reverse else '+'
-    ref_genes_ol = [g for g in ref_genes.data[chrom][exons[0][0]: exons[-1][1]] if g.strand==strand]
-    #compute support for all transcripts of overlapping genes
-    support_dict, novel_sj1, novel_sj2 = compute_support(ref_genes_ol, exons)
-    #chose the best transcript
-    try:
-        # https://stackoverflow.com/questions/2474015/getting-the-index-of-the-returned-max-or-min-item-using-max-min-on-a-list
-        #best_idx = max(enumerate(zip(support_dict['sjIoU'], support_dict['exIoU'])), key=lambda x: x[1])[0]
-        best_idx = max(enumerate(zip(support_dict['sjIoU'], support_dict['exIoU'])), key=lambda x: x[1][0]*x[1][1])[0] # use the product of IoUs as criterium
-    except ValueError:
-        return None
-    else:
-        if support_dict['exIoU'][best_idx] <=0:
-            return None
-        support={'novel_sj1':novel_sj1, 'novel_sj2':novel_sj2}
-        for n, v in support_dict.items():
-            support[n]=v[best_idx]
-        support["sType"]=get_alternative_splicing(support_dict, best_idx,exons, ref_genes_ol, is_reverse)
-    return support
-
-def compute_support(ref_genes, query_exons): #compute the support of all transcripts in ref_genes
-    log.debug('Call of depricated function compute_support')    
-    # get overlapping genes:
-    query_len = sum([e[1]-e[0] for e in query_exons])
-    query_nsj = len(query_exons)*2-2
-    support = {k: list() for k in ['ref_gene_name','ref_gene_id', 'ref_transcript',
-                                   'ref_tss', 'ref_pas', 'ref_len', 'ref_nSJ', 'exI', 'sjI']}    
-    novel_sj1=[i+1 for i,e in enumerate(query_exons[1:]) if e[0] not in (ref_e[0] for g in ref_genes for tr in g.transcripts.values() for ref_e in tr['exons'])]
-    novel_sj2=[i for i,e in enumerate(query_exons[:-1]) if e[1] not in (ref_e[1] for g in ref_genes for tr in g.transcripts.values() for ref_e in tr['exons'])]
-    #novel_exons=[i for i,e in enumerate(query_exons[1:-1]) if e not in (ref_e) for g in ref_genes for tr in g.transcripts for ref_e in tr['exons'])]
-    
-    for gene in ref_genes:
-        # tood: check strand??
-        for trid,tr in gene.transcripts.items():
-            db_exons=tr['exons']
-            support['ref_gene_id'].append(gene.id)
-            support['ref_gene_name'].append(gene.name)
-            support['ref_transcript'].append(trid)
-            support['ref_len'].append(sum([e[1]-e[0] for e in db_exons]))
-            support['ref_nSJ'].append(len(db_exons)*2-2)
-            support['ref_tss'].append(
-                db_exons[0][0] if gene.data['strand'] == '+' else db_exons[-1][1])
-            support['ref_pas'].append(
-                db_exons[0][0] if gene.data['strand'] == '-' else db_exons[-1][1])
-            sji, exi = get_intersects(db_exons, query_exons)
-            support["sjI"].append(sji)
-            support['exI'].append(exi)
-    support['exIoU'] = [i/(query_len+db-i)
-                        for i, db in zip(support['exI'],  support['ref_len'])]
-    support['sjIoU'] = [i/(query_nsj+db-i) if (query_nsj+db-i) >
-                        0 else 1 for i, db in zip(support['sjI'],  support['ref_nSJ'])]
-    return support, novel_sj1, novel_sj2
-
-def get_alternative_splicing(support_dict, best_idx,exons, ref_genes_ol, is_reverse):
-    log.debug('Call of depricated function get_alternative_splicing') 
-    if support_dict["sjIoU"][best_idx] == 1:
-        splice_type = ['splice_identical']
-    elif support_dict["exIoU"][best_idx] == 0:
-        splice_type = ['novel/unknown']
-    else:
-        try:
-            g=next(iter(gene for gene in ref_genes_ol if gene.id==support_dict['ref_gene_id'][best_idx] ))
-            ref_exons=next(iter(tr['exons'] for trid,tr in g.transcripts.items() if trid == support_dict['ref_transcript'][best_idx]))
-        except StopIteration:
-            log.error('cannot find the transcript {}:{}-- this should never happen'.format(*[support_dict[v][best_idx] for v in ['ref_gene_name', 'ref_transcript']]))
-            raise ValueError
-        splice_type = get_splice_type( ref_exons, exons, is_reverse)
-        fusion=get_fusion(support_dict, ref_genes_ol)
-        if len(fusion)>0:
-            splice_type['fusion_gene']=fusion
-    return splice_type
-
-def get_fusion(support_dict, ref_genes_ol, min_iou=.5):
-    log.debug('Call of depricated function get_alternative_splicing') 
-    covered_gene_ids = {id for id, iou in zip(
-        support_dict['ref_gene_id'], support_dict['sjIoU']) if iou >= min_iou}
-    covered_genes = {
-        g for g in ref_genes_ol if g.id in covered_gene_ids}        
-    fusion=[]
-    if len(covered_genes) > 1:
-        # remove overlapping genes
-        for g1, g2 in combinations(covered_genes, 2):
-            if not overlap(g1[:2], g2[:2]):
-                fusion.append('{}|{}'.format(g1.name, g2.name))
-    return fusion
-    
-
-def get_splice_type(ref, alt, is_reversed=False):
-    log.debug('Call of depricated function get_alternative_splicing') 
-    if len(ref) == 0:
-        return(['novel/unknown'])
-    if len(alt) ==1:
-        return['unspliced_fragment']
-    types = ['alternative_donor', 'alternative_acceptor', 'alternative_promoter', 'alternative_polyA',
-             'truncated5', 'truncated3', 'exon_skipping', 'novel_exon', 'gapped_exon', 'retained_intron']
-    types = {t: [] for t in types}
-    relation = get_relation(ref, alt)
-    # alt exons that do not overlap any ref
-    first = next(i for i, rel in enumerate(relation) if rel) #first ref exon that overlaps an alt exon
-    last=len(relation)-next(iter([i for i,r in enumerate(reversed(relation)) if r]))-1
-    novel = set(range(len(alt)))-{r[0] for x in relation for r in x}
-    if 0 in novel: #frist exon completely new (wrt troi)
-        types['alternative_polyA' if is_reversed else 'alternative_promoter'].append(
-            '{}-{}'.format(*alt[0]))
-    if len(alt)-1 in novel:
-        types['alternative_promoter' if is_reversed else 'alternative_polyA'].append(
-            '{}-{}'.format(*alt[-1]))
-    if len(novel - {0, len(alt)-1}) > 0:
-        # todo: distinguish completely novel from novel for this ref_transcript
-        types['novel_exon'] += ['{}-{}'.format(*e)
-                                for i, e in enumerate(alt) if i in novel-{0, len(alt)-1}]
-    # if 0 not in novel and not types['novel_exon'] and len(relation[0]) == 0:
-    all_match = (len(novel) == 0 and #no novel alt exons
-        all([len(rel) == 1 for rel in relation[first:(last+1)]]) and #each alt exon corresponds to exactly one ref exon
-        all([rel[0][1] == 3 for rel in relation[(first+1):last]]) and #all but the first and last alt exons are the same
-        (relation[first][0][1] & 1) and #the first exon has matching second splice site
-        (relation[last][0][1] & 2)) #the last exon has matching first splice site
-    if first > 0 and all_match :
-        if alt[0][0] >= ref[first][0]: #todo: check that alt[0][0]> ref[first][0]
-            types['truncated3' if is_reversed else 'truncated5'].append(
-                '{}-{}'.format(*alt[0]))
-        else:
-            types['alternative_polyA' if is_reversed else 'alternative_promoter'].append(
-                '{}-{}'.format(*alt[0]))
-    # if len(alt)-1 not in novel and not types['novel_exon'] and len(relation[-1]) == 0:
-    if last < len(relation)-1 and all_match:
-        if alt[-1][1] <= ref[last][1]:
-            types['truncated5' if is_reversed else 'truncated3'].append(
-                '{}-{}'.format(*alt[-1]))
-        else:
-            types['alternative_promoter' if is_reversed else 'alternative_polyA'].append(
-                '{}-{}'.format(*alt[-1]))
-    for i in range(first, last+1):
-        rel = relation[i]
-        if len(rel) > 1:  # more than one alt exon for a ref exon
-            types['gapped_exon'].append(
-                 "~".join(['{}-{}'.format(*alt[alt_i]) for alt_i, splice in rel]))
-        if rel and i > first and relation[i-1] and rel[0][0] == relation[i-1][-1][0]:
-            types['retained_intron'].append('{}-{}'.format(*alt[rel[0][0]]))
-        else:
-            # fst splice site does not correspond to any alt exon
-            if rel and rel[0][1] & 2 == 0 and i > first:
-                delta = alt[rel[0][0]][0]-ref[i][0]
-                types['alternative_acceptor' if is_reversed else 'alternative_donor'].append(
-                    (alt[rel[0][0]][0], delta))
-        if rel and i < last and rel[-1][1] & 1 == 0 and i < last and not(relation[i+1] and rel[-1][0] == relation[i+1][0][0]):
-                delta = alt[rel[-1][0]][1]-ref[i][1]
-                types['alternative_donor' if is_reversed else 'alternative_acceptor'].append(
-                    (alt[rel[-1][0]][1], delta))
-        if not rel and i > first and i < last:  # exon skipping
-            pre=next(((j,relation[j][-1]) for j in reversed(range(i)) if relation[j]),[]) #first ref exon that overlaps an alt exon
-            suc=next(((j,relation[j][0]) for j in range(i+1, len(relation)) if relation[j]),[]) #first ref exon that overlaps an alt exon
-            # only predecessing as well as successing splice site is identical
-            #if pre and suc and pre[1][1] & 1 and suc[1][1] & 2:
-            types['exon_skipping'].append(
-                    '{}~{}'.format(alt[pre[1][0]][1], alt[suc[1][0]][0]))
-    # return only types that are present
-    return {k: v for k, v in types.items() if v}

@@ -15,6 +15,16 @@ import scipy.stats as stats
 from math import log10,pi
 import isotools.transcriptome 
 
+
+log=logging.getLogger(__name__)
+log.setLevel(logging.INFO)
+log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s: %(message)s')
+#log_file=logging.FileHandler('logfile.txt')
+log_stream=logging.StreamHandler()
+log_stream.setFormatter(log_format)
+log.handlers=[] #to prevent multiple messages upon reload
+log.addHandler(log_stream)
+
 def overlap(pos1,pos2,width, height):
     if abs(pos1[0]-pos2[0])<width and abs(pos1[1]-pos2[1])<height:
         return True
@@ -164,16 +174,16 @@ class SpliceGraph():
                 end='3' if is_reverse else '5'
                 altsplice.setdefault(f'{end}\' truncation',[]).append([self[j0].start, exons[0][0]]) #at start (lower position)
         for i,_ in enumerate(exons[:-1]):                               
-            #print(f'{i} {j1}, {j2}')
+            log.debug(f'check exon {i}:{exons[i]} between sg noded {j1}:{self[j1]} and {j2}:{self[j2]}')
             j1, exon_altsplice=self._check_exon(j1,j2,i==0,is_reverse,exons[i], exons[i+1])
             for k,v in exon_altsplice.items(): #e and the next if any
                 altsplice.setdefault(k,[]).extend(v)
-            if j1==len(self):
+            if j1==len(self): #additional exons after end of splicegraph
                 for remain in exons[(i+1):-1]:
-                    altsplice.setdefault('novel exon',[]).extend(remain)
+                    altsplice.setdefault('novel exon',[]).append(remain)
                 if i<len(exons)-1:
                     site='TSS' if is_reverse else 'PAS'
-                    altsplice.setdefault(f'novel {site}',[]).extend(exons[-1])
+                    altsplice.setdefault(f'novel {site}',[]).append(exons[-1])
                 break
             # find j2: index of last segment starting befor exon end (i.e. last overlapping  segment)
             try:
@@ -181,7 +191,7 @@ class SpliceGraph():
             except StopIteration:
                 j2=len(self)-1
         else:# check last exon
-            j1, exon_altsplice=self._check_exon(j1,j2,False,is_reverse,exons[-1])
+            j1, exon_altsplice=self._check_exon(j1,j2,False,is_reverse,exons[-1]) #todo: check is_reverse False
             for k,v in exon_altsplice.items(): #e and the next if any
                 altsplice.setdefault(k,[]).extend(v)
         if self[j2].suc and not any(j in self._pas for j in range(j1,j2+1)):
@@ -194,11 +204,11 @@ class SpliceGraph():
         return altsplice
             
     def _check_exon(self,j1,j2,is_first,is_reverse, e, e2=None):
-        #checks weather exon is supported by splice graph between nodes j1 and j2
+        #checks wether exon is supported by splice graph between nodes j1 and j2
         #j1: index of first segment ending after exon start (i.e. first overlapping segment)
         #j2: index of last segment starting befor exon end (i.e. last overlapping  segment)
         if j1>j2: #e is not contained at all  -> intronic   
-            if is_first:
+            if is_first or e2==None:
                 altsplice={'novel PAS' if is_first==is_reverse else 'novel TSS':[e]}
             else:
                 altsplice={'novel exon':[e]}
@@ -217,16 +227,36 @@ class SpliceGraph():
                 altsplice.setdefault(f'novel {pos} splice {kind}',[]).append((e[1],dist))
             for j in range(j1,j2):
                 if self[j].suc:
-                    gap,j_suc=min(((self[j_suc][0]-self[j][1],j_suc) for j_suc in set(self[j].suc.values())), key=lambda x: x[0])
-                    if gap>0:
-                        altsplice.setdefault('retained intron',[]).append([self[j][1],self[j_suc][0]])               
+                    gap,j_suc=min(((self[j_suc][0]-self[j][1],j_suc) for j_suc in set(self[j].suc.values()) ), key=lambda x: x[0])
+                    #todo: (potentially pedantic note) check transcript supporting this intron should start befor e[1] - 
+                    # otherwise alternative tss within the retained intron might give unwanted results
+                    if gap>0 and self[j_suc][0] < e[1]:                         
+                        altsplice.setdefault('retained intron',[]).append([self[j][1],self[j_suc][0]])   
+            #check for overlapping retained introns, take the minimum
+            if 'retained intron' in altsplice and len(altsplice['retained intron'])>1:
+                ret_introns=altsplice['retained intron']
+                rm=[]
+                for idx,intron in enumerate(ret_introns):
+                    if idx in rm:
+                        continue
+                    ol=[idx]
+                    idx2=idx+1
+                    while idx2<len(ret_introns) and ret_introns[idx2][0]<= intron[1]:
+                        if idx2 not in rm:
+                            ol.append(idx2)
+                        idx2+=1
+                    if len(ol)>1:  #several overlapping retained introns: keep only the smallest
+                        keep=min(ol, key=lambda x: ret_introns[x][1]-ret_introns[x][0])
+                        rm.extend([x for x in ol if x != keep])
+                altsplice['retained intron']=[intron for idx,intron in enumerate(ret_introns) if idx not in rm]
+                #             
             j1=j2 #j1 becomes index of last segment starting befor e ends
         if e2 is not None: #check presence of junction
             introns=[]
             while j2 < len(self) and self[j2][1]<=e2[0]:
                 if j2 in self[j2-1].suc.values() and self[j2-1][1]<self[j2][0]:
                     introns.append([self[j2-1][1],self[j2][0]])
-                j2+=1    #j2 now is index of first segment ending after e2 starts 
+                j2+=1    #j2 now is index of first segment ending after e2 starts (first overlapping)
             if j2 in self[j2-1].suc.values() and self[j2-1][1]<self[j2][0]:
                 introns.append([self[j2-1][1],self[j2][0]])    
             if j2<len(self) and self[j1][1]==e[1] and self[j2][0]==e2[0] and j2 not in self[j1].suc.values():#junciton not present...
@@ -235,7 +265,7 @@ class SpliceGraph():
                         altsplice.setdefault('exon skipping',[]).append([introns[i][1], introns[i+1][0]])
                 else:
                     altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter
-        
+        log.debug(f'check exon {e} resulted in {altsplice}')
         return j2, altsplice
             
     def fuzzy_junction(self,exons,size):

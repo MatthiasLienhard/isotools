@@ -16,14 +16,14 @@ import logging
 from heapq import nlargest
 from umap import UMAP
 from sklearn.decomposition import PCA
-import random
 
 log=logging.getLogger(__name__)
-log.setLevel(logging.DEBUG)
+log.setLevel(logging.INFO)
 log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s: %(message)s')
 #log_file=logging.FileHandler('logfile.txt')
 log_stream=logging.StreamHandler()
 log_stream.setFormatter(log_format)
+log.handlers=[]
 log.addHandler(log_stream)
 
 def overlap(pos1,pos2,width, height):
@@ -33,17 +33,19 @@ def overlap(pos1,pos2,width, height):
 
 def embedding(isoseq, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,samples=None, min_cov=50):
     #get data frame most variable junction for each gene
-    data={}
     if samples is not None:
         s_filter=[True if sn in samples else False for sn in isoseq.runs]
     else:
         s_filter=[True]*len(isoseq.runs)
     if genes is None:
-        genes=[g.name for i,g in enumerate(isoseq)] #all genes
+        genes=[g for i,g in enumerate(isoseq) if all(g.splice_graph.weights[s_filter].sum(1)>=min_cov)] #all covered genes
+    log.info(f'found {len(genes)} genes > {min_cov} reads in all {sum(s_filter)} selected samples.')
     if n_subsample is not None and n_subsample<len(genes):
-        genes=random.subsample(genes, n_subsample)
-
-    for g in (isoseq[g_name] for g_name in genes):   
+        genes=[genes[i] for i in np.random.choice(range(len(genes)), n_subsample)]
+        log.info(f'sampled {n_subsample} random genes')        
+    data={}
+    # since junctions of a single gene are often correlated, I select one top variable junction per gene
+    for g in tqdm(genes):   
         jcov={}     
         sg=g.splice_graph
         gene_coverage=sg.weights[s_filter].sum(1)
@@ -52,17 +54,23 @@ def embedding(isoseq, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,
         for n in sg:
             #print(n)
             for trid,suc in n[3].items():
+                #if all(sg.weights[s_filter,trid] < min_cov):
+                #    continue
                 j_name=f'{g.name}_{n[1]}_{sg[suc][0]}'
                 jcov.setdefault(j_name,np.zeros(len(gene_coverage)))
                 jcov[j_name]+=(sg.weights[s_filter,trid]) /gene_coverage
-        top_idx=pd.DataFrame(jcov).var(0).idxmax()
-        data[top_idx]=jcov[top_idx]        
+        if jcov:
+            top_idx=pd.DataFrame(jcov).var(0).idxmax()
+            data[top_idx]=jcov[top_idx]
     data=pd.DataFrame(data,index=isoseq.infos['sample_table'].loc[s_filter,'name'])
     #filter for highest variance
+    log.info(f'selecting the most variable junction from {min(len(data),n_top_var)} genes.')
     topvar=data[data.var(0).nlargest(n_top_var).index]
 
     #compute embedding
     if reducer=='PCA':
+        # Linear dimensionality reduction using Singular Value Decomposition of the data to project it to a lower dimensional space. 
+        # The input data is centered but not scaled for each feature before applying the SVD.
         reducer=PCA()
     elif reducer=='UMAP':
         reducer==UMAP()
@@ -78,12 +86,12 @@ def plot_embedding(embedding, col=None, groups=None, labels=True, ax=None):
     if ax is None:
         _,ax=plt.subplots()
     ax.scatter(
-        embedding[:, 0],
-        embedding[:, 1],
+        embedding.loc[:, 0],
+        embedding.loc[:, 1],
         c=col)
     if labels:
-        for i,(x,y) in enumerate(embedding[:,:2]):
-            ax.text(x,y,s=embedding.index[i])
+        for idx,(x,y) in embedding.loc[:,:1].iterrows():
+            ax.text(x,y,s=idx)
     
 
 
@@ -119,10 +127,12 @@ def sashimi_plot_bam(g,ax=None,text_width=.02, text_height=1, title=None,group=N
     
     textpositions=[]
     for (x1,x2),w in junctions.items():
-        if x1<=g.start or x2>g.end:
+        if x1<=g.start or x2>=g.end:
+            #todo: this seems to happen at some chrMT genes?
+            log.debug(f'attempt to plot junction ({(x1,x2)}) outside of gene: {g.__str__()}')
             continue
-        y1=cov[x1-g.start-1]
-        y2=cov[x2-g.start]
+        y1=cov[x1-g.start-1]+.5
+        y2=cov[x2-g.start]+.5
         center=(x1+x2)/2 
         width=x2-x1
         bow_height=text_height
@@ -141,12 +151,12 @@ def sashimi_plot_bam(g,ax=None,text_width=.02, text_height=1, title=None,group=N
             priority=0
         else:
             priority=1
-        bow1=patches.Arc((center, log10(y1+.5)), width=width, height=bow_height[0]*2,theta1=90, theta2=180,linewidth=jparams[priority]['lwd'],edgecolor=jparams[priority]['color'],zorder=priority)
-        bow2=patches.Arc((center, log10(y2+.5)), width=width, height=bow_height[1]*2,theta1=0, theta2=90,linewidth=jparams[priority]['lwd'],edgecolor=jparams[priority]['color'],zorder=priority)
+        bow1=patches.Arc((center, log10(y1)), width=width, height=bow_height[0]*2,theta1=90, theta2=180,linewidth=jparams[priority]['lwd'],edgecolor=jparams[priority]['color'],zorder=priority)
+        bow2=patches.Arc((center, log10(y2)), width=width, height=bow_height[1]*2,theta1=0, theta2=90,linewidth=jparams[priority]['lwd'],edgecolor=jparams[priority]['color'],zorder=priority)
         ax.add_patch(bow1)
         ax.add_patch(bow2)
         if jparams[priority]['draw_label']:
-            txt=ax.text(center,log10(max(y1,y2)+.5)+min(bow_height)+text_height/3,w,horizontalalignment='center', verticalalignment='bottom',bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)).set_clip_on(True)
+            txt=ax.text(center,log10(max(y1,y2))+min(bow_height)+text_height/3,w,horizontalalignment='center', verticalalignment='bottom',bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)).set_clip_on(True)
         #bbox_list.append(txt.get_tightbbox(renderer = fig.canvas.renderer))
 
     
@@ -163,7 +173,8 @@ def sashimi_plot_bam(g,ax=None,text_width=.02, text_height=1, title=None,group=N
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
     return(ax)
 
-def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,title=None,group=None,  high_cov_th=.1,junctions_of_interest=None,  exon_color='blue', 
+def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,
+                title=None,group=None,  high_cov_th=.1,junctions_of_interest=None,  exon_color='blue', 
                 low_cov_junctions={'color':'grey','lwd':1,'draw_label':False} , 
                 high_cov_junctions={'color':'green','lwd':1,'draw_label':True}, 
                 interest_junctions={'color':'purple','lwd':2,'draw_label':True}):
@@ -184,7 +195,7 @@ def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,ti
     
     #idx=list(range(len(sg)))
     arcs=[]
-    for i,(es,ee, pre, suc) in enumerate(sg._graph):
+    for i,(_,ee, _, suc) in enumerate(sg._graph):
         weights={}
         for tr,next_i in suc.items():
             weights.setdefault(next_i,0)
@@ -208,9 +219,9 @@ def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,ti
             bow_height+=text_height
         textpositions.append((center, log10(max(y1,y2))+bow_height))
         if y1<y2: 
-                bow_height=(log10(y2/y1)+bow_height,bow_height)
+            bow_height=(log10(y2/y1)+bow_height,bow_height)
         elif y1>y2:
-                bow_height=(bow_height,bow_height+log10(y1/y2))
+            bow_height=(bow_height,bow_height+log10(y1/y2))
         else:
             bow_height=(bow_height,bow_height)
         if junctions_of_interest is not None and (x1,x2) in junctions_of_interest:
@@ -230,7 +241,7 @@ def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,ti
             if arc_type=='both':
                 lab=str(w)+' / '+lab
         if jparams[priority]['draw_label']:
-            txt=ax.text(center,log10(max(y1,y2))+min(bow_height)+text_height/3,lab,
+            _=ax.text(center,log10(max(y1,y2))+min(bow_height)+text_height/3,lab,
                     horizontalalignment='center', verticalalignment='bottom',zorder=10+priority,
                     bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)).set_clip_on(True)
         #bbox_list.append(txt.get_tightbbox(renderer = fig.canvas.renderer))
@@ -333,7 +344,7 @@ def altsplice_test(transcriptome,groups, min_cov=10, test=proportion_test,padj_m
 #plots
 def plot_bar(df,ax=None, drop_categories=None, legend=True,**axparams):    
     if ax is None:
-        fig, ax=  plt.subplots()
+        _, ax=  plt.subplots()
     if 'total' in df.index:
         total=df.loc['total']
         df=df.drop('total')
@@ -363,7 +374,7 @@ def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,
     x=[sum(bin)/2 for bin in counts.index]
     sz=[bin[1]-bin[0] for bin in counts.index]
     if ax is None:
-        fig, ax=  plt.subplots()
+        _, ax=  plt.subplots()
     if density: 
         counts=(counts/counts.sum())
     if smooth:
@@ -455,7 +466,7 @@ def filter_stats(transcriptome, coverage=True,groups=None,  min_coverage=1,consi
     return df, {'ylabel':ylab,'title':title}
 
 
-def transcript_length_hist(transcriptome=None,reference=None,groups=None,bins=50,range=(100,10000),coverage=True,min_coverage=1,use_alignment=False, isoseq_filter={}, reference_filter={}):
+def transcript_length_hist(transcriptome=None,reference=None,groups=None,bins=50,x_range=(100,10000),coverage=True,min_coverage=1,use_alignment=False, isoseq_filter={}, reference_filter={}):
     trlen=[]
     cov=[]
     #iso_filter=[]
@@ -467,7 +478,7 @@ def transcript_length_hist(transcriptome=None,reference=None,groups=None,bins=50
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(range[0],range[1],bins)
+        bins=np.linspace(x_range[0],x_range[1],bins)
     if not coverage:
         cov[cov<min_coverage]=0
         cov[cov>0]=1
@@ -479,7 +490,7 @@ def transcript_length_hist(transcriptome=None,reference=None,groups=None,bins=50
     params=dict(yscale='linear', title='transcript length',xlabel='transcript length [bp]', ylabel='density', density=True)
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-def transcript_coverage_hist(transcriptome, groups=None,bins=50,range=(0.5,1000), isoseq_filter={}, reference_filter={}):
+def transcript_coverage_hist(transcriptome, groups=None,bins=50,x_range=(0.5,1000), isoseq_filter={}, reference_filter={}):
     # get the transcript coverage in bins for groups
     # return count dataframe and suggested default parameters for plot_distr
     cov=[]
@@ -490,17 +501,17 @@ def transcript_coverage_hist(transcriptome, groups=None,bins=50,range=(0.5,1000)
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(range[0],range[1],bins)
+        bins=np.linspace(x_range[0],x_range[1],bins)
     counts=pd.DataFrame({gn:np.histogram(g_cov, bins=bins)[0] for gn,g_cov in cov.items()})
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     params=dict(yscale='log', title='transcript coverage',xlabel='reads per transcript', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
     #plot histogram
-    # cov.mask(cov.lt(range[0]) | cov.gt(range[1])).plot.hist(ax=ax, alpha=0.5, bins=n_bins)
+    # cov.mask(cov.lt(x_range[0]) | cov.gt(x_range[1])).plot.hist(ax=ax, alpha=0.5, bins=n_bins)
     # ax=counts.plot.bar() 
     # ax.plot(x, counts)
    
-def transcripts_per_gene_hist(transcriptome, reference=None, groups=None,bins=50,range=(.5,49.5), min_coverage=1, isoseq_filter={}, reference_filter={}):
+def transcripts_per_gene_hist(transcriptome, reference=None, groups=None,bins=50,x_range=(.5,49.5), min_coverage=1, isoseq_filter={}, reference_filter={}):
     ntr=[]
     for g in transcriptome:        
         cov=np.array([g.transcripts[trid]['coverage'] for trid in g.filter_transcripts(**isoseq_filter)]).T
@@ -510,7 +521,7 @@ def transcripts_per_gene_hist(transcriptome, reference=None, groups=None,bins=50
     if groups is not None:
         ntr=pd.DataFrame({grn:ntr[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(range[0],range[1],bins)
+        bins=np.linspace(x_range[0],x_range[1],bins)
     counts=pd.DataFrame({gn:np.histogram(trl, bins=bins)[0] for gn,trl in ntr.items()})   
     if reference is not None:
         ref_ntr=[g.n_transcripts for g in reference]
@@ -525,7 +536,7 @@ def transcripts_per_gene_hist(transcriptome, reference=None, groups=None,bins=50
     params=dict(yscale='log',title='transcript per gene\n'+sub,xlabel='transcript per gene', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
     
-def exons_per_transcript_hist(transcriptome, reference=None, groups=None,bins=35,range=(0.5,69.5),coverage=True,  min_coverage=2, isoseq_filter={}, reference_filter={}):
+def exons_per_transcript_hist(transcriptome, reference=None, groups=None,bins=35,x_range=(0.5,69.5),coverage=True,  min_coverage=2, isoseq_filter={}, reference_filter={}):
     n_exons=[]
     cov=[]
     for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
@@ -536,7 +547,7 @@ def exons_per_transcript_hist(transcriptome, reference=None, groups=None,bins=35
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(range[0],range[1],bins)
+        bins=np.linspace(x_range[0],x_range[1],bins)
     if not coverage:
         cov[cov<min_coverage]=0
         cov[cov>0]=1
@@ -548,7 +559,7 @@ def exons_per_transcript_hist(transcriptome, reference=None, groups=None,bins=35
     params=dict(yscale='log', title='exons per transcript',xlabel='number of exons per transcript', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-def downstream_a_hist(transcriptome, reference=None, groups=None,bins=30,range=(0,1),coverage=True,  min_coverage=2, isoseq_filter={}, reference_filter={}):
+def downstream_a_hist(transcriptome, reference=None, groups=None,bins=30,x_range=(0,1),coverage=True,  min_coverage=2, isoseq_filter={}, reference_filter={}):
     acontent=[]
     cov=[]
     for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
@@ -559,7 +570,7 @@ def downstream_a_hist(transcriptome, reference=None, groups=None,bins=30,range=(
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(range[0],range[1],bins)
+        bins=np.linspace(x_range[0],x_range[1],bins)
     if not coverage:
         cov[cov<min_coverage]=0
         cov[cov>0]=1

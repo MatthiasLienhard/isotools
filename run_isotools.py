@@ -16,6 +16,7 @@ log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s: %(message)s
 #log_file=logging.FileHandler('logfile.txt')
 log_stream=logging.StreamHandler()
 log_stream.setFormatter(log_format)
+log.handlers=[]
 log.addHandler(log_stream)
 
 def load_reference(args):
@@ -53,7 +54,7 @@ def load_isoseq(args, reference):
             log.info('no pickled file found')
     log.info('importing transcripts from bam file')
     sample_tab=pd.read_csv(args.samples)
-    isoseq=Transcriptome(args.bam, chromosomes=args.chrom, sample_table=sample_tab)
+    isoseq=Transcriptome(args.bam, chromosomes=args.chrom, sample_table=sample_tab) #todo: genome filename for mutation analysis??
     log.info('annotating transcripts')
     isoseq.annotate(reference, fuzzy_junction=9) 
     fuzzy=[tr['fuzzy_junction'] for g,trid, tr in isoseq.iter_transcripts() if 'fuzzy_junction' in tr]
@@ -114,9 +115,9 @@ def altsplice_plots(isoseq, groups, out_stem):
     for i,(as_counts, as_params) in enumerate(altsplice):
         isotools.stats.plot_bar(as_counts,ax=ax[i],drop_categories=['splice_identical'], **as_params)
     plt.tight_layout(rect=[0, 0, 1, .95])
-    plt.savefig(args.out+'_altsplice.png' )
+    plt.savefig(out_stem+'_altsplice.png' )
 
-def altsplice_examples(isoseq, n):#return the top n covered genes for each category
+def altsplice_examples(isoseq, n, ignore=['splice_identical']):#return the top n covered genes for each category
     examples={}
     for g in isoseq:
         if g.chrom[:3] != 'chr':
@@ -138,13 +139,15 @@ def altsplice_examples(isoseq, n):#return the top n covered genes for each categ
                 
 
     examples={k:sorted(v,key=lambda x:-x[0] ) for k,v in examples.items()}
-    return{k:v[:n] for k,v in examples.items()}
+    return{k:v[:n] for k,v in examples.items() if k not in ignore}
 
 def plot_altsplice_examples(isoseq,reference,groups,illu_groups,examples, out):
     nplots=len(groups)+1
     sample_idx={r:i for i,r in enumerate(isoseq.infos['sample_table'].name)}
     if illu_groups:
         illu_sample_idx={r:i for i,r in enumerate(isoseq.infos['illumina_fn'])}
+        if any(gn in illu_groups for gn in groups):
+            illu_groups={gn:illu_groups[gn] for gn in groups if gn in illu_groups}
         nplots += len(illu_groups) #illumina is a dict with bam filenames
     
     plt.rcParams["figure.figsize"] = (20,5*nplots)
@@ -161,7 +164,6 @@ def plot_altsplice_examples(isoseq,reference,groups,illu_groups,examples, out):
                 g=isoseq[ref_id]
             else:
                 g=isoseq[gene_name] # novel genes (name==id)
-            
             try:
                 info=g.transcripts[trid]["annotation"]['as'][cat]
             except TypeError:
@@ -176,6 +178,29 @@ def plot_altsplice_examples(isoseq,reference,groups,illu_groups,examples, out):
             #isoseq
             joi=[]#set joi
             offset=1
+            
+            if info:
+                junctions=[]
+                if cat=='exon skipping':
+                    exons=g.transcripts[trid]['exons']
+                    for pos in info:
+                        idx=next(i for i,e in enumerate(exons) if e[0]>pos[0])
+                        junctions.append((exons[idx-1][1],exons[idx][0]))
+                    info=junctions
+                elif cat=='novel exon':
+                    exons=g.transcripts[trid]['exons']
+                    for i,e in enumerate(exons[1:-1]):
+                        if e in info:
+                            junctions.extend([(exons[i][1],e[0]), (e[1],exons[i+2][0])])
+                elif cat== 'novel junction':
+                    junctions=info
+                for pos in junctions:
+                    try:
+                        if len(pos)==2 and all(isinstance(x,int) for x in pos):
+                            joi.append(tuple(pos)) #if this is a junction, it gets highlighed in the plot
+                    except TypeError:
+                        pass
+            print(f'junctions of interest: {joi}')
             for sn in groups:
                 _=isotools.stats.sashimi_plot(g, ax=ax[offset], title='isoseq '+sn, group=groups[sn], text_width=150, arc_type='both', exon_color=exon_color,junctions_of_interest=joi, **jparams)
                 offset+=1
@@ -205,7 +230,10 @@ def plot_altsplice_examples(isoseq,reference,groups,illu_groups,examples, out):
                         continue
                     for a in ax:
                         a.set_xlim((start -100, end +100))
-                    ax[0].set_title(f'{g.name} {g.chrom}:{start}-{end} {cat}\ncov={cov}')
+                    ax[0].set_title(f'{g.name} {g.chrom}:{start}-{end} {cat} (cov={cov})')
+
+        
+                    
                     plt.savefig(f'{stem}_zoom_{start}_{end}_sashimi.png')
             plt.close()
 
@@ -309,6 +337,7 @@ if __name__=='__main__':
         illu_samples=pd.read_csv(args.illu_samples)
         if 'illumina_fn' not in isoseq.infos or not all(sn in isoseq.infos['illumina_fn'] for sn in illu_samples.name):
             isoseq.add_illumina_coverage(dict(zip(illu_samples['name'], illu_samples['file_name'])))
+            log.info('adding/overwriting illumina coverage')
             new_illu=True
         else:
             new_illu=False
@@ -330,7 +359,7 @@ if __name__=='__main__':
     
     if args.transcript_table:
         log.info(f'writing transcript table to {args.out}_transcripts.csv')
-        df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends', 'coverage','source_len','alt_splice','filter'])
+        df=isoseq.transcript_table(extra_columns=['length','n_exons','exon_starts','exon_ends', 'grop_coverage','source_len','annotation','filter'])
         df.to_csv(args.out+'_transcripts.csv')
 
     if args.gtf_out:
@@ -366,7 +395,7 @@ if __name__=='__main__':
             res=isotools.stats.altsplice_test(isoseq, list(gr.values())).sort_values('pvalue')
             sig=res.padj<.01
             log.info(f'{sum(sig)} differential splice sites in {len(res.loc[sig,"gene"].unique())} genes for {" vs ".join(gr)}')
-            res.to_csv(f'{args.out}_diff_{"_".join(gr)}.csv')
+            res.to_csv(f'{args.out}_diff_{"_".join(gr)}.csv', index=False)
             if args.diff_plots is not None:
                 if all(gn in illu_groups or gn in illu_num for gn in gr):
                     illu_gr={gn:illu_groups[gn] if gn in illu_groups else [gn] for gn in gr}

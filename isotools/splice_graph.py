@@ -225,6 +225,7 @@ class SpliceGraph():
                 kind='acceptor' if is_reverse else 'donor'
                 dist= self[j2][0]-e[1] if (e[1]-self[j2][0]<self[j2][1]-e[1]) else self[j2][1]-e[1] 
                 altsplice.setdefault(f'novel {pos} splice {kind}',[]).append((e[1],dist))
+            #find retained introns
             for j in range(j1,j2):
                 if self[j].suc:
                     gap,j_suc=min(((self[j_suc][0]-self[j][1],j_suc) for j_suc in set(self[j].suc.values()) ), key=lambda x: x[0])
@@ -232,7 +233,7 @@ class SpliceGraph():
                     # otherwise alternative tss within the retained intron might give unwanted results
                     if gap>0 and self[j_suc][0] < e[1]:                         
                         altsplice.setdefault('retained intron',[]).append([self[j][1],self[j_suc][0]])   
-            #check for overlapping retained introns, take the minimum
+            #check for overlapping retained introns, take the minimum length
             if 'retained intron' in altsplice and len(altsplice['retained intron'])>1:
                 ret_introns=altsplice['retained intron']
                 rm=[]

@@ -177,7 +177,7 @@ def sashimi_plot_bam(g,ax=None,text_width=.02, text_height=1, title=None,group=N
     return(ax)
 
 def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,
-                ttitle=None,group=None,  high_cov_th=.1,junctions_of_interest=None,  exon_color='blue', 
+                title=None,group=None,  high_cov_th=.1,junctions_of_interest=None,  exon_color='blue', 
                 low_cov_junctions={'color':'grey','lwd':1,'draw_label':False} , 
                 high_cov_junctions={'color':'green','lwd':1,'draw_label':True}, 
                 interest_junctions={'color':'purple','lwd':2,'draw_label':True}):
@@ -311,22 +311,26 @@ def proportion_test(x,n):
     # Normal approximation
     #x,n should be lenght 2(the two groups)
     #tests H0: proportions are equal vs H1: proportions are different (two sided)
+    x=[xi.sum() for xi in x]
+    n=[ni.sum() for ni in n]
     p1=[x[i]/n[i] for i in range(2)]
     p0=(x[0]+x[1])/(n[0]+n[1])
     z=abs(p1[0]-p1[1])/np.sqrt(p0*(1-p0)*(1/n[0]+1/n[1]))
-    return(2*norm.sf(z)) #two sided alternative
+    return(2*norm.sf(z)), (*p1,p0)#two sided alternative
     
 def binom_lr_test(x,n):
     # likelihood ratio test
     # x,n should be length 2 (the two groups)
     # principle: log likelihood ratio of M0/M1 is chi2 distributed
+    x=[xi.sum() for xi in x]
+    n=[ni.sum() for ni in n]
     p1=[x[i]/n[i] for i in range(2)]
     p0=(x[0]+x[1])/(n[0]+n[1])
     # calculate the log likelihoods
     l0 = binom.logpmf(x, n, p0).sum() 
     l1 = binom.logpmf(x,n, p1).sum()
     # calculate the pvalue (sf=1-csf(), 1df)
-    return chi2.sf(2*(l1-l0),1)
+    return chi2.sf(2*(l1-l0),1),(*p1,p0)
 
 #from https://stackoverflow.com/questions/54505173/finding-alpha-and-beta-of-beta-binomial-distribution-with-scipy-optimize-and-log
 def loglike_betabinom(params, *args):
@@ -344,24 +348,31 @@ def betabinom_lr_test(x,n):
     # x is betabinomial(n,a,b), eg binomial distribution, where p follows beta ditribution with parameters a,b>0
     # mean m=a/(a+b) overdispersion g=1/(a+b+1) --> a=m/g-m and b=((g-1)*(m-1))/g
     # principle: log likelihood ratio of M0/M1 is chi2 distributed
+    
     params=list()
-    for xi,ni in itertools.chain(zip(x,n),((np.concatenate((x[0],x[1])),np.concatenate((n[0],n[1]))),)):
+    for xi,ni in itertools.chain(zip(x,n),((np.concatenate(x),np.concatenate(n)),)):
+        xi, ni=xi[ni>0], ni[ni>0] #avoid div by 0
         #find good initialization parameters for a and b
         #prob=np.array([xii/nii for xii,nii in zip(xi,ni) if nii>0])
         prob=xi/ni
         minit=prob.mean()
-        ginit=prob.std()
+        ginit=max(prob.std(),1e-6)
         init_params = [minit/ginit-minit, ((ginit-1)*(minit-1))/ginit]
         #find ml estimates for a and b
         mle = minimize(loglike_betabinom, x0=init_params,bounds=((0,None),(0,None)),  args=(xi,ni),options={'maxiter': 250})
         params.append(mle.x)                
     # calculate the log likelihoods
-    l0 = betabinom.logpmf(x, n, *params[2]).sum() 
-    l1 = betabinom.logpmf(x[0],n[0], *params[0]).sum()+betabinom.logpmf(x[1],n[1], *params[1]).sum()
+    try:
+        l0 = betabinom.logpmf(np.concatenate(x), np.concatenate(n), *params[2]).sum() 
+        l1 = betabinom.logpmf(x[0],n[0], *params[0]).sum()+betabinom.logpmf(x[1],n[1], *params[1]).sum()
+    except ValueError:
+        log.error(f'betabinom error: x={x}\nn={n}\nparams={params}')
+        raise
     # calculate the pvalue (sf=1-csf(), 1df)
-    return chi2.sf(2*(l1-l0),1)
+    params_alt=[(a/(a+b), 1/(a+b+1)) for a,b in params]
+    return chi2.sf(2*(l1-l0),2), params_alt #note that we need two degrees of freedom here as h0 hsa two parameters, h1 has 4
 
-def altsplice_test(transcriptome,groups, min_cov=10, test=proportion_test,padj_method='fdr_bh'):
+def altsplice_test(transcriptome,groups, min_cov=10, min_n=10, min_sa=.5, test=proportion_test,padj_method='fdr_bh'):
     #multitest_default={}
     #grp_idx={r:i for i,r in enumerate(transcriptome.runs)}
     #grp=[[grp_idx[r] for r in g] for g in groups]
@@ -370,34 +381,33 @@ def altsplice_test(transcriptome,groups, min_cov=10, test=proportion_test,padj_m
         groupnames=list(groups)
         groups=list(groups.values())
     else:
-        groupnames=[1,2]
+        groupnames=['grp1','grp2']
+    if min_sa<1:
+        min_sa*=max(len(gr) for gr in groups)
     res=[]
     for g in tqdm(transcriptome):
         for junction_cov,total_cov,start,end in g.splice_graph.get_splice_coverage():
             x,n=[],[]
             for grp in groups:
-                sel=total_cov[grp]>0
-                if sel.sum()>0:
-                    x.append(junction_cov[grp[sel]])
-                    n.append(total_cov[grp[sel]])            
-                    continue
-                break
-            else:
+                x.append(junction_cov[grp])
+                n.append(total_cov[grp])
+            if any((ni<min_n).sum()<min_sa for ni in n):
                 continue
-            assert len(x)==2 ,str(g)
-            assert len(n)==2
             x_sum=sum(xi.sum() for xi in x)     
             n_sum=sum(ni.sum() for ni in n)       
-            if x_sum > min_cov and n_sum-x_sum > min_cov and all(ni>0 for ni in n):
-                p=test(x,n)
-                res.append(tuple(itertools.chain((g.name,g.id,g.chrom, start, end,p),
-                    (val for pair in zip(x,n) for val in pair) ,
-                    (val for pair in zip(junction_cov, total_cov) for val in pair))))
-    df=pd.DataFrame(res, columns=
-        ['gene','gene_id','chrom', 'start', 'end','pvalue']+
-        [f'{w}_{n}' for n in groupnames for w in ['cov', 'span_cov'] ]+
-        [f'{w}_{n}' for n in transcriptome.infos['sample_table'].name for w in ['cov', 'span_cov'] ])
-    df.insert(5,'padj',multi.multipletests(df['pvalue'],method=padj_method)[1])
+            if x_sum < min_cov or n_sum-x_sum < min_cov:
+                continue
+            pval, params=test(x,n)
+            res.append(tuple(itertools.chain((g.name,g.id,g.chrom, start, end,pval),params ,
+                (val for lists in zip(x,n) for pair in zip(*lists) for val in pair ))))
+    df=pd.DataFrame(res, columns= (['gene','gene_id','chrom', 'start', 'end','pvalue']+ 
+            ['prop_'+gn for gn in groupnames+['total']]+  
+            [f'{w}_{sa}_{gn}' for gn,grp in zip(groupnames, groups) for sa in grp for w in ['cov', 'span_cov'] ]))
+    mask = np.isfinite(df['pvalue'])
+    padj = np.empty(mask.shape)
+    padj.fill(np.nan) 
+    padj[mask] = multi.multipletests(df.loc[mask,'pvalue'],method='fdr_bh')[1]
+    df.insert(5,'padj',padj)
     return df
 
 #plots

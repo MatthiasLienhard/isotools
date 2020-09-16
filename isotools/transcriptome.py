@@ -4,7 +4,14 @@ import os.path
 
 import itertools
 import warnings
-from itertools import combinations, product
+from itertools import combinations, product,tee
+#From itertools receipes:
+def pairwise(iterable):
+    "s -> (s0,s1), (s1,s2), (s2, s3), ..."
+    a, b = tee(iterable) #tee splits one iterator into n
+    next(b, None)
+    return zip(a, b)
+
 from collections import ChainMap
 import argparse
 from pysam import TabixFile, AlignmentFile, FastaFile
@@ -43,9 +50,12 @@ default_transcript_filter={
         'TRUNCATION':'truncated',
         'REFERENCE':'annotation',# and "splice_identical" in annotation',
         'UNSPLICED':'len(exons)==1','MULTIEXON':'len(exons)>1'}
-        
+
+CIGAR_DICT={c:i for i,c in enumerate('MIDNSHP=X')}
+
 class Transcriptome:
-   
+    '''Container class for genes
+    '' contains a dict of interval trees for the genes, each containing the splice graph'''
     def __init__(self, file_name=None, file_format='auto',**kwargs):        
         if 'data' in kwargs:
             self.data,self.infos=kwargs['data'],kwargs.get('infos',dict())
@@ -58,18 +68,21 @@ class Transcriptome:
 
         
     def save(self, fn=None):
+        'saves the information of a transcriptome in a pickle file'
         if fn is None:
             fn=self.infos['file_name']+'.isotools.pkl'
         log.info('saving transcriptome to '+fn)
         pickle.dump((self.data,self.infos), open(fn, 'wb'))
     
     def load(self, fn=None):
+        'restores the information of a transcriptome from a pickle file'
         if fn is None:
             fn=self.infos['file_name']+'.isotools.pkl'
         log.info('loading transcriptome from '+fn)
         self.data, self.infos=pickle.load(open(fn, 'rb'))
         
     def write_gtf(self, fn, source='isotools',use_gene_name=False,  include=None, remove=None):     
+        'writes the transcripts in gtf format to a file'
         with open(fn, 'w') as f:     
             for gene in tqdm(self):
                 lines=gene.to_gtf(source=source,use_gene_name=use_gene_name, include=include, remove=remove)
@@ -79,6 +92,7 @@ class Transcriptome:
 
 
     def make_index(self):
+        'updates the index used for __getitem__, e.g. the [] operator'
         idx=dict()
         for g in self:
             idx[g.name] = g
@@ -95,6 +109,7 @@ class Transcriptome:
         return key in self._idx
     
     def remove_chromosome(self, chromosome):
+        'deletes the chromosome from the transcriptome'
         for n in (g.id for g in self.data[chromosome]):
             self._idx[n]={g for g in self._idx[n] if g.chrom != chromosome}
             if not self._idx[n]:
@@ -102,6 +117,7 @@ class Transcriptome:
         del self.data[chromosome]
     
     def add_illumina_coverage(self, illumina_fn, load=False):
+        'Add illumina coverage to the genes.\n This does, by default, not actually read the bams, but reading is done at first access'
         if load: # when loading coverage for all genes keep the filehandle open, hopefully a bit faster
             for bamfile in illumina_fn.values():            
                 log.info(bamfile)
@@ -120,7 +136,7 @@ class Transcriptome:
 
 
     def add_biases(self, genome_fn):
-        #populates transcript['biases'] which is the bases for the filter
+        'populates transcript["biases"] information, which can be used do create filters'
         with FastaFile(genome_fn) as genome_fh:
             for g in tqdm(self):
                 if 'splice_graph' not in g.data:
@@ -136,6 +152,7 @@ class Transcriptome:
         self.infos['biases']=True # flag to check that the function was called
 
     def add_filter(self, transcript_filter={},gene_filter={}):
+        'create filter flags which can be used by iter_transcripts'
         #possible filter flags: 'A_CONTENT','RTTS','NONCANONICAL_SPLICING','NOVEL_GENE','NOVEL_TRANSCRIPT','TRUNCATION'
         # a_th=.5, rtts_maxcov=10, rtts_ratio=5, min_alignment_cov=.1
         #biases are evaluated with respect to specific thresholds
@@ -156,7 +173,7 @@ class Transcriptome:
         return dict(zip(self.infos['sample_table'].name, self.infos['sample_table'].run))
         
     def get_sample_idx(self, group_column='name'):
-        #returns a dict with group names as keys and index lists as values
+        'returns a dict with group names as keys and index lists as values'
         return self.infos['sample_table'].groupby(group_column).groups
         
     @property
@@ -186,7 +203,8 @@ class Transcriptome:
 
     
 
-    def annotate(self, reference,fuzzy_junction=5,novel_params=None):  
+    def annotate(self, reference,fuzzy_junction=5,novel_params=None): 
+        'Add annotation to the transcripts and alines the junctions to correct for ambigious alignments' 
         genes=dict()
         unknown_fusions=list()
         novel_default=dict(spj_iou_th=0, reg_iou_th=0, gene_prefix='PB_novel_')
@@ -242,6 +260,7 @@ class Transcriptome:
         
 
     def iter_genes(self, region):
+        'iterate over the genes of a region'
         if region is None:
             genes=self
         elif region in self.data:
@@ -260,18 +279,21 @@ class Transcriptome:
             yield g
     
     def iter_transcripts(self,region=None,include=None, remove=None):
+        'iterate over the transcripts of a region, optionally applying filters'
         for g in self.iter_genes(region):
             for trid in g.filter_transcripts(include, remove):
                 yield g,trid,g.transcripts[trid]
 
 
     def gene_table(self, region=None ): #ideas: filter, extra_columns
+        'create a gene summary table'
         colnames=['chr', 'start', 'end', 'strand', 'gene_name', 'n_transcripts']        
         rows=[(g.chrom, g.start, g.end, g.strand, g.id, g.n_transcripts) for g in  self.iter_genes(region)]
         df = pd.DataFrame(rows, columns=colnames)
         return(df)
 
     def transcript_table(self, region=None, extra_columns=None,  include=None, remove=None): 
+        'create a transcript table'
         if extra_columns is None:
             extra_columns=[]
         if not isinstance( extra_columns, list):
@@ -288,7 +310,7 @@ class Transcriptome:
         return(df)
     
     def fusion_table(self, region=None,  include=None, remove=None):
-        # find fusion genes and compile a table with relevant infos (breakpoints, coverage, ...)
+        'find fusion genes and compile a table with relevant infos (breakpoints, coverage, ...)'
         #todo: correct handeling of three part fusion events not yet implemented
         #todo: ambiguous alignment handling not yet implemented
         fusion_coverage=list()
@@ -308,7 +330,8 @@ class Transcriptome:
         fusion_coverage=pd.DataFrame(fusion_coverage, columns=['trid','len', 'gene1','part1','breakpoint1', 'gene2','part2','breakpoint2','total_cov']+[s+'_cov' for s in self.infos['sample_table'].name])
         return fusion_coverage        
 
-class Coverage: #stores the illumina read coverage of a gene 
+class Coverage: 
+    'stores the illumina read coverage of a gene'
     #plan: make a binned version, or use run length encoding
     def __init__(self, cov, junctions, offset, chrom=None):
         self._cov=cov
@@ -318,6 +341,7 @@ class Coverage: #stores the illumina read coverage of a gene
     
     @classmethod
     def from_bam(cls, bam_fn,g, load=False):
+        'assign the bam file'
         if load:
             with AlignmentFile(bam_fn, 'rb') as align:
                 return cls.from_alignment(g,align)
@@ -332,6 +356,7 @@ class Coverage: #stores the illumina read coverage of a gene
 
     @classmethod
     def from_alignment(cls, align_fh,g):
+        'load the coverage from bam file'
         cov,junctions=cls._import_coverage(align_fh,(g.chrom, g.start,g.end))
         obj = cls.__new__(cls)  
         obj.__init__(cov,junctions, g.start )
@@ -357,8 +382,9 @@ class Coverage: #stores the illumina read coverage of a gene
         return cov,junctions
     
     def load(self):
+        'load the coverage from bam file'
         with AlignmentFile(self.bam_fn, 'rb') as align:
-            log.info(f'Illumina coverage of region {self.reg[0]}:{self.reg[1]}-{self.reg[2]} is loaded from {self.bam_fn}') #info or debug?
+            log.debug(f'Illumina coverage of region {self.reg[0]}:{self.reg[1]}-{self.reg[2]} is loaded from {self.bam_fn}') #info or debug?
             self._cov, self._junctions=type(self)._import_coverage(align, self.reg)
             
     @property
@@ -373,8 +399,7 @@ class Coverage: #stores the illumina read coverage of a gene
             self.load()
         return self._cov
 
-    def __getitem__(self, subscript):            
-        
+    def __getitem__(self, subscript): 
         if isinstance(subscript, slice): 
             return self.profile[slice(None if subscript.start is None else subscript.start-self.reg[1],
                                         None if subscript.stop is None else subscript.stop-self.reg[1],
@@ -389,6 +414,7 @@ class Coverage: #stores the illumina read coverage of a gene
         
 
 class Gene(Interval):
+    'this class stores all gene information and transcripts. It is derived from intervaltree.Interval'
     def __str__(self):
         return('Gene {} {}({}), {} transcripts'.format(self.name, self.region, self.strand, self.n_transcripts))
     
@@ -396,6 +422,7 @@ class Gene(Interval):
         return object.__repr__(self)
 
     def add_filter(self, transcript_filter,gene_filter):   
+        'add the filter flags'
         gene_tags=[name for name,fun in gene_filter.items() if  fun(**self.data)]
         for tr in self.transcripts.values():
             tr['filter']=gene_tags.copy()
@@ -405,8 +432,9 @@ class Gene(Interval):
 
 
     def filter_transcripts(self, include=None, remove=None):
-        #include: transcripts must have at least one of the flags
-        #remove: transcripts must not have one of the flags (priority)
+        ''' iterator over the transcripts of the gene. Filtering implemented by passing lists of flags to the parametrs:
+        include: transcripts must have at least one of the flags
+        remove: transcripts must not have one of the flags (higher priority)'''
         if include is None and remove is None: # return all
             for tr in self.transcripts.keys():
                 yield tr
@@ -424,6 +452,7 @@ class Gene(Interval):
                     yield trid
         
     def correct_fuzzy_junctions(self,trid,ref_g, size):
+        'this corrects for splicing shifts (e.g. same difference compared to reference annotaiton at both donor and acceptor) presumably caused by ambigous alignments'
         exons=self.transcripts[trid]['exons']
         shifts=ref_g.splice_graph.fuzzy_junction(exons,size)
         if shifts:
@@ -435,7 +464,7 @@ class Gene(Interval):
                 exons[i+1][0]+=sh
 
     def to_gtf(self, source='isoseq', use_gene_name=False, include=None, remove=None):
-        
+        'creates the gtf lines of the gene as strings'
         info={'gene_id':self.name if use_gene_name else self.id}
         gene=(self.chrom, source, 'gene', self.start+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items() ))
         lines=list()
@@ -454,9 +483,9 @@ class Gene(Interval):
 
 
     def add_noncanonical_splicing(self, genome_fh):
-        #for all transcripts, add the the index and sequence of noncanonical (i.e. not GT-AG)
-        #i.e. save the dinucleotides of donor and aceptor as XX-YY string in the transcript biases dicts
-        #noncanonical splicing might indicate technical artifacts (template switching, missalignment, ...)
+        '''for all transcripts, add the the index and sequence of noncanonical (i.e. not GT-AG) splice sites
+        i.e. save the dinucleotides of donor and aceptor as XX-YY string in the transcript biases dicts
+        noncanonical splicing might indicate technical artifacts (template switching, missalignment, ...)'''
         
         for tr in self.transcripts.values():
             pos=((tr['exons'][i][1], tr['exons'][i+1][0]-2) for i in range(len(tr['exons'])-1))
@@ -470,7 +499,7 @@ class Gene(Interval):
                 tr['noncanonical_splicing']=nc
 
     def add_direct_repeat_len(self, genome_fh,delta=10):
-        #perform a global alignment of the sequences at splice sites and report the score. Direct repeats indicate template switching
+        'perform a global alignment of the sequences at splice sites and report the score. Direct repeats indicate template switching'
         for tr in self.transcripts.values():
             introns=((tr['exons'][i][1], tr['exons'][i+1][0]) for i in range(len(tr['exons'])-1))
             intron_seq=((genome_fh.fetch(self.chrom, pos-delta, pos+delta) for pos in i) for i in introns)
@@ -499,7 +528,7 @@ class Gene(Interval):
             tr['direct_repeat_len']=[min(s, delta) for s in score]
     
     def add_threeprime_a_content(self, genome_fh, length=30):
-        #add the information of the genomic A content downstream the transcript. High values indicate genomic origin of the pacbio read        
+        'add the information of the genomic A content downstream the transcript. High values indicate genomic origin of the pacbio read'
         for tr in self.transcripts.values():
             if self.strand=='+':
                 pos=tr['exons'][-1][1]
@@ -512,7 +541,7 @@ class Gene(Interval):
                 tr['downstream_A_content']=seq.upper().count('T')/length
 
     def add_truncations(self): 
-        #check for truncations and save indices of truncated genes in transcripts
+        'check for truncations and save indices of truncated genes in transcripts'
         #dist5=-1, dist3=10
         is_truncated=set()
         for trid1, trid2 in combinations(self.transcripts.keys(), 2):
@@ -538,7 +567,7 @@ class Gene(Interval):
                     self.transcripts[trid1]['truncated']=(trid2,delta2, delta1)
         
     def coding_len(self, trid):
-        #returns length of 5'UTR, coding sequence and 3'UTR
+        'returns length of 5\'UTR, coding sequence and 3\'UTR'
         try:            
             exons=self.transcripts[trid]['exons']
             cds=self.transcripts[trid]['CDS']
@@ -551,6 +580,7 @@ class Gene(Interval):
         return coding_len
 
     def get_values(self ,trid, what):
+        'get the gene information specified in "what" as a tuple'
         if what is None:
             return ()
         return tuple((v for w in what for v in self._get_value(trid, w)))
@@ -691,7 +721,7 @@ class Gene(Interval):
         return self.__copy__()
 
 def genomic_position(exons, tr_pos):
-    # gets a sorted list of transcript positions and finds the corresponding genomic positions
+    'gets a sorted list of transcript positions and finds the corresponding genomic positions'
     offset=0
     g_pos=list()
     exon_iter=iter(exons)
@@ -732,6 +762,7 @@ def query_bam(bam_fn,use_pbi=True,**kwargs):
 
 
 def import_transcripts(fn, file_format='auto', **kwargs):
+    'import the transcripts from a gtf or bam file, or load a pickled transcriptome'
     if file_format=='auto':        
         file_format=os.path.splitext(fn)[1].lstrip('.')
         if file_format=='gz':
@@ -750,6 +781,8 @@ def import_transcripts(fn, file_format='auto', **kwargs):
     return genes,infos
 
 def import_pacbio_transcripts(fn,sample_table,genome_fn=None, chromosomes=None, orf=False):
+    '''import transcripts from pacbio bam
+    'returns a dict interval trees for the genes, each containing the splice graph'''
     n_secondary=0
     neglected_runs=set()
     #runs=pd.DataFrame(runs)
@@ -809,8 +842,9 @@ def import_pacbio_transcripts(fn,sample_table,genome_fn=None, chromosomes=None, 
                     if read.flag & 0x800: #secondary part
                         fusion.setdefault(read.query_name, []).append({**{k:tr[k] for k in ['exons','aligned', 'cigar', 'mutations'] if k in tr},**{'chr':chrom,'strand':strand}}) #cigar is required to sort out the order 
                     else: #primary part
-                        fusion_primary[read.query_name]=tr
-                if not read.flag & 0x800:
+                        fusion_primary[read.query_name]=(tr,chrom,strand)
+                    #chimeric transcripts are added to genes later, since the start and end  are not known yet
+                else:
                     genes[chrom].add(Gene(exons[0][0],exons[-1][1],info))
     except:
         if genome_fh is not None:
@@ -821,17 +855,96 @@ def import_pacbio_transcripts(fn,sample_table,genome_fn=None, chromosomes=None, 
     if neglected_runs:
         log.warning(f'found the follwing runs in pacbio file, which where not specified in the run table: {neglected_runs}')    
     #link secondary alignments (chimeric genes)
-    for tid,primary in fusion_primary.items():
-        # todo: distinguish fusion and long introns (introns > 1mb seem to be stored as chimeric alignments)
-        # true fusions on same chr (e.g. readthroughs) could be detected during annotation step
-        primary['fusion']=fusion[tid]
+    for tid,(primary,chrom,strand) in fusion_primary.items():
+        # distinguish fusion and long introns (introns > 200kb seem to be stored as chimeric alignments with minimap2 by default (-G))
+        # todo: true fusions on same chr (e.g. readthroughs) will be detected during annotation step
+        primary['exons'],primary['cigar'],primary['aligned'], kept_fusions=combine_chimeric(primary,chrom,strand,fusion[tid])
+        if kept_fusions:
+            primary['fusion']=kept_fusions
+        info={'strand':strand, 'chr':chrom,
+                        'ID':tid,'transcripts':{tid:primary}}
+        genes[chrom].add(Gene(exons[0][0],exons[-1][1],info))
     if n_secondary>0:
         log.info(f"skipped {n_secondary} secondary transcripts {n_secondary/total_reads*100}%")
     return genes,{'sample_table':sample_table}
 
+def combine_chimeric(tr,chrom,strand,fusions, tr_dist=10, max_intron=1e6):
+    'resolve long introns, which are reported as chimeric alignments by the alignment tool but can be explained with splicing'
+    #todo: think about muting the original tr dict (instad of return)
+    exons=tr['exons'].copy()
+    cigar=tr['cigar'] #no copy needed here as string is imutable
+    #aligned is according to transcript strand, but we need it according to genome fwd strand to be compatible with exons
+    if strand=='+':
+        aligned=tr['aligned'].copy()
+        f_aligned=[f['aligned'] for f in fusions] #we care about f only if its on the same strand as tr, hence this works. Also, no copy, since we do not modify f_align
+    else:
+        aligned=[tr['source_len']-pos for pos in reversed(tr['aligned'])]
+        f_aligned=[[tr['source_len']-pos for pos in reversed(f['aligned'])] for f in fusions]
+
+    used=set()# index of chimeric alignments explainable by splicing
+    potential={i for i,f in enumerate(fusions) if f['chr']==chrom and f["strand"]==strand}#potentially explainable by splicing
+    potential_pre = {i for i in potential if 0 < exons[0][0]-fusions[i]['exons'][-1][1] <= max_intron and aligned[0] > f_aligned[i][0]}#upstream primary transcript (wrt genome fwd strand) 
+    potential_post= {i for i in potential if 0 < fusions[i]['exons'][0][0]-exons[-1][1] <= max_intron and aligned[1] < f_aligned[i][1]}#downstream primary transcript 
+    found=True
+    while found:
+        found=False
+        if potential_pre: #look upstream
+            i=min(potential_pre , key=lambda idx: abs(aligned[0]-fusions[idx]['aligned'][1]) ) #todo: tiebreaker shortest intron length?
+            delta=aligned[0]-f_aligned[i][1]
+            if abs(delta) < tr_dist: #ideally this is 0
+                intron_len=exons[0][0]-fusions[i]['exons'][-1][1]
+                found=True
+                #potential_pre.remove(i)
+                used.add(i)
+                cigar=merge_cigar(fusions[i]['cigar'],cigar, delta, intron_len) 
+                aligned[0]=f_aligned[i][0] #update aligned
+                idx=len(fusions[i]['exons'])-1
+                exons=fusions[i]['exons']+exons #update exons
+                if delta<0:
+                    exons[idx][1]-=delta #overlapping alignments 
+                potential_pre = {i for i in potential if 0 < exons[0][0]-fusions[i]['exons'][-1][1] <= max_intron and aligned[0] > f_aligned[i][0]}
+    
+        if potential_post and aligned[1]<tr['source_len']: #look downstream
+            i=min(potential_post, key=lambda idx: abs(fusions[idx]['aligned'][0]-aligned[1]) ) #minimum gap (>0) or overlap (<0)
+            delta=f_aligned[i][0]-aligned[1]
+            if abs(delta) < tr_dist: #ideally this is 0
+                intron_len=fusions[i]['exons'][0][0]-exons[-1][1]
+                found=True
+                #potential_post.remove(i)
+                used.add(i)
+                cigar=merge_cigar(cigar,fusions[i]['cigar'], delta, intron_len)
+                aligned[1]=f_aligned[i][1]#update aligned  
+                idx=len(exons)  -1           
+                exons=exons+fusions[i]['exons']#update exons
+                if delta<0:
+                    exons[idx][1]-=delta #overlapping alignments 
+                potential_post={i for i in potential if 0 < fusions[i]['exons'][0][0]-exons[-1][1] <= max_intron and aligned[1] < f_aligned[i][1]} #potentially explainable by splicing
+    if used: #this is only needed for debugging, consider commenting this out. Its a bit inconsistant, since it modifies tr
+        tr['chimeric_alignment_intron']=[(tr['cigar'],tr['aligned'], tr['exons'])]+[(fusions[f]['cigar'],fusions[f]['aligned'], fusions[f]['exons']) for f in used]
+    if strand=='-':
+        aligned=[tr['source_len']-pos for pos in reversed(aligned)]
+    return exons,cigar,aligned, [f for i,f in enumerate(fusions) if i not in used]
+
+def merge_cigar(cigar1, cigar2, delta,intron_len):
+    'merge the cigar of two chimeric alignments which can be explained by splicing'
+    idx1=next(i for i,c in enumerate(reversed(cigar1)) if c in 'M=X' ) #first index relevant cigar char from right
+    for i,c in enumerate(cigar2):
+        if not c.isdigit():
+            if c in 'M=X':
+                break
+            idx2=i #last irrelevant (e.g. non reference) cigar char
+    #this could lead to illegal cigar strings if there is a deletion directly after the soft split (which does not make sense, so i do not fix it here)
+    if delta<0:
+        gap=f'{-delta}D'
+    elif delta>0:
+        gap=f'{delta}I'
+    else:
+        gap=''
+    return f'{cigar1[:-idx1]}{gap}{intron_len+(delta if delta<0 else 0)}N{cigar2[idx2+1:]}'
+    
 
 def get_annotation(chrom,exons,strand, reference):
-    # calculate the intersects of all overlapping genes and return the best
+    'calculate the intersects of all overlapping genes and return the best'
     if chrom in reference.data:
         ref_genes_ol = [rg for rg in reference.data[chrom][exons[0][0]: exons[-1][1]] if rg.strand==strand]
         if len(ref_genes_ol)>0:                                
@@ -844,13 +957,14 @@ def get_annotation(chrom,exons,strand, reference):
 
 
 def get_transcript_sequence(chrom,exons,genome_fh):
-    #construct the transcript sequence from genomic position and geneome sequence
+    'construct the transcript sequence from genomic position and geneome sequence'
     #todo reverse complement if on (-) strand?
     seq=[genome_fh.fetch(chrom, *e) for e in exons]
     return ''.join(seq)
 
 
 def get_mutations(cigartuples, seq, ref, chrom,ref_start):
+    'look up the bases affected by mutations as reported in the cigar string'
     #cigar numbers:
     #012345678
     #MIDNSHP=X
@@ -868,8 +982,22 @@ def get_mutations(cigartuples, seq, ref, chrom,ref_start):
             seq_pos += cigar[1]
     return mutations        
 
+def cigarstring2tuples(cigarstring):
+    'converts cigar strings to cigartuples'
+    #this is mainly for testing and debugging
+    tuples=list()
+    n=0
+    for c in cigarstring:
+        if c.isdigit():
+            n*=10
+            n+=ord(c)-48
+        else:
+            tuples.append((CIGAR_DICT[c],n))
+            n=0
+    return tuples
+
 def find_orf(seq, min_len=3):
-    # look for open reading frames and return the longest
+    ' look for open reading in "seq" frames and return the longest'
     # todo: incorperate codon usage to filter false positives
     # assuming seq is upper case and stranded
     # this is quite inefficient, can be improved:
@@ -898,6 +1026,8 @@ def find_orf(seq, min_len=3):
 
 
 def import_gtf_transcripts(fn, genes=None,chromosomes=None):
+    '''import transcripts from gtf file (e.g. for a reference)
+    returns a dict interval trees for the genes, each containing the splice graph'''
     gtf = TabixFile(fn)   
     exons = dict()  # transcript id -> exons
     transcripts = dict()  # gene_id -> transcripts
@@ -928,7 +1058,7 @@ def import_gtf_transcripts(fn, genes=None,chromosomes=None):
             if 'gene_id' not in info:
                 warnings.warn("gtf format error: gene without gene_id. Skipping line\n"+line)
             else:
-                info=prepare_gene_info(info, ls[0], ls[6])
+                info=_prepare_gene_info(info, ls[0], ls[6])
                 new_gene=Gene(start, end, info)
                 genes[ls[0]].add(new_gene)
                 gene_dict[info['gene_id']]=new_gene
@@ -966,7 +1096,7 @@ def import_gtf_transcripts(fn, genes=None,chromosomes=None):
                     gene.data['transcripts'] = {t_id: {'exons':[tuple(gene[:2])]}}                
     return genes,dict()
 
-def prepare_gene_info(info,chrom, strand, modify=True):
+def _prepare_gene_info(info,chrom, strand, modify=True):
     if not modify:
         info=copy.deepcopy(info)
     if 'name' not in info:
@@ -981,7 +1111,8 @@ def prepare_gene_info(info,chrom, strand, modify=True):
     return info
 
 def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
-    # returns a dict interval trees for the genes, each containing the splice graph
+    '''import transcripts from gff file (e.g. for a reference)
+    returns a dict interval trees for the genes'''
     gff = TabixFile(fn)        
     chrom_ids = get_gff_chrom_dict(gff, chromosomes)    
     exons = dict()  # transcript id -> exons
@@ -1056,7 +1187,7 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
     return genes,dict()
 
 def get_gff_chrom_dict(gff, chromosomes):
-    # fetch chromosome ids - in case they use ids in gff for the chormosomes
+    'fetch chromosome ids - in case they use ids in gff for the chormosomes'
     chrom = {}
     for c in gff.contigs:
         #loggin.debug ("---"+c)
@@ -1077,7 +1208,7 @@ def get_gff_chrom_dict(gff, chromosomes):
     return(chrom)
 
 def collapse_transcripts_to_genes( transcripts, spj_iou_th=0, reg_iou_th=.5, gene_prefix='PB_novel_', offset=0):
-    #transcripts is an interval tree of genes (e.g. from one chromosome)
+    'transcripts is an interval tree of genes (e.g. from one chromosome)'
     n_novel=0
     idx=dict()
     merge=dict()
@@ -1114,14 +1245,13 @@ def collapse_transcripts_to_genes( transcripts, spj_iou_th=0, reg_iou_th=.5, gen
 #utils
 
 def filter_function(argnames, expression):
-    #converts a string e.g. 'all x[0]/x[1]>3' into a function
-    #todo: is it save??
+    'converts a string e.g. "all x[0]/x[1]>3" into a function'
     return eval (f'lambda {",".join(arg+"=None" for arg in argnames)}: bool({expression})\n',{},{})
     
 
 
 def overlap(r1, r2):
-    # do the two intervals overlap
+    "check the overlap of two intervals"
     # assuming start < end
     if r1[1] < r2[0] or r2[1] < r1[0]:
         return False
@@ -1131,6 +1261,7 @@ def overlap(r1, r2):
 
 
 def get_intersects(tr1, tr2):
+    "get the number of intersecting splice sites and intersecting bases of two transcripts"
     tr1_enum = enumerate(tr1)
     try:
         j,tr1_exon = next(tr1_enum)
@@ -1157,10 +1288,10 @@ def get_intersects(tr1, tr2):
     return sjintersect, intersect
 
 def get_relation(exons1, exons2):
-    # returns a list of length of exons1.
-    # each element represents a exon from set 1 and contains a list of pairs, denoting corresponding exons from set 2
-    # the first element of the pair is the index of the corresponding set 2 exon,
-    # the second element is in [0,1,2,3] and encodes the splice correspondence: 0 overlap only, 1: same splice donor, 2: same splice acceptor, 3: identical
+    ''' returns a list of length of exons1.
+     each element represents a exon from set 1 and contains a list of pairs, denoting corresponding exons from set 2
+     the first element of the pair is the index of the corresponding set 2 exon,
+     the second element is in [0,1,2,3] and encodes the splice correspondence: 0 overlap only, 1: same splice donor, 2: same splice acceptor, 3: identical'''
     relation = [[] for _ in exons1]
     enum2 = enumerate(exons2)
     i, e2 = next(enum2)
@@ -1183,7 +1314,7 @@ def get_relation(exons1, exons2):
 
 
 def is_truncation(long_tr, short_tr): 
-    #is short a truncated version of long?
+    'checks whether short a truncated version of long is'
     relation=get_relation(short_tr, long_tr)
     if any(len(r) != 1 for r in relation):
         return False ,0,0
@@ -1207,6 +1338,7 @@ def is_truncation(long_tr, short_tr):
     return True, delta1, delta2
 
 def aligned_part(cigartuples, is_reverse):
+    "returns the interval of the trasncript that is aligned (e.g. not clipped) according to cigar. Positions are according to transcript strand"
     parts=[]
     start=end=0
     for cigar in reversed(cigartuples) if is_reverse else cigartuples:
@@ -1225,6 +1357,7 @@ def aligned_part(cigartuples, is_reverse):
 
 
 def junctions_from_cigar(cigartuples, offset):
+    'returns the exon positions'
     exons = list([[offset, offset]])
     for cigar in cigartuples:
         if cigar[0] == 3:  # N ->  Splice junction
@@ -1239,7 +1372,8 @@ def junctions_from_cigar(cigartuples, offset):
     return exons
 
 def is_same_gene(tr1, tr2, spj_iou_th=0, reg_iou_th=.5):
-    # current default definition of "same gene": at least one shared splice site
+    'checks whether tr1 and tr2 are the same gene by calculating intersection over union of the intersects'
+    #current default definition of "same gene": at least one shared splice site
     # or more than 50% exonic overlap
     spj_i, reg_i=get_intersects(tr1, tr2)
     total_spj=(len(tr1)+len(tr2)-2)*2
@@ -1253,6 +1387,7 @@ def is_same_gene(tr1, tr2, spj_iou_th=0, reg_iou_th=.5):
     return False
 
 def splice_identical(tr1, tr2):
+    #all splice sites are equal
     if len(tr1) != len(tr2):  # different number of exons
         return False
     if len(tr1) == 1 and overlap(tr1[0], tr2[0]):  # single exon genes

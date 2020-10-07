@@ -104,7 +104,6 @@ def transcript_plots(isoseq,reference, groups, out_stem ):
 
 def altsplice_plots(isoseq, groups, out_stem):
     log.info('alternative splicing statistics plots')
-
     altsplice = [
         isotools.stats.altsplice_stats(isoseq, groups=groups),
         isotools.stats.altsplice_stats(isoseq, groups=groups,coverage=False),
@@ -332,7 +331,7 @@ if __name__=='__main__':
     reference.make_index()
 
     
-
+    isoseq.fusion_table().sort_values('total_cov', ascending=False).to_csv(args.out+'_fusion.csv')
     if args.illu_samples:
         illu_samples=pd.read_csv(args.illu_samples)
         if 'illumina_fn' not in isoseq.infos or not all(sn in isoseq.infos['illumina_fn'] for sn in illu_samples.name):
@@ -347,6 +346,7 @@ if __name__=='__main__':
                 illu_groups.update(dict(illu_samples.groupby(cat)['name'].apply(list)))
         illu_num={sn:i for i,sn in enumerate(isoseq.infos['illumina_fn'])}
     else: 
+        new_illu=False
         illu_groups=illu_num={}
         
     groups=isoseq.get_sample_idx(args.group_by)
@@ -355,7 +355,8 @@ if __name__=='__main__':
         extended_groups.update(d)
 
     log.debug(f'sample group definition: {groups}') 
-    log.debug(f'illumina sample group definition: {illu_groups}\n{isoseq.infos["illumina_fn"]}\n{illu_num}') 
+    if args.illu_samples:
+        log.debug(f'illumina sample group definition: {illu_groups}\n{isoseq.infos["illumina_fn"]}\n{illu_num}') 
     
     if args.transcript_table:
         log.info(f'writing transcript table to {args.out}_transcripts.csv')
@@ -393,7 +394,7 @@ if __name__=='__main__':
             gr={gn:extended_groups[gn] for gn in gr}
             log.info(f'testing differential splicing in {" vs ".join(gr)}: {" vs ".join(str(len(grp)) for grp in gr.values())} samples')
             res=isotools.stats.altsplice_test(isoseq, list(gr.values())).sort_values('pvalue')
-            sig=res.padj<.01
+            sig=res.padj<.1
             log.info(f'{sum(sig)} differential splice sites in {len(res.loc[sig,"gene"].unique())} genes for {" vs ".join(gr)}')
             res.to_csv(f'{args.out}_diff_{"_".join(gr)}.csv', index=False)
             if args.diff_plots is not None:
@@ -402,25 +403,26 @@ if __name__=='__main__':
                 else:
                     illu_gr=illu_groups
                 sig_tab=res.head(args.diff_plots)
-                illu_cov=list()
-                for g,jstart, jend in zip(sig_tab.gene, sig_tab.start, sig_tab.end):
-                    ji=(jstart, jend)
-                    #g_cov=[0,0,0,0]
-                    j_cov=[{},{}]
-                    cov=isoseq[g].illumina_coverage
-                    for gi,grp_n in enumerate(gr):  
-                        if grp_n not in illu_gr:
-                            j_cov[gi]='NA'          
-                        for sn in illu_gr[grp_n]:
-                            i=illu_num[sn]
-                            for k,v in cov[i].junctions.items():
-                                j_cov[gi][k]=j_cov[gi].get(k, 0)+v
-                            j_cov[gi].setdefault(ji,0)
-                    illu_cov.append((j_cov[0][ji],j_cov[1][ji], max(j_cov[0].values()), max(j_cov[1].values())))
-                illu_cov={k:v for k,v in zip(['illu_cov1','illu_cov2','illu_max1','illu_max2'],zip(*illu_cov))}
-                sig_tab=sig_tab.assign(**illu_cov)
-                sig_tab.to_csv(f'{args.out}_diff_top_{"_".join(gr)}.csv')            
-
+                if illu_gr:
+                    illu_cov=list()
+                    for g,jstart, jend in zip(sig_tab.gene, sig_tab.start, sig_tab.end):
+                        ji=(jstart, jend)
+                        #g_cov=[0,0,0,0]
+                        j_cov=[{},{}]
+                        cov=isoseq[g].illumina_coverage
+                        for gi,grp_n in enumerate(gr):  
+                            if grp_n not in illu_gr:
+                                j_cov[gi]='NA'          
+                            for sn in illu_gr[grp_n]:
+                                i=illu_num[sn]
+                                for k,v in cov[i].junctions.items():
+                                    j_cov[gi][k]=j_cov[gi].get(k, 0)+v
+                                j_cov[gi].setdefault(ji,0)
+                        illu_cov.append((j_cov[0][ji],j_cov[1][ji], max(j_cov[0].values()), max(j_cov[1].values())))
+                    illu_cov={k:v for k,v in zip(['illu_cov1','illu_cov2','illu_max1','illu_max2'],zip(*illu_cov))}
+                    sig_tab=sig_tab.assign(**illu_cov)
+                    
+                sig_tab.to_csv(f'{args.out}_diff_top_{"_".join(gr)}.csv')    
                 plot_diffsplice(isoseq, reference, res.head(args.diff_plots),gr,illu_gr, args.out)
     if args.pickle and new_illu:
         log.info('saving transcripts as pickle file (including loaded illumina profiles)')    

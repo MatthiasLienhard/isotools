@@ -309,25 +309,47 @@ class Transcriptome:
         df = pd.DataFrame(rows, columns=colnames)
         return(df)
     
-    def fusion_table(self, region=None,  include=None, remove=None):
+    def fusion_table(self, region=None,  include=None, remove=None, star_chimeric=None, illu_len=200):
         'find fusion genes and compile a table with relevant infos (breakpoints, coverage, ...)'
         #todo: correct handeling of three part fusion events not yet implemented
         #todo: ambiguous alignment handling not yet implemented
+        if star_chimeric is None:
+            star_chimeric=dict()
+        assert isinstance(star_chimeric, dict)
+        
         fusion_coverage=list()
+        breakpoints=dict()
+
         for g,trid,tr in self.iter_transcripts(region=region, include=include, remove=remove):            
             if 'fusion' in tr:
                 total_cov=sum(tr['coverage'])
-                greg1=(tr['exons'][0][0],tr['exons'][-1][-1])            
-                breakpoint1=f'{g.chrom}:{greg1[int(g.strand=="+")]}({g.strand})'
+                greg1=(tr['exons'][0][0],tr['exons'][-1][-1])      
+                pos1=greg1[int(g.strand=="+")]      
+                breakpoint1=f'{g.chrom}:{pos1}({g.strand})'
                 for f in tr['fusion']:
                     greg2=(f['exons'][0][0],f['exons'][-1][-1])
-                    breakpoint2=f'{f["chr"]}:{greg2[int(f["strand"]=="+")]}({f["strand"]})'
+                    pos2=greg2[int(f["strand"]=="+")]
+                    breakpoint2=f'{f["chr"]}:{pos2}({f["strand"]})'
                     gene2='intergenic' if f['annotation'] is None else f['annotation']['ref_gene_name']
                     if tr['aligned'][0]<f['aligned'][0]:
-                        fusion_coverage.append([trid,tr['source_len'],g.name,tr['aligned'],breakpoint1,gene2,f['aligned'],breakpoint2,total_cov]+list( tr['coverage']))
+                        fusion_coverage.append([trid,tr['source_len'],g.name,tr['aligned'],breakpoint1,gene2,f['aligned'],breakpoint2,total_cov]+list( tr['coverage'])+[0]*len(star_chimeric))
                     else:
-                        fusion_coverage.append([trid,tr['source_len'],gene2,f['aligned'],breakpoint2,g.name,tr['aligned'],breakpoint1,total_cov]+list( tr['coverage']))
-        fusion_coverage=pd.DataFrame(fusion_coverage, columns=['trid','len', 'gene1','part1','breakpoint1', 'gene2','part2','breakpoint2','total_cov']+[s+'_cov' for s in self.infos['sample_table'].name])
+                        fusion_coverage.append([trid,tr['source_len'],gene2,f['aligned'],breakpoint2,g.name,tr['aligned'],breakpoint1,total_cov]+list( tr['coverage'])+[0]*len(star_chimeric))
+                    breakpoints.setdefault(g.chrom, IntervalTree()).addi(pos1-illu_len*int(g.strand=='+'), pos1+illu_len*int(g.strand=='-'),len(fusion_coverage)-1)
+                    breakpoints.setdefault(f["chr"], IntervalTree()).addi(pos2-illu_len*int(f['strand']=='+'), pos2+illu_len*int(f['strand']=='-'),len(fusion_coverage)-1)
+        offset=9+len(self.infos['sample_table'])
+        for sa_idx,sa in enumerate(star_chimeric):
+            chimeric_tab=pd.read_csv(star_chimeric[sa], sep='\t')
+            for _, row in chimeric_tab.iterrows():
+                if row['chr_donorA'] in breakpoints and row['chr_acceptorB'] in breakpoints:
+                    idx1={bp.data for bp in breakpoints[row['chr_donorA']][row['brkpt_donorA']]}
+                    if idx1:
+                        idx2={bp.data for bp in breakpoints[row['chr_acceptorB']][row['brkpt_acceptorB']]}
+                        idx_ol={idx for idx,snd in idx2 if (idx, not snd) in idx1}
+                        for idx in idx_ol:
+                            fusion_coverage[idx][offset+sa_idx]+=1
+                        
+        fusion_coverage=pd.DataFrame(fusion_coverage, columns=['trid','len', 'gene1','part1','breakpoint1', 'gene2','part2','breakpoint2','total_cov']+[s+'_cov' for s in self.infos['sample_table'].name]+[s+"illu_cov" for s in star_chimeric])
         return fusion_coverage        
 
 class Coverage: 
@@ -901,7 +923,7 @@ def combine_chimeric(tr,chrom,strand,fusions, tr_dist=10, max_intron=1e6):
                 idx=len(fusions[i]['exons'])-1
                 exons=fusions[i]['exons']+exons #update exons
                 if delta<0:
-                    exons[idx][1]-=delta #overlapping alignments 
+                    exons[idx][1]-=delta #overlapping alignments, extend one exon by abs(delta)
                 potential_pre = {i for i in potential if 0 < exons[0][0]-fusions[i]['exons'][-1][1] <= max_intron and aligned[0] > f_aligned[i][0]}
     
         if potential_post and aligned[1]<tr['source_len']: #look downstream

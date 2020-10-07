@@ -7,12 +7,12 @@ import seaborn as sns
 import pandas as pd
 import numpy as np
 from pysam import  AlignmentFile
-from scipy.stats import binom,norm, chi2, betabinom
+from scipy.stats import binom,norm, chi2, betabinom, beta
 from scipy.special import gammaln
 from scipy.optimize import minimize
 import statsmodels.stats.multitest as multi
 import isotools.splice_graph
-from isotools.transcriptome import junctions_from_cigar
+from isotools.transcriptome import junctions_from_cigar, Gene
 from tqdm import tqdm
 import logging
 from heapq import nlargest
@@ -34,40 +34,56 @@ def overlap(pos1,pos2,width, height):
         return True
     return False
 
-def embedding(isoseq, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,samples=None, min_cov=50):
-    #get data frame most variable junction for each gene
+def embedding(isoseq, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,samples=None, min_cov=20):
+    ''' Compute embedding of most variable junction for each gene if genes are provided as a list (e.g. genes=[gene_name1, gene_name2 ...]). 
+        Alternatively, if genes is a dict, junctions can be provided as a list (e.g. genes[gene_name]=[(jstart,jend)]).
+        If genes is None, all genes with coverage > min_cov are considered. 
+    '''
+    joi=dict()
     if samples is not None:
         s_filter=[True if sn in samples else False for sn in isoseq.runs]
     else:
         s_filter=[True]*len(isoseq.runs)
-    if genes is None:
+    if genes is None:        
         genes=[g for i,g in enumerate(isoseq) if all(g.splice_graph.weights[s_filter].sum(1)>=min_cov)] #all covered genes
-    log.info(f'found {len(genes)} genes > {min_cov} reads in all {sum(s_filter)} selected samples.')
+        log.info(f'found {len(genes)} genes > {min_cov} reads in all {sum(s_filter)} selected samples.')
+    else:
+        n_in=len(genes)
+        if isinstance(genes, dict):
+            joi=genes
+        genes=[isoseq[g] for i,g in enumerate(genes) if g in isoseq and all(isoseq[g].splice_graph.weights[s_filter].sum(1)>=min_cov)] #all covered genes
+        log.info(f'{len(genes)} of {n_in} genes have > {min_cov} reads in all {sum(s_filter)} selected samples.')
     if n_subsample is not None and n_subsample<len(genes):
         genes=[genes[i] for i in np.random.choice(range(len(genes)), n_subsample)]
         log.info(f'sampled {n_subsample} random genes')        
     data={}
     # since junctions of a single gene are often correlated, I select one top variable junction per gene
     for g in tqdm(genes):   
-        jcov={}     
         sg=g.splice_graph
         gene_coverage=sg.weights[s_filter].sum(1)
         if any(cov<min_cov for cov in gene_coverage):
             continue
-        for n in sg:
-            #print(n)
-            for trid,suc in n[3].items():
-                #if all(sg.weights[s_filter,trid] < min_cov):
-                #    continue
-                j_name=f'{g.name}_{n[1]}_{sg[suc][0]}'
-                jcov.setdefault(j_name,np.zeros(len(gene_coverage)))
-                jcov[j_name]+=(sg.weights[s_filter,trid]) /gene_coverage
-        if jcov:
-            top_idx=pd.DataFrame(jcov).var(0).idxmax()
-            data[top_idx]=jcov[top_idx]
+        if g.name in joi and joi[g.name]:#
+            for j in joi[g.name]:
+                start=next(n for n in sg if n.end==j[0])            
+                jcov=sum(sg.weights[s_filter,trid] for trid,suc in start.suc.items() if sg[suc].start==j[1])/gene_coverage
+                data[f'{g.name}_{j[0]}_{j[1]}']=jcov
+        else:
+            jcov={}                 
+            for n in sg:
+                #print(n)
+                for trid,suc in n[3].items():
+                    #if all(sg.weights[s_filter,trid] < min_cov):
+                    #    continue
+                    j_name=f'{g.name}_{n[1]}_{sg[suc][0]}'
+                    jcov.setdefault(j_name,np.zeros(len(gene_coverage)))
+                    jcov[j_name]+=(sg.weights[s_filter,trid]) /gene_coverage
+            if jcov:
+                top_idx=pd.DataFrame(jcov).var(0).idxmax()
+                data[top_idx]=jcov[top_idx]
     data=pd.DataFrame(data,index=isoseq.infos['sample_table'].loc[s_filter,'name'])
     #filter for highest variance
-    log.info(f'selecting the most variable junction from {min(len(data),n_top_var)} genes.')
+    log.info(f'selecting the most variable junction from {min(data.shape[1],n_top_var)} genes.')
     topvar=data[data.var(0).nlargest(n_top_var).index]
 
     #compute embedding
@@ -267,41 +283,50 @@ def sashimi_plot(g, ax=None,text_width=.02, arc_type='coverage',text_height=1,
     ax.set_title(title)
     return(ax)
 
-def gene_track(g, ax=None,title=None, draw_exon_numbers=True, color='blue'):
+def gene_track(genes, ax=None,title=None, draw_exon_numbers=True, color='blue'):
     contrast='white' if np.mean(plt_col.to_rgb(color))<.5 else 'black'
     if ax is None:
         _,ax = plt.subplots(1)    
-    for i, tr in enumerate(g.transcripts.values()):
-        #line from TSS to PAS at 0.25
-        ax.plot((tr['exons'][0][0], tr['exons'][-1][1]), [i+.25]*2, color=color)
-        #idea: draw arrow to mark direction?
-        for j,(st, end) in enumerate(tr['exons']):
-            if 'CDS' in tr and tr['CDS'][0] <= end and tr['CDS'][1] >= st:#CODING exon
-                c_st,c_end=max(st,tr['CDS'][0]), min(tr['CDS'][1],end) #coding start and coding end
-                if c_st > st: #first noncoding part
-                    rect = patches.Rectangle((st,i+.125),(c_st-st),.25,linewidth=1,edgecolor=color,facecolor=color) 
+    if isinstance(genes, Gene):
+        genes=[genes]
+    start=min(g.start for g in genes)
+    end=max(g.end for g in genes)
+    assert all(g.chrom==genes[0].chrom for g in genes), "all chromosomes must be equal"
+    i=0
+    for g in genes:
+        for tr in g.transcripts.values():
+            #line from TSS to PAS at 0.25
+            ax.plot((tr['exons'][0][0], tr['exons'][-1][1]), [i+.25]*2, color=color)
+            #idea: draw arrow to mark direction?
+            for j,(st, end) in enumerate(tr['exons']):
+                if 'CDS' in tr and tr['CDS'][0] <= end and tr['CDS'][1] >= st:#CODING exon
+                    c_st,c_end=max(st,tr['CDS'][0]), min(tr['CDS'][1],end) #coding start and coding end
+                    if c_st > st: #first noncoding part
+                        rect = patches.Rectangle((st,i+.125),(c_st-st),.25,linewidth=1,edgecolor=color,facecolor=color) 
+                        ax.add_patch(rect)  
+                    if c_end < end: #2nd noncoding part
+                        rect = patches.Rectangle((c_end,i+.125),(end-c_end),.25,linewidth=1,edgecolor=color,facecolor=color) 
+                        ax.add_patch(rect)  
+                    #Coding part                
+                    rect = patches.Rectangle((c_st,i),(c_end-c_st),.5,linewidth=1,edgecolor=color,facecolor=color) 
                     ax.add_patch(rect)  
-                if c_end < end: #2nd noncoding part
-                    rect = patches.Rectangle((c_end,i+.125),(end-c_end),.25,linewidth=1,edgecolor=color,facecolor=color) 
+                else: #non coding
+                    rect = patches.Rectangle((st,i+.125),(end-st),.25,linewidth=1,edgecolor=color,facecolor=color)
                     ax.add_patch(rect)  
-                #Coding part                
-                rect = patches.Rectangle((c_st,i),(c_end-c_st),.5,linewidth=1,edgecolor=color,facecolor=color) 
-                ax.add_patch(rect)  
-            else: #non coding
-                rect = patches.Rectangle((st,i+.125),(end-st),.25,linewidth=1,edgecolor=color,facecolor=color)
-                ax.add_patch(rect)  
-            if draw_exon_numbers:
-                enr=j+1 if g.strand=='+' else len(tr['exons'])-j
-                ax.text((st+end)/2,i+.25,enr,ha='center', va='center', color=contrast).set_clip_on(True)    #bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)
+                if draw_exon_numbers:
+                    enr=j+1 if g.strand=='+' else len(tr['exons'])-j
+                    ax.text((st+end)/2,i+.25,enr,ha='center', va='center', color=contrast).set_clip_on(True)    #bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)
+            i+=1
     if title is None:
-        title=f'{g.name} {g.chrom}:{g.start:,.0f}-{g.end:,.0f}'
+        title=', '.join(g.name for g in genes)
     ax.set_title(title)
     ax.set(frame_on=False)
-    ax.set_yticks([i+.25 for i in range(g.n_transcripts)])
-    ax.set_yticklabels(g.transcripts)
+    ntr=sum(g.n_transcripts for g in genes)
+    ax.set_yticks([i+.25 for i in range(ntr)])
+    ax.set_yticklabels(tr for g in genes for tr in g.transcripts)
     ax.tick_params(left=False)
-    ax.set_ylim(-.5,g.n_transcripts+1)
-    ax.set_xlim(g.start-100, g.end+100)
+    ax.set_ylim(-.5,ntr+1)
+    ax.set_xlim(start-100, end+100)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
     return ax
 
@@ -333,10 +358,16 @@ def binom_lr_test(x,n):
     return chi2.sf(2*(l1-l0),1),(*p1,p0)
 
 #from https://stackoverflow.com/questions/54505173/finding-alpha-and-beta-of-beta-binomial-distribution-with-scipy-optimize-and-log
-def loglike_betabinom(params, *args):
+def loglike_betabinom(params, k,n):
     a, b = params[0], params[1]
-    k = args[0] 
-    n = args[1] 
+    logpdf = gammaln(n+1) + gammaln(k+a) + gammaln(n-k+b) + gammaln(a+b) - \
+     (gammaln(k+1) + gammaln(n-k+1) + gammaln(a) + gammaln(b) + gammaln(n+a+b))
+    return -np.sum(logpdf) 
+
+def loglike_betabinom_alt(params, k,n):
+    #alternative parametrization with mean, var
+    a=params[0]/ params[1]-params[0]
+    b=(( params[1]-1)*(params[0]-1))/ params[1]
     logpdf = gammaln(n+1) + gammaln(k+a) + gammaln(n-k+b) + gammaln(a+b) - \
      (gammaln(k+1) + gammaln(n-k+1) + gammaln(a) + gammaln(b) + gammaln(n+a+b))
     return -np.sum(logpdf) 
@@ -359,7 +390,7 @@ def betabinom_lr_test(x,n):
         ginit=max(prob.std(),1e-6)
         init_params = [minit/ginit-minit, ((ginit-1)*(minit-1))/ginit]
         #find ml estimates for a and b
-        mle = minimize(loglike_betabinom, x0=init_params,bounds=((0,None),(0,None)),  args=(xi,ni),options={'maxiter': 250})
+        mle = minimize(loglike_betabinom, x0=init_params,bounds=((1e-6,None),(1e-6,None)),  args=(xi,ni),options={'maxiter': 250})
         params.append(mle.x)                
     # calculate the log likelihoods
     try:
@@ -368,30 +399,31 @@ def betabinom_lr_test(x,n):
     except ValueError:
         log.error(f'betabinom error: x={x}\nn={n}\nparams={params}')
         raise
-    # calculate the pvalue (sf=1-csf(), 1df)
     params_alt=[(a/(a+b), 1/(a+b+1)) for a,b in params]
     return chi2.sf(2*(l1-l0),2), params_alt #note that we need two degrees of freedom here as h0 hsa two parameters, h1 has 4
 
-def altsplice_test(transcriptome,groups, min_cov=10, min_n=10, min_sa=.5, test=proportion_test,padj_method='fdr_bh'):
+def altsplice_test(transcriptome,groups, min_cov=10, min_n=10, min_sa=.5, test=betabinom_lr_test,padj_method='fdr_bh'):
     #multitest_default={}
-    #grp_idx={r:i for i,r in enumerate(transcriptome.runs)}
-    #grp=[[grp_idx[r] for r in g] for g in groups]
+    sa_idx={sa:idx[0] for sa,idx in transcriptome.get_sample_idx().items()}
     assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
     if isinstance(groups, dict):
         groupnames=list(groups)
         groups=list(groups.values())
     else:
         groupnames=['grp1','grp2']
+
+    notfound=[sa for grp in groups for sa in grp if sa not in sa_idx]
+    if notfound:
+        raise ValueError(f"Cannot find the following samples: {notfound}")    
+    grp_idx=[[sa_idx[sa] for sa in grp] for grp in groups]
     if min_sa<1:
         min_sa*=max(len(gr) for gr in groups)
     res=[]
     for g in tqdm(transcriptome):
         for junction_cov,total_cov,start,end in g.splice_graph.get_splice_coverage():
-            x,n=[],[]
-            for grp in groups:
-                x.append(junction_cov[grp])
-                n.append(total_cov[grp])
-            if any((ni<min_n).sum()<min_sa for ni in n):
+            x=[junction_cov[grp] for grp in grp_id]
+            n=[total_cov[grp] for grp in grp_id]
+            if any((ni>=min_n).sum()<min_sa for ni in n):
                 continue
             x_sum=sum(xi.sum() for xi in x)     
             n_sum=sum(ni.sum() for ni in n)       

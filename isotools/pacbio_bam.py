@@ -38,11 +38,13 @@ class PacbioBam():
         self.nreads=None
         self.header=None
         self.idx_fn=None
-        #self.read_header()
-        #try:
-        #    self.read_index()
-        #except FileNotFoundError:
-        #    print('no pacbio index found, only sequential access to data')
+        self._open()
+        self.read_header()
+        self._close()
+        try:
+            self.read_index(fn+'.pbi')
+        except FileNotFoundError:
+            print('no pacbio index found, only sequential access to data')
         
 
 
@@ -273,5 +275,6 @@ if __name__=='__main__':
         print('\t'.join(pbbam.fetch(sys.argv[2]) ))
     else:
         #2b) access next transcript
-        print('\t'.join(pbbam.fetch()))
+        #print('\t'.join(pbbam.fetch()))
+        print(pbbam.nreads)
 

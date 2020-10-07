@@ -362,16 +362,6 @@ class SpliceGraph():
                     for ix, st in enumerate(starts[i]):
                         for iy, en in enumerate(ends[j]):
                             ma[ix][iy]=self.weights[:,[k for k in st[1] if k in en[1]]].sum()  #sum the weight for the test
-                    
-                    #fisher test requires 2x2 tables, and filter by row and colum sum
-                    ix=[i for i,s in enumerate(ma.sum(axis=1)) if s > min_sum]
-                    iy=[i for i,s in enumerate(ma.sum(axis=0)) if s > min_sum]
-                    for ixpair in combinations(ix, 2):
-                        for iypair in combinations(iy, 2):     
-                            subma=  ma[np.ix_(ixpair, iypair)]
-                            if any(subma.sum(0)<min_sum) or any(subma.sum(1)<min_sum):
-                                continue
-                            oddsratio, pvalue = stats.fisher_exact(subma)
                     #fisher test requires 2x2 tables, and filter by row and colum sum
                     ix=[i for i,s in enumerate(ma.sum(axis=1)) if s > min_sum]
                     iy=[i for i,s in enumerate(ma.sum(axis=0)) if s > min_sum]
@@ -388,14 +378,51 @@ class SpliceGraph():
                                 found.append((pvalue,subma, alt_from,self[i].start,self[j].end,alt_to))
         return found
 
+    def find_loops(self):
+        '''search for alternative paths in the splice graphs ("loops"), 
+        e.g. combinations of nodes A and B with more than one path from A to B'''
+        for i, nA in enumerate(self):
+            log.debug(f'checking node {i}: {nA}')
+            ends=sorted(list({end for end in nA.suc.values()}))
+            if len(ends)==1:
+                continue #no alternative
+            end_dict={}#trids supporting the different alternatives
+            for tr_id,node_id in nA.suc.items(): 
+                end_dict.setdefault(node_id,set()).add(tr_id)
+            for idx,path1 in enumerate(ends[:-1]):
+                for path2 in ends[idx+1:]:
+                    missing1=end_dict[path1] 
+                    missing2=end_dict[path2] 
+                    incomplete={}
+                    while missing1 and missing2:                        
+                        nB=self[path2] 
+                        found1={tr for tr in missing1 if tr in nB.pre} #transcripts ending in nB over path1
+                        found2={tr for tr in missing2 if tr in nB.pre} #transcripts from nA path2 rejoining in nB
+                        if found1 and found2:
+                            log.debug(f'loop for {[path1,path2]} from {nA.end} to {nB.start}: path1={found1}, path2={found2}')
+                            weight=self.weights[:,list(found1)].sum(1)                            
+                            total_weight=self.weights[:,list(found1.union(found2))].sum(1)
+                            yield weight, total_weight,nA.end,nB.start
+                        missing1={tr for tr in missing1 if tr not in found1 and self._pas[tr]>path2}
+                        missing2={tr for tr in missing2 if tr not in found2 and self._pas[tr]>path2}
+                        path2+=1 #next node                        
+                        assert path2 < len(self), f'end of transcript, still missing {missing1}/{missing2}'
+                    
+                
+
+
     def get_splice_coverage(self):
         for i,first in enumerate(self):
             for j,second in ((idx,self[idx]) for idx in set(first.suc.values())):
                 if first.end== second.start: #only consider splice junctions (this excludes alternative tss and pas... todo)
                     continue
-                relevant=[idx for idx,(tss,pas) in enumerate(zip(self._tss, self._pas)) if tss<=i and pas>=j]
+                idx=[tr for tr,idx in first.suc.items() if idx==j] #transcripts supporting this junction
+                relevant=[idx for idx,(tss,pas) in enumerate(zip(self._tss, self._pas)) if tss<=i and pas>=j] #transcripts spanning this position
+                if len(idx)==len(relevant): #no additional spanning transcripts
+                    continue
                 total_weight=self.weights[:,relevant].sum(1)
-                weight=self.weights[:,[tr for tr,idx in first.suc.items() if idx==j]].sum(1)
+                weight=self.weights[:,idx].sum(1)
+                #how to define the type (e.g. exon skipping/intron retention/alternative 5'/3')
                 yield weight,total_weight,first.end,second.start
 
 

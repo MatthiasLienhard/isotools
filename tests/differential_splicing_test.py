@@ -31,4 +31,6 @@ exons= [[[21,30], [41,50], [61,70],[81,90]], #all exons
                 [[21,30], [37,50], [61,70],[81,90]]]    #alternative 3'
 weights=np.array([[10,10,10,10,10],[5,20,0,15,10]])
 sg=isotools.splice_graph.SpliceGraph(exons, weights=weights)
-list(sg.find_loops())
+list(sg.get_splice_coverage())
+list(sg.get_splice_coverage_old())
+

@@ -378,40 +378,49 @@ class SpliceGraph():
                                 found.append((pvalue,subma, alt_from,self[i].start,self[j].end,alt_to))
         return found
 
-    def find_loops(self):
+    def get_splice_coverage(self):
         '''search for alternative paths in the splice graphs ("loops"), 
         e.g. combinations of nodes A and B with more than one path from A to B'''
         for i, nA in enumerate(self):
-            log.debug(f'checking node {i}: {nA}')
-            ends=sorted(list({end for end in nA.suc.values()}))
-            if len(ends)==1:
+            junctions=sorted(list({j for j in nA.suc.values()})) # target nodes for junctions from node A ordered by intron size
+            if len(junctions)<2:
                 continue #no alternative
-            end_dict={}#trids supporting the different alternatives
-            for tr_id,node_id in nA.suc.items(): 
-                end_dict.setdefault(node_id,set()).add(tr_id)
-            for idx,path1 in enumerate(ends[:-1]):
-                for path2 in ends[idx+1:]:
-                    missing1=end_dict[path1] 
-                    missing2=end_dict[path2] 
-                    incomplete={}
-                    while missing1 and missing2:                        
-                        nB=self[path2] 
-                        found1={tr for tr in missing1 if tr in nB.pre} #transcripts ending in nB over path1
-                        found2={tr for tr in missing2 if tr in nB.pre} #transcripts from nA path2 rejoining in nB
-                        if found1 and found2:
-                            log.debug(f'loop for {[path1,path2]} from {nA.end} to {nB.start}: path1={found1}, path2={found2}')
-                            weight=self.weights[:,list(found1)].sum(1)                            
-                            total_weight=self.weights[:,list(found1.union(found2))].sum(1)
-                            yield weight, total_weight,nA.end,nB.start
-                        missing1={tr for tr in missing1 if tr not in found1 and self._pas[tr]>path2}
-                        missing2={tr for tr in missing2 if tr not in found2 and self._pas[tr]>path2}
-                        path2+=1 #next node                        
-                        assert path2 < len(self), f'end of transcript, still missing {missing1}/{missing2}'
+            j_sets={}#transcripts supporting the different  junctions
+            for tr,node_id in nA.suc.items(): 
+                j_sets.setdefault(node_id,[]).append(tr)
+            log.debug(f'checking node {i}: {nA} ({junctions})')
+            for idx,joi in enumerate(junctions[1:]): # start from second, as first does not have an alternative
+                nB=self[joi]
+                #alternative=[tr for j in junctions[:idx+1] for tr in j_sets[j] if self._pas[tr] > joi]
+                alternative={j:[tr for tr in j_sets[j] if self._pas[tr] > joi] for j in junctions[:idx+1] }
+                log.debug(f'loop for {joi} from {nA.end} to {nB.start}: joi={j_sets[joi]}, alternatives={alternative}')
+                if any(a for a in alternative.values()):   
+                    #get type of alternative splicing                 
+                    alt_type=set()
+                    for j,j_set in alternative.items():
+                        if self[j].start==nA.end:
+                            if self[j].end==nB.start:
+                                alt_type.add('IR')#intron retention
+                            else:
+                                alt_type.add('AS1')#alternative splice site (5' on +, 3' on -)
+                        elif j+1==joi:
+                            if self[j].end==nB.start:
+                                alt_type.add('AS2')#alternative splice site (5' on -, 3' on +)
+                            else:
+                                alt_type.add('ES')#exon skiping
+                        else:
+                            #more than one node
+                            alt_type.add('UK')
+                        if not all(j in nB.pre for j in j_set):
+                            alt_type.add('ME')#mutually exclusive exon/sequence
+                    weight=self.weights[:,j_sets[joi]].sum(1)                            
+                    alt_weight=self.weights[:,[a for l in alternative.values() for a in l]].sum(1)
+                    yield weight, weight+alt_weight,nA.end,nB.start,alt_type
                     
                 
 
 
-    def get_splice_coverage(self):
+    def get_splice_coverage_old(self):
         for i,first in enumerate(self):
             for j,second in ((idx,self[idx]) for idx in set(first.suc.values())):
                 if first.end== second.start: #only consider splice junctions (this excludes alternative tss and pas... todo)

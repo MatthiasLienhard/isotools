@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 from pysam import  AlignmentFile
 from scipy.stats import binom,norm, chi2, betabinom, beta
-from scipy.special import gammaln
+from scipy.special import gammaln, gamma, polygamma
 from scipy.optimize import minimize
 import statsmodels.stats.multitest as multi
 import isotools.splice_graph
@@ -41,9 +41,9 @@ def embedding(isoseq, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,
     '''
     joi=dict()
     if samples is not None:
-        s_filter=[True if sn in samples else False for sn in isoseq.runs]
+        s_filter=[True if sn in samples else False for sn in isoseq.samples]
     else:
-        s_filter=[True]*len(isoseq.runs)
+        s_filter=[True]*len(isoseq.samples)
     if genes is None:        
         genes=[g for i,g in enumerate(isoseq) if all(g.splice_graph.weights[s_filter].sum(1)>=min_cov)] #all covered genes
         log.info(f'found {len(genes)} genes > {min_cov} reads in all {sum(s_filter)} selected samples.')
@@ -97,7 +97,7 @@ def embedding(isoseq, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,
         return topvar    
     return pd.DataFrame(reducer.fit_transform(topvar), index=topvar.index)
 
-def plot_embedding(embedding, col=None, groups=None, labels=True, ax=None):    
+def plot_embedding(embedding, col=None, groups=None, labels=True, ax=None, comp=[0,1]):    
     if groups is not None:
         if col is None:
             cm = plt.get_cmap('gist_rainbow')
@@ -105,11 +105,11 @@ def plot_embedding(embedding, col=None, groups=None, labels=True, ax=None):
     if ax is None:
         _,ax=plt.subplots()
     ax.scatter(
-        embedding.loc[:, 0],
-        embedding.loc[:, 1],
+        embedding[comp[0]],
+        embedding[comp[1]],
         c=col)
     if labels:
-        for idx,(x,y) in embedding.loc[:,:1].iterrows():
+        for idx,(x,y) in embedding[comp].iterrows():
             ax.text(x,y,s=idx)
     
 
@@ -294,7 +294,7 @@ def gene_track(genes, ax=None,title=None, draw_exon_numbers=True, color='blue'):
     assert all(g.chrom==genes[0].chrom for g in genes), "all chromosomes must be equal"
     i=0
     for g in genes:
-        for tr in g.transcripts.values():
+        for tr in g.transcripts:
             #line from TSS to PAS at 0.25
             ax.plot((tr['exons'][0][0], tr['exons'][-1][1]), [i+.25]*2, color=color)
             #idea: draw arrow to mark direction?
@@ -323,7 +323,7 @@ def gene_track(genes, ax=None,title=None, draw_exon_numbers=True, color='blue'):
     ax.set(frame_on=False)
     ntr=sum(g.n_transcripts for g in genes)
     ax.set_yticks([i+.25 for i in range(ntr)])
-    ax.set_yticklabels(tr for g in genes for tr in g.transcripts)
+    ax.set_yticklabels(tr for g in genes for tr in g.transcripts.keys()) #todo
     ax.tick_params(left=False)
     ax.set_ylim(-.5,ntr+1)
     ax.set_xlim(start-100, end+100)
@@ -359,50 +359,134 @@ def binom_lr_test(x,n):
 
 #from https://stackoverflow.com/questions/54505173/finding-alpha-and-beta-of-beta-binomial-distribution-with-scipy-optimize-and-log
 def loglike_betabinom(params, k,n):
-    a, b = params[0], params[1]
+    '''returns  log likelihood of betabinomial and its partial derivatives'''
+    a, b = params
     logpdf = gammaln(n+1) + gammaln(k+a) + gammaln(n-k+b) + gammaln(a+b) - \
      (gammaln(k+1) + gammaln(n-k+1) + gammaln(a) + gammaln(b) + gammaln(n+a+b))
-    return -np.sum(logpdf) 
+    e=polygamma(0,a+b) -  polygamma(0,n+a+b)
+    da= e+polygamma(0,k+a)    - polygamma(0,a) 
+    db= e+polygamma(0,n-k+b)  - polygamma(0,b) 
+    return -np.sum(logpdf), np.array((-np.sum(da),-np.sum(db)))
 
-def loglike_betabinom_alt(params, k,n):
-    #alternative parametrization with mean, var
-    a=params[0]/ params[1]-params[0]
-    b=(( params[1]-1)*(params[0]-1))/ params[1]
-    logpdf = gammaln(n+1) + gammaln(k+a) + gammaln(n-k+b) + gammaln(a+b) - \
-     (gammaln(k+1) + gammaln(n-k+1) + gammaln(a) + gammaln(b) + gammaln(n+a+b))
-    return -np.sum(logpdf) 
 
 
 def betabinom_lr_test(x,n):
-    # likelihood ratio test
-    # x,n should be 2 sets (the two groups)
-    # x is betabinomial(n,a,b), eg binomial distribution, where p follows beta ditribution with parameters a,b>0
-    # mean m=a/(a+b) overdispersion g=1/(a+b+1) --> a=m/g-m and b=((g-1)*(m-1))/g
-    # principle: log likelihood ratio of M0/M1 is chi2 distributed
-    
+    ''' likelihood ratio test with random-effects betabinomial model
+     x,n should be 2 sets (the two groups)
+     x is betabinomial(n,a,b), eg a binomial distribution, where p follows beta ditribution with parameters a,b>0
+     mean m=a/(a+b) overdispersion d=ab/((a+b+1)(a+b)^2) --> a=-m(m^2-m+d)/d b=(m-1)(m^2-m+d)/d
+     principle: log likelihood ratio of M0/M1 is chi2 distributed
+     '''    
     params=list()
+    success=True
     for xi,ni in itertools.chain(zip(x,n),((np.concatenate(x),np.concatenate(n)),)):
         xi, ni=xi[ni>0], ni[ni>0] #avoid div by 0
-        #find good initialization parameters for a and b
-        #prob=np.array([xii/nii for xii,nii in zip(xi,ni) if nii>0])
-        prob=xi/ni
-        minit=prob.mean()
-        ginit=max(prob.std(),1e-6)
-        init_params = [minit/ginit-minit, ((ginit-1)*(minit-1))/ginit]
+        #x and n must be np arrays
+        prob=xi/ni    
+        m=prob.mean() #estimate initial parameters
+        d=max(prob.var(),1e-6) #max to avoid division by 0
+        e=(m**2-m+d) #helper          
         #find ml estimates for a and b
-        mle = minimize(loglike_betabinom, x0=init_params,bounds=((1e-6,None),(1e-6,None)),  args=(xi,ni),options={'maxiter': 250})
+        mle = minimize(loglike_betabinom, x0=[-m*e/d,((m-1)*e)/d],bounds=((1e-6,None),(1e-6,None)),  args=(xi,ni),options={'maxiter': 250}, method='L-BFGS-B', jac=True)
         params.append(mle.x)                
+        #mle = minimize(loglike_betabinom2, x0=[-d/(m*e),d/((m-1)*e)],bounds=((1e-9,None),(1e-9,None)),  args=(xi,ni),options={'maxiter': 250}, method='L-BFGS-B', tol=1e-6)
+        #params.append([1/p for p in mle.x])                
+        if not mle.success:
+            log.debug(f'no convergence in betabinomial fit: k={xi}\nn={ni}\nparams={params}\nmessage={mle.message}') #should not happen to often, mainly with mu close to boundaries
+            success=False #prevent calculation of p-values based on non optimal parameters
     # calculate the log likelihoods
+    params_alt=[(a/(a+b),  a*b/((a+b)**2*(a+b+1))) for a,b in params] #get alternative parametrization (mu and disp)
+    if not success:
+        return np.nan, params_alt
     try:
         l0 = betabinom.logpmf(np.concatenate(x), np.concatenate(n), *params[2]).sum() 
         l1 = betabinom.logpmf(x[0],n[0], *params[0]).sum()+betabinom.logpmf(x[1],n[1], *params[1]).sum()
     except ValueError:
-        log.error(f'betabinom error: x={x}\nn={n}\nparams={params}')
+        log.error(f'betabinom error: x={x}\nn={n}\nparams={params}')#should not happen
         raise
-    params_alt=[(a/(a+b), 1/(a+b+1)) for a,b in params]
     return chi2.sf(2*(l1-l0),2), params_alt #note that we need two degrees of freedom here as h0 hsa two parameters, h1 has 4
 
-def altsplice_test(transcriptome,groups, min_cov=10, min_n=10, min_sa=.5, test=betabinom_lr_test,padj_method='fdr_bh'):
+
+def loglike_betabinom_alt(params, k,n):
+    #alternative parametrization with mean, disp - less efficient and seems to have numerical issues
+    m,v=params #0<m<1 and 0<v<m-m^2
+    e=(m**2-m+v) #helper
+    a=-m*e/v
+    b=((m-1)*e)/v
+    logpdf = gammaln(n+1) + gammaln(k+a) + gammaln(n-k+b) + gammaln(a+b) - \
+     (gammaln(k+1) + gammaln(n-k+1) + gammaln(a) + gammaln(b) + gammaln(n+a+b))
+    return - np.sum(logpdf) 
+    
+
+def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5), splice_types=None):
+    plotted=pd.DataFrame(columns=result_table.columns)
+    if isinstance(splice_types, str):
+        splice_types=[splice_types]
+    f,axs=plt.subplots(*grid_shape)
+    axs=axs.flatten()
+    x=[i/1000 for i in range(1001)]
+    group_names=[c[5:] for c in result_table.columns if c[:5]=='prop_'][:2]
+    groups={gn:[c[4:] for c in  result_table.columns if c[:4]=='cov_' and c.endswith(gn)] for gn in group_names}
+    for idx,row in result_table.iterrows():
+        log.debug(f'plotting {idx}: {row.gene}')
+        if splice_types is not None and row.splice_type not in splice_types:
+            continue
+        if row.gene in set(plotted.gene):
+            continue
+        params_alt={gn:row[f'prop_{gn}'] for gn in group_names}
+        psi_gr={gn:[row[f'cov_{sa}']/row[f'span_cov_{sa}'] for sa in gr if row[f'span_cov_{sa}']>0] for gn,gr in groups.items()}
+        support={s: sum(abs(i-params_alt[s][0]) < abs(i-params_alt[o][0]) for i in psi_gr[s]) for s,o in zip(group_names, reversed(group_names))}
+        if any(sup<min_support for sup in support.values()):
+            log.debug(f'skipping {row.gene} with {support} supporters')
+            continue
+        if abs(params_alt[group_names[0]][0]-params_alt[group_names[1]][0])<min_diff:  
+            log.debug(f'{row.gene} with {"vs".join(str(p[0]) for p in params_alt.values())}')  
+            continue
+        #get the paramters for the beta distiribution
+        params={gn:((-m*(m**2-m+v))/v,((m-1)*(m**2-m+v))/v)  for gn,(m,v) in params_alt.items()}
+        #print(param)
+        ax=axs[len(plotted)]
+        #ax.boxplot([mut,wt], labels=['mut','wt'])
+        sns.swarmplot(data=pd.DataFrame(list(psi_gr.values()), index=psi_gr).T, ax=ax, orient='h')
+        for i,gn in enumerate(group_names):
+            ax2 = ax.twinx()  # instantiate a second axes that shares the same x-axis
+            ax2.plot(x, beta(*params[gn]).pdf(x), color=f'C{i}')
+            ax2.tick_params( right=False, labelright=False)
+        ax.set_title(f'{row.gene} {row.splice_type}\nFDR={row.padj:.5f}')
+        plotted=plotted.append(row)
+        if len(plotted)==len(axs):
+            break
+    f.tight_layout()
+    return f,axs,plotted
+
+def betabinom_lr_test_alt(x,n, disp=None): #alternative formulation
+    ''' alternative parametrization of betabinomial log likelihood function L(mu, disp), mainly for testing purposes
+     '''
+    
+    params=list()
+    d_range=(1e-6,None) if disp is None else (disp,disp)
+    for xi,ni in itertools.chain(zip(x,n),((np.concatenate(x),np.concatenate(n)),)):
+        xi, ni=xi[ni>0], ni[ni>0] #avoid div by 0
+        #x and n must be np arrays
+        #find good initialization parameters for a and b
+        prob=xi/ni
+        m=prob.mean()
+        d=max(prob.var(),1e-6) #to avoid division by 0
+        mle = minimize(loglike_betabinom_alt, x0=(m,d),bounds=((1e-6,1-1e-6),d_range),  args=(xi,ni),options={'maxiter': 250})
+        if not mle.success:
+            log.debug(f'{mle.message}')
+        params.append(mle.x)                
+    try:
+        params_alt=[((-m*(m**2-m+v))/v,((m-1)*(m**2-m+v))/v)  for m,v in params]
+        l0 = betabinom.logpmf(np.concatenate(x), np.concatenate(n), *params_alt[2]).sum() 
+        l1 = betabinom.logpmf(x[0],n[0], *params_alt[0]).sum()+betabinom.logpmf(x[1],n[1], *params_alt[1]).sum()
+        
+    except ValueError:
+        log.error(f'betabinom error: x={x}\nn={n}\nparams={params}')
+        raise
+    return chi2.sf(2*(l1-l0),2), params #note that we need two degrees of freedom here as h0 hsa two parameters, h1 has 4
+    
+def altsplice_test(transcriptome,groups, min_cov=20, min_n=10, min_sa=.5, test=betabinom_lr_test,padj_method='fdr_bh'):
     #multitest_default={}
     sa_idx={sa:idx[0] for sa,idx in transcriptome.get_sample_idx().items()}
     assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
@@ -417,29 +501,33 @@ def altsplice_test(transcriptome,groups, min_cov=10, min_n=10, min_sa=.5, test=b
         raise ValueError(f"Cannot find the following samples: {notfound}")    
     grp_idx=[[sa_idx[sa] for sa in grp] for grp in groups]
     if min_sa<1:
-        min_sa*=max(len(gr) for gr in groups)
+        min_sa*=sum(len(gr) for gr in groups)
     res=[]
     for g in tqdm(transcriptome):
-        for junction_cov,total_cov,start,end in g.splice_graph.get_splice_coverage():
-            x=[junction_cov[grp] for grp in grp_id]
-            n=[total_cov[grp] for grp in grp_id]
-            if any((ni>=min_n).sum()<min_sa for ni in n):
+        splice_type=['ES','3AS','5AS','IR','ME'] if g.strand=='+' else ['ES','5AS','3AS','IR','ME']
+        for junction_cov,total_cov,start,end,sti in g.splice_graph.get_splice_coverage():
+            x=[junction_cov[grp] for grp in grp_idx]
+            n=[total_cov[grp] for grp in grp_idx]
+            if sum((ni>=min_n).sum() for ni in n)<min_sa:
                 continue
             x_sum=sum(xi.sum() for xi in x)     
             n_sum=sum(ni.sum() for ni in n)       
             if x_sum < min_cov or n_sum-x_sum < min_cov:
                 continue
             pval, params=test(x,n)
-            res.append(tuple(itertools.chain((g.name,g.id,g.chrom, start, end,pval),params ,
+            res.append(tuple(itertools.chain((g.name,g.id,g.chrom, start, end,splice_type[sti],pval),params ,
                 (val for lists in zip(x,n) for pair in zip(*lists) for val in pair ))))
-    df=pd.DataFrame(res, columns= (['gene','gene_id','chrom', 'start', 'end','pvalue']+ 
+    df=pd.DataFrame(res, columns= (['gene','gene_id','chrom', 'start', 'end','splice_type','pvalue']+ 
             ['prop_'+gn for gn in groupnames+['total']]+  
             [f'{w}_{sa}_{gn}' for gn,grp in zip(groupnames, groups) for sa in grp for w in ['cov', 'span_cov'] ]))
-    mask = np.isfinite(df['pvalue'])
-    padj = np.empty(mask.shape)
-    padj.fill(np.nan) 
-    padj[mask] = multi.multipletests(df.loc[mask,'pvalue'],method='fdr_bh')[1]
-    df.insert(5,'padj',padj)
+    try:
+        mask = np.isfinite(df['pvalue'])
+        padj = np.empty(mask.shape)
+        padj.fill(np.nan) 
+        padj[mask] = multi.multipletests(df.loc[mask,'pvalue'],method='fdr_bh')[1]
+        df.insert(5,'padj',padj)
+    except TypeError: #apparently this happens if df is empty...
+        pass
     return df
 
 #plots
@@ -492,7 +580,7 @@ def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,
 # summary tables (can be used as input to plot_bar / plot_dist)
 def altsplice_stats(transcriptome, coverage=True,groups=None,  min_coverage=1, isoseq_filter={}):    #todo: filter like in make table
     try:
-        runs=transcriptome.runs
+        runs=transcriptome.samples
     except KeyError:
         runs=['transcriptome']
 
@@ -532,7 +620,7 @@ def altsplice_stats(transcriptome, coverage=True,groups=None,  min_coverage=1, i
     
 def filter_stats(transcriptome, coverage=True,groups=None,  min_coverage=1,consider=['TRUNCATION', 'A_CONTENT',  'CLIPPED_ALIGNMENT', 'RTTS']):    #todo: filter like in make table
     try:
-        runs=transcriptome.runs
+        runs=transcriptome.samples
     except KeyError:
         runs=['transcriptome']
     weights=dict()
@@ -574,7 +662,6 @@ def transcript_length_hist(transcriptome=None,reference=None,groups=None,bins=50
     for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         cov.append(tr['coverage'])
         trlen.append(sum(e[1]-e[0] for e in tr['exons']) if use_alignment else tr['source_len'])
-    #cov=pd.DataFrame(cov, columns=transcriptome.runs)
     cov=pd.DataFrame(cov)
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
@@ -597,7 +684,6 @@ def transcript_coverage_hist(transcriptome, groups=None,bins=50,x_range=(0.5,100
     cov=[]
     for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         cov.append(tr['coverage'])
-    #cov=pd.DataFrame(cov, columns=transcriptome.runs)
     cov=pd.DataFrame(cov)
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
@@ -617,7 +703,6 @@ def transcripts_per_gene_hist(transcriptome, reference=None, groups=None,bins=50
     for g in transcriptome:        
         cov=np.array([g.transcripts[trid]['coverage'] for trid in g.filter_transcripts(**isoseq_filter)]).T
         ntr.append([(c>=min_coverage).sum() for c in cov])
-    #ntr=pd.DataFrame(ntr, columns=transcriptome.runs)
     ntr=pd.DataFrame(ntr)
     if groups is not None:
         ntr=pd.DataFrame({grn:ntr[grp].sum(1) for grn, grp in groups.items()})
@@ -643,7 +728,6 @@ def exons_per_transcript_hist(transcriptome, reference=None, groups=None,bins=35
     for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         cov.append(tr['coverage'])
         n_exons.append(len(tr['exons']))
-    #cov=pd.DataFrame(cov, columns=transcriptome.runs)
     cov=pd.DataFrame(cov)
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
@@ -666,7 +750,6 @@ def downstream_a_hist(transcriptome, reference=None, groups=None,bins=30,x_range
     for _,_,tr in transcriptome.iter_transcripts(**isoseq_filter):
         cov.append(tr['coverage'])
         acontent.append(tr['downstream_A_content'])
-    #cov=pd.DataFrame(cov, columns=transcriptome.runs)
     cov=pd.DataFrame(cov)
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})

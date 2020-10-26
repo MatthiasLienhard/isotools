@@ -51,36 +51,79 @@ default_transcript_filter={
         'REFERENCE':'annotation',# and "splice_identical" in annotation',
         'UNSPLICED':'len(exons)==1','MULTIEXON':'len(exons)>1'}
 
-CIGAR_DICT={c:i for i,c in enumerate('MIDNSHP=X')}
+CIGAR_DICT={c:i for i,c in enumerate('MIDNSHP=X')} #this is how cigar is encoded in bam
 
 class Transcriptome:
     '''Container class for genes
     '' contains a dict of interval trees for the genes, each containing the splice graph'''
-    def __init__(self, file_name=None, file_format='auto',**kwargs):        
+    def __new__(cls, pickle_file=None,**kwargs):
+        if pickle_file is not None:
+            obj=cls.load(pickle_file)
+        else:
+            obj=super().__new__(cls,**kwargs)
+        return obj
+
+    def __init__(self,pickle_file=None,**kwargs ):     
         if 'data' in kwargs:
             self.data,self.infos=kwargs['data'],kwargs.get('infos',dict())
-        else:
-            assert file_name is not None, 'please specify "file_name"'
-            self.data,self.infos=import_transcripts(file_name, file_format=file_format, **kwargs)
-            if 'file_name' not in self.infos:
-                self.infos['file_name']=file_name
-        self.make_index()
+            assert 'reference_file' in self.infos 
+            self.make_index()
+        
+
+    @classmethod
+    def from_reference(cls, reference_file, file_format='auto',**kwargs):
+        tr = cls.__new__(cls)         
+        if file_format=='auto':        
+            file_format=os.path.splitext(reference_file)[1].lstrip('.')
+            if file_format=='gz':
+                file_format=os.path.splitext(reference_file[:-3])[1].lstrip('.')
+        log.info(f'importing reference from {file_format} file {reference_file}')
+        if file_format == 'gtf':
+            tr.data,tr.infos= import_gtf_transcripts(reference_file,tr,  **kwargs)
+        elif file_format in ('gff', 'gff3'):
+            tr.data,tr.infos= import_gff_transcripts(reference_file,tr,  **kwargs)
+        elif file_format == 'pkl':
+            genes,infos= pickle.load(open(reference_file, 'rb'))
+            tr=next(iter(next(iter(genes.values()))))._transcriptome            
+            if [k for k in infos if k!='reference_file']:
+                log.warning('the pickle file seems to contain additional expression information... extracting refrence')
+                ref_data=tr._extract_reference()
+                tr.data,tr.infos=tr._extract_reference(), {'reference_file':infos['reference_file']}
+        return tr
+
+    @classmethod
+    def load(cls, pickle_file):
+        'restores the information of a transcriptome from a pickle file'
+        log.info('loading transcriptome from '+pickle_file)
+        data, infos=pickle.load(open(pickle_file, 'rb'))
+        tr=next(iter(next(iter(data.values()))))._transcriptome
+        return tr
 
         
+    def save_reference(self, fn=None):    
+        'saves the reference information of a transcriptome in a pickle file'
+        if fn is None:
+            fn=self.infos['reference_file']+'.isotools.pkl'
+        log.info('saving reference to '+fn)       
+        ref_data=self._extract_reference() 
+        pickle.dump((ref_data,{'reference_file':self.infos['reference_file']} ))
+
+    def _extract_reference(self):
+        if not [k for k in self.infos if k!='reference_file']:
+            return self.data #do nothing
+        ref_data={} # extract the reference
+        for chrom,tree in self.data.items():
+            ref_data[chrom]=IntervalTree(Gene(g.start,g.end,{k:g.data[k] for k in Gene.required_infos+['reference']}, self) for g in tree if g.is_annotated)
+        return ref_data
+
     def save(self, fn=None):
-        'saves the information of a transcriptome in a pickle file'
+        'saves the information of a transcriptome (including reference) in a pickle file'
         if fn is None:
             fn=self.infos['file_name']+'.isotools.pkl'
         log.info('saving transcriptome to '+fn)
         pickle.dump((self.data,self.infos), open(fn, 'wb'))
     
-    def load(self, fn=None):
-        'restores the information of a transcriptome from a pickle file'
-        if fn is None:
-            fn=self.infos['file_name']+'.isotools.pkl'
-        log.info('loading transcriptome from '+fn)
-        self.data, self.infos=pickle.load(open(fn, 'rb'))
-        
+    
     def write_gtf(self, fn, source='isotools',use_gene_name=False,  include=None, remove=None):     
         'writes the transcripts in gtf format to a file'
         with open(fn, 'w') as f:     
@@ -89,12 +132,12 @@ class Transcriptome:
                 if lines:
                     _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
 
-
-
     def make_index(self):
         'updates the index used for __getitem__, e.g. the [] operator'
         idx=dict()
         for g in self:
+            if g.id in idx: # at least id should be unique - maybe raise exception?
+                log.warn(f'{g.id} seems to be ambigous: {str(self[g.id])} vs {str(g)}')
             idx[g.name] = g
             idx[g.id]=g
         self._idx=idx
@@ -110,14 +153,12 @@ class Transcriptome:
     
     def remove_chromosome(self, chromosome):
         'deletes the chromosome from the transcriptome'
-        for n in (g.id for g in self.data[chromosome]):
-            self._idx[n]={g for g in self._idx[n] if g.chrom != chromosome}
-            if not self._idx[n]:
-                del self._idx[n]
         del self.data[chromosome]
+        self.make_index()
     
     def add_illumina_coverage(self, illumina_fn, load=False):
         'Add illumina coverage to the genes.\n This does, by default, not actually read the bams, but reading is done at first access'
+        log.warning('illumina coverage untested')
         if load: # when loading coverage for all genes keep the filehandle open, hopefully a bit faster
             for bamfile in illumina_fn.values():            
                 log.info(bamfile)
@@ -138,10 +179,8 @@ class Transcriptome:
     def add_biases(self, genome_fn):
         'populates transcript["biases"] information, which can be used do create filters'
         with FastaFile(genome_fn) as genome_fh:
-            for g in tqdm(self):
-                if 'splice_graph' not in g.data:
-                    g.data['splice_graph']=isotools.splice_graph.SpliceGraph(g)
-                ts_candidates=g.data['splice_graph'].find_ts_candidates()
+            for g in tqdm(self):                
+                ts_candidates=g.splice_graph.find_ts_candidates()
                 for start, end, js, ls, idx in ts_candidates:
                     for tr in (g.transcripts[i] for i in idx):
                         tr.setdefault('template_switching',[]).append((start, end, js, ls))
@@ -157,7 +196,7 @@ class Transcriptome:
         # a_th=.5, rtts_maxcov=10, rtts_ratio=5, min_alignment_cov=.1
         #biases are evaluated with respect to specific thresholds
         gene_attributes={k for g in self for k in g.data.keys() }
-        tr_attributes={k for g in self for tr in g.transcripts.values() for k in tr.keys() }
+        tr_attributes={k for g in self for tr in g.transcripts for k in tr.keys() }
         tr_attributes.add('filter')
         if not gene_filter and not transcript_filter:
             gene_filter=default_gene_filter
@@ -168,13 +207,26 @@ class Transcriptome:
             g.add_filter(tr_ffun,gene_ffun)
         self.infos['filter']={'gene_filter':gene_filter, 'transcript_filter':transcript_filter}
 
-    @property 
-    def runs(self):
-        return dict(zip(self.infos['sample_table'].name, self.infos['sample_table'].run))
-        
+
     def get_sample_idx(self, group_column='name'):
         'returns a dict with group names as keys and index lists as values'
         return self.infos['sample_table'].groupby(group_column).groups
+
+    @property
+    def sample_table(self):
+        try:
+           return self.infos['sample_table']
+        except KeyError:
+            return pd.DataFrame(columns=['name','file','group'])
+    
+    @property
+    def samples(self):
+        return list(self.sample_table.name)
+
+    @property
+    def groups(self):
+        return dict(self.sample_table.groupby('group')['name'].apply(list))
+
         
     @property
     def n_transcripts(self):
@@ -182,12 +234,22 @@ class Transcriptome:
             return 0
         return sum(g.n_transcripts for g in self)
 
+    
+
     @property
     def n_genes(self):
         if self.data==None:
             return 0
         return sum((len(t) for t in self.data.values()))
     
+    @property
+    def novel_genes(self): #this is used for id assignment
+        try:
+            return self.infos['novel_counter']
+        except KeyError:
+            self.infos['novel_counter']=0
+            return 0
+
     @property
     def chromosomes(self):
         return list(self.data)            
@@ -201,10 +263,184 @@ class Transcriptome:
     def __iter__(self):
         return (gene for tree in self.data.values() for gene in tree)
 
-    
+       
+    def remove_samples(self, sample_names):
+        ''' removes samples from the dataset'''
+        if isinstance(sample_names, str):
+            sample_names=[sample_names]
+        assert all(s in self.samples for s in sample_names), 'Did not find all samples to remvoe in dataset'
+        rm_idx=self.sample_table.index[self.sample_table.name.isin(sample_names)]
+        self.sample_table.drop(index=rm_idx)
+        for g in self:
+            remove_tr=[]
+            for i,tr in enumerate(g.transcripts):
+                if any(s in tr['samples'] for s in sample_names):
+                    tr['samples']={s:d for s,d in tr['samples'].items() if s not in sample_names}
+                    if not tr['samples']:
+                        remove_tr.append(i)
+            if remove_tr: #remove the transcripts that is not expressed by remaining samples
+                g.data['transcripts']=[tr for i,tr in enumerate(g.transcripts) if i not in remove_tr]
+                g.data['splice_graph']=None # gets recomputed on next request
+                
+            elif 'splice_graph' in g.data:
+                g.splice_graph.weights=np.delete(g.splice_graph.weights,rm_idx, 0)
 
+    def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5, **kwargs):
+        '''import expressed transcripts from bam and add it to existing transcriptome'''
+        #todo: one alignment may contain several samples - this is not supported at the moment
+        assert sample_name not in self.samples, 'sample %s is already in the data set.' % sample_name
+        log.info(f'adding sample {sample_name}')
+        kwargs['name']=sample_name
+        kwargs['file']=fn
+        self.infos['sample_table']=self.sample_table.append(kwargs, ignore_index=True)
+        chromosomes=self.chromosomes
+        with AlignmentFile(fn, "rb") as align:        
+            stats = align.get_index_statistics()
+            # try catch if sam/ no index /not pacbio?
+            if not chromosomes:
+                chromosomes=align.references
+            total_reads = sum([s.mapped for s in stats if s.contig in chromosomes])
+            
+            #runs=set()
+            #genes={c:IntervalTree() for c in chromosomes}
+            chimeric=dict()
+            
+            with tqdm(total=total_reads, unit='transcripts') as pbar:
+                for chrom in chromosomes: #what about secondary alignments to non listed chromosomes?
+                    pbar.set_postfix(chr=chrom)
+                    transcripts=IntervalTree()
+                    novel=IntervalTree()
+                    for read in align.fetch(chrom):
+                        pbar.update()
+                        if read.flag & 0x100:
+                            n_secondary+=1
+                            continue # use only primary alignments
+                        strand = '-' if read.is_reverse else '+'
+                        exons = junctions_from_cigar(read.cigartuples,read.reference_start)
+                        tags= dict(read.tags)
+                        tr_range=(exons[0][0], exons[-1][1])
+                        if 'is' in tags:
+                            cov=tags['is'] #number of actual reads supporting this transcript
+                        else:
+                            cov=1
+                        for tr_interval in transcripts.overlap(*tr_range):
+                            tr=tr_interval.data
+                            if tr['strand'] != strand:
+                                continue
+                            if splice_identical(exons, tr['exons']):                                
+                                tr['samples'].setdefault(sample_name,{}).setdefault('range',{}).setdefault(tr_range,0)
+                                tr['samples'][sample_name]['range'][tr_range]+=cov                               
+                                break
+                        else:
+                            tr={'exons':exons,'samples':{sample_name:{'range':{tr_range:cov}}}, 'strand':strand}
+                            transcripts.add(Interval(*tr_range,tr))
+                        if 'SA' in tags:#part of a chimeric alignment
+                            chimeric.setdefault(read.query_name, []).append({'chr':chrom,'strand':strand,'range':tr_range,'cigar':read.cigarstring, 'aligned': aligned_part(read.cigartuples, read.is_reverse)}) #cigar is required to sort out the order 
+                            tr['samples'][sample_name].setdefault('chimeric',[]).append(chimeric[read.query_name])                       
+                        elif 4 in read.cigartuples: #clipping
+                            clip=get_clipping(read.cigartuples, read, read.reference_start)
+                            tr['samples'][sample_name].setdefault('clipping',{}).setdefault(clip,0)
+                            tr['samples'][sample_name]['clipping'][clip]+=cov
+                    for tr_interval in transcripts:
+                        tr=tr_interval.data
+                        tr['exons'][0][0]=min(r[0] for r in tr['samples'][sample_name]['range'])
+                        tr['exons'][-1][1]=max(r[1] for r in tr['samples'][sample_name]['range'])  
+                        gene=self._add_sample_transcript(tr,chrom, sample_name) #tr is not updated
+                        if gene is None:
+                            novel.add(tr_interval)    
+                    self._add_novel_genes(novel,chrom)
+        for g in self:
+            if 'splice_graph' in g.data and g.data['splice_graph'] is not None: # still valid splice graphs no new transcripts - add a row of zeros to weights
+                n_samples=len(self.samples)
+                w=g.coverage
+                if w.shape[0]<n_samples:                    
+                    w_new=np.zeros((n_samples,w.shape[1]))
+                    w_new[:w.shape[0],:] = w
+                    g.data['splice_graph'].weights=w_new
+    
+    def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
+        'add transcript to gene in chrom - return True on success and False if no Gene was found'
+        genes_ol = [g for g in self.data[chrom][tr['exons'][0][0]: tr['exons'][-1][1]] if g.strand==tr['strand'] ]
+        #check if transcript is already there (e.g. from other sample):
+        for g in genes_ol:
+            for tr2 in g.transcripts:
+                if splice_identical(tr2['exons'], tr['exons']):
+                    tr2['samples'][sample_name]=tr['samples'][sample_name]
+                    return g
+        #check if gene is already there (e.g. from same or other sample):
+        g,(sj_i, base_i)=self.get_intersects(genes_ol, tr['exons'], tr['strand'])
+        if g is not None:            
+            if g.is_annotated:                
+                corrected=g.correct_fuzzy_junctions(tr,g, fuzzy_junction)
+                if corrected: #check if correction made it identical to existing
+                    return g
+                altsplice= g.ref_splice_graph.get_alternative_splicing(tr['exons'], g.strand)
+                tr['annotation']={'sj_i': sj_i, 'base_i':base_i,'as':altsplice}
+
+            else: # range of the novel gene might have changed
+                start, end=min(tr['exons'][0][0],g.start),max(tr['exons'][-1][1],g.end)
+                if start<g.start or end>g.end:
+                    new_gene=Gene(start, end,g.data,self)
+                    self.data[chrom].add(new_gene)
+                    self.data[chrom].remove(g)
+                    g=new_gene
+            g.data.setdefault('transcripts',[]).append(tr) 
+            g.data['splice_graph']=None #gets recomputed on next request           
+        return g
+        
+    def _add_novel_genes( self,novel,chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix='PB_novel_'):
+        '"novel" is a tree of transcript intervals (not Gene objects) ,e.g. from one chromosome, that do not overlap any annotated or unanntoated gene'
+        n_novel=self.novel_genes
+        idx={id(tr):i for i,tr in enumerate(novel)}
+        merge=list()
+        for i,tr in enumerate(novel):    
+            merge.append({tr})
+            candidates=[c for c in novel.overlap(tr.begin, tr.end) if c.data['strand']==tr.data['strand'] and idx[id(c)]<i]
+            for c in candidates:
+                if c in merge[i]:
+                    continue
+                if is_same_gene(tr.data['exons'], c.data['exons'],spj_iou_th, reg_iou_th):
+                    #add all transcripts of candidate
+                    merge[i].update(merge[idx[id(c)]])
+            for c in merge[i]:#update all overlapping (add the current to them)
+                merge[idx[id(c)]]=merge[i]
+        seen=set()
+        for trS in merge: 
+            if id(trS) in seen:
+                continue
+            seen.add(id(trS))
+            trL=[tr.data for tr in trS]
+            strand=trL[0]['strand']
+            start=min(tr['exons'][0][0] for tr in trL)
+            end=max(tr['exons'][-1][1] for tr in trL)
+            n_novel+=1
+            new_data={'chr':chrom, 'ID':f'{gene_prefix}{n_novel:05d}', 'strand':strand, 'transcripts':trL}
+            self.data[chrom].add(Gene(start,end,new_data,self ))
+            self.infos['novel_counter']=n_novel
+                            
+    def get_intersects(self,genes_ol, exons, strand):
+        'calculate the intersects of all overlapping genes and return the best'  
+        ## todo: in order to detect readthrough fusion genes, report all overlapping reference genes? or exon/junction wise?
+        # prefer annotated genes
+        intersect=[(i,g.ref_splice_graph.get_intersects(exons)) for i,g in enumerate(genes_ol) if g.is_annotated]
+        if intersect:
+            best_idx ,intersects= max(intersect, key=lambda x:x[1])
+            if intersects[1] > 0 :    # at least some overlap (definition could be changed here)
+                return genes_ol[best_idx],intersects
+        #no annotated overlap, look for novel genes
+        intersect=[(i,g.splice_graph.get_intersects(exons)) for i,g in enumerate(genes_ol) if not g.is_annotated]
+        if intersect:
+            best_idx ,intersects= max(intersect, key=lambda x:x[1])
+            if intersects[1] > 0 :    # at least some overlap (definition could be changed here)
+                return genes_ol[best_idx],intersects
+        #todo: potentially antisense could be considered as well here
+        return None, (0,0)
+                    
+'''
     def annotate(self, reference,fuzzy_junction=5,novel_params=None): 
+        'depreciated, broken, replaced by new add_sample function... kept as not all functionality transfered yet'
         'Add annotation to the transcripts and alines the junctions to correct for ambigious alignments' 
+        raise ValueError('depreciated')
         genes=dict()
         unknown_fusions=list()
         novel_default=dict(spj_iou_th=0, reg_iou_th=0, gene_prefix='PB_novel_')
@@ -247,7 +483,7 @@ class Transcriptome:
                 for gname, g in gene_idx.items():
                     start=min(t['exons'][0][0] for t in g['transcripts'].values())
                     end=max(t['exons'][-1][1] for t in g['transcripts'].values())
-                    genes[chrom].add(Gene(start, end, g))        
+                    genes[chrom].add(Gene(start, end, g,self))        
         self.data=genes
         for f in unknown_fusions:
             f_ref_g,(f_sj_i, f_base_i)=get_annotation(f['chr'],f['exons'],f['strand'],self )
@@ -257,9 +493,9 @@ class Transcriptome:
                 f['annotation']=None
         self.make_index()
         self.infos['annotation']=reference.infos['file_name']
-        
+'''   
 
-    def iter_genes(self, region):
+    def iter_genes(self, region=None):
         'iterate over the genes of a region'
         if region is None:
             genes=self
@@ -276,13 +512,14 @@ class Transcriptome:
             else:
                 genes=self.data[chrom][start:end]
         for g in genes:
+            #todo: add filtering?
             yield g
     
     def iter_transcripts(self,region=None,include=None, remove=None):
         'iterate over the transcripts of a region, optionally applying filters'
         for g in self.iter_genes(region):
-            for trid in g.filter_transcripts(include, remove):
-                yield g,trid,g.transcripts[trid]
+            for i,tr in g.filter_transcripts(include, remove):
+                yield g,i,tr
 
 
     def gene_table(self, region=None ): #ideas: filter, extra_columns
@@ -313,6 +550,7 @@ class Transcriptome:
         'find fusion genes and compile a table with relevant infos (breakpoints, coverage, ...)'
         #todo: correct handeling of three part fusion events not yet implemented
         #todo: ambiguous alignment handling not yet implemented
+        log.warn('fusion table is broken')
         if star_chimeric is None:
             star_chimeric=dict()
         assert isinstance(star_chimeric, dict)
@@ -389,7 +627,8 @@ class Coverage:
         delta=np.zeros(reg[2]-reg[1])        
         junctions={}
         for read in align_fh.fetch(*reg):        
-            exons=junctions_from_cigar(read.cigartuples,read.reference_start) #alternative: read.get_blocks() should be more efficient.. -todo: is it different?
+            exons=junctions_from_cigar(read.cigartuples,read.reference_start) 
+            #alternative: read.get_blocks() should be more efficient.. -todo: is it different?
             for i, exon in enumerate(exons):
                 s=max(reg[1],min(reg[2]-1,exon[0]))-reg[1]
                 e=max(reg[1],min(reg[2]-1,exon[1]))-reg[1]
@@ -400,7 +639,7 @@ class Coverage:
                     if jpos[1]-jpos[0]<1:
                         continue
                     junctions[jpos]=junctions.get(jpos,0)+1            
-        cov=np.cumsum(delta)   
+        cov=np.cumsum(delta) #todo: use rle instead?  
         return cov,junctions
     
     def load(self):
@@ -419,7 +658,7 @@ class Coverage:
     def profile(self):
         if self._cov is None:
             self.load()
-        return self._cov
+        return self._cov #todo: implement rle?
 
     def __getitem__(self, subscript): 
         if isinstance(subscript, slice): 
@@ -437,8 +676,17 @@ class Coverage:
 
 class Gene(Interval):
     'this class stores all gene information and transcripts. It is derived from intervaltree.Interval'
+    required_infos=['ID','name', 'chr', 'strand']
+
+    def __new__(cls,begin, end, data, transcriptome):
+        return super().__new__(cls,begin, end, data) #required as Interval (and Gene) are immutable
+
+    def __init__(self,begin, end, data, transcriptome):
+        self._transcriptome=transcriptome
+
+
     def __str__(self):
-        return('Gene {} {}({}), {} transcripts'.format(self.name, self.region, self.strand, self.n_transcripts))
+        return('Gene {} {}({}), {} reference transcripts, {} expressed transcripts'.format(self.name, self.region, self.strand, self.n_ref_transcripts, self.n_transcripts))
     
     def __repr__(self):
         return object.__repr__(self)
@@ -446,57 +694,48 @@ class Gene(Interval):
     def add_filter(self, transcript_filter,gene_filter):   
         'add the filter flags'
         gene_tags=[name for name,fun in gene_filter.items() if  fun(**self.data)]
-        for tr in self.transcripts.values():
-            tr['filter']=gene_tags.copy()
+        for tr in self.transcripts:
+            tr['filter']=gene_tags.copy() #todo: introduce gene filter flags (in addition to the transcript filter)
             tr['filter'].extend([name for name,fun in transcript_filter.items() if fun(**tr)])
-            if not tr['filter']:
-                tr['filter']=['PASS']
-
 
     def filter_transcripts(self, include=None, remove=None):
         ''' iterator over the transcripts of the gene. Filtering implemented by passing lists of flags to the parametrs:
         include: transcripts must have at least one of the flags
         remove: transcripts must not have one of the flags (higher priority)'''
-        if include is None and remove is None: # return all
-            for tr in self.transcripts.keys():
-                yield tr
-        else:
-            for trid in self.transcripts.keys():            
-                try:
-                    select =  any(f in self.transcripts[trid]['filter'] for f in include)
-                except TypeError:
-                    select=True #None means include all
-                try:
-                    select &= all(f not in self.transcripts[trid]['filter'] for f in remove)
-                except TypeError:
-                    pass
-                if select:
-                    yield trid
+        for i,tr in enumerate(self.transcripts):
+            select =  include is None or any(f in tr['filter'] for f in include)
+            select &= remove is None or all(f not in tr['filter'] for f in remove)
+            if select:
+                yield i,tr
         
-    def correct_fuzzy_junctions(self,trid,ref_g, size):
+    def correct_fuzzy_junctions(self,tr,ref_g, size, modify=True):
         'this corrects for splicing shifts (e.g. same difference compared to reference annotaiton at both donor and acceptor) presumably caused by ambigous alignments'
-        exons=self.transcripts[trid]['exons']
-        shifts=ref_g.splice_graph.fuzzy_junction(exons,size)
-        if shifts:
-            if 'splice_graph' in self.data:
-                del self.data['splice_graph']
-            self.transcripts[trid]['fuzzy_junction']=shifts #save info for analysis of the effect
+        exons=tr['exons']
+        shifts=self.ref_splice_graph.fuzzy_junction(exons,size)
+        if shifts and modify:
             for i,sh in shifts.items():
                 exons[i][1]+=sh
                 exons[i+1][0]+=sh
+                assert len(tr['samples'])==1 
+                sample_name=next(iter(tr['samples']))
+                tr['samples']['fuzzy_junction']=shifts #keep the info, mainly for testing/statistics    
+                for tr2 in self.transcripts:
+                    if splice_identical(tr2['exons'], exons):
+                        tr2['samples'][sample_name]=tr['samples'][sample_name]
+        return shifts
+        
 
     def to_gtf(self, source='isoseq', use_gene_name=False, include=None, remove=None):
         'creates the gtf lines of the gene as strings'
         info={'gene_id':self.name if use_gene_name else self.id}
         gene=(self.chrom, source, 'gene', self.start+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items() ))
         lines=list()
-        for trid in self.filter_transcripts(include, remove):
-            tr=self.transcripts[trid]
-            info['transcript_id']=trid
+        for i,tr in enumerate(self.filter_transcripts(include, remove)):
+            info['transcript_id']=f'{self.id}.{i}'
             #todo: print only relevant infos
             lines.append((self.chrom, source, 'transcript', tr['exons'][0][0]+1, tr['exons'][-1][1], '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items() if k != 'exon_id')))
             for enr, pos in enumerate(tr['exons']):
-                info['exon_id']='{}_{}'.format(trid, enr)
+                info['exon_id']='{}.{}_{}'.format(self.id,i, enr)
                 lines.append((self.chrom, source, 'exon', pos[0]+1, pos[1], '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items())))
         if lines:
             lines.append(gene)
@@ -509,7 +748,7 @@ class Gene(Interval):
         i.e. save the dinucleotides of donor and aceptor as XX-YY string in the transcript biases dicts
         noncanonical splicing might indicate technical artifacts (template switching, missalignment, ...)'''
         
-        for tr in self.transcripts.values():
+        for tr in self.transcripts:
             pos=((tr['exons'][i][1], tr['exons'][i+1][0]-2) for i in range(len(tr['exons'])-1))
             sj_seq=((genome_fh.fetch(self.chrom, p, p+2).upper() for p in i) for i in pos)
             if self.strand=='+':
@@ -522,7 +761,7 @@ class Gene(Interval):
 
     def add_direct_repeat_len(self, genome_fh,delta=10):
         'perform a global alignment of the sequences at splice sites and report the score. Direct repeats indicate template switching'
-        for tr in self.transcripts.values():
+        for tr in self.transcripts:
             introns=((tr['exons'][i][1], tr['exons'][i+1][0]) for i in range(len(tr['exons'])-1))
             intron_seq=((genome_fh.fetch(self.chrom, pos-delta, pos+delta) for pos in i) for i in introns)
             #intron_seq=[[genome_fh.fetch(self.chrom, pos-delta, pos+delta) for pos in i] for i in introns]
@@ -551,7 +790,7 @@ class Gene(Interval):
     
     def add_threeprime_a_content(self, genome_fh, length=30):
         'add the information of the genomic A content downstream the transcript. High values indicate genomic origin of the pacbio read'
-        for tr in self.transcripts.values():
+        for tr in self.transcripts:
             if self.strand=='+':
                 pos=tr['exons'][-1][1]
             else:
@@ -566,7 +805,7 @@ class Gene(Interval):
         'check for truncations and save indices of truncated genes in transcripts'
         #dist5=-1, dist3=10
         is_truncated=set()
-        for trid1, trid2 in combinations(self.transcripts.keys(), 2):
+        for trid1, trid2 in combinations(range(len(self.transcripts)), 2):
             if trid1 in is_truncated or trid2 in is_truncated:
                 continue
             if len(self.transcripts[trid1]['exons'])>len(self.transcripts[trid2]['exons']):
@@ -649,6 +888,14 @@ class Gene(Interval):
                 return str(val), #iterables get converted to string
         return '',
 
+    @property
+    def coverage(self):
+        return self.splice_graph.weights
+
+
+    @property
+    def gene_coverage(self):
+        return self.coverage.sum(1)
 
     @property
     def chrom(self):
@@ -680,64 +927,76 @@ class Gene(Interval):
         try:
             return self.data['ID']    
         except KeyError:
+            log.error(self.data)
             raise
             
     @property
     def name(self):
         try:
-            return self.data['Name']    
+            return self.data['name']
         except KeyError:
-            pass
-        try:
-            return self.data['gene_name']    
-        except KeyError:
-            pass        
-        
-        return self.id
+            return self.id #e.g. novel genes do not have a name (but id)
+    
+    @property
+    def is_annotated(self):
+        return 'reference' in self.data
+    
+    @property
+    def is_expressed(self):
+        return bool(self.transcripts)
 
-    #@id.setter
-    #def id(self, new_id):
-    #    self.data['gene_id']=new_id
 
     @property
     def strand(self):
-        try:
-            return self.data['strand']
-        except KeyError:
-            return {}
+        return self.data['strand']
+        
 
     @property
     def transcripts(self):
         try:
             return self.data['transcripts']
         except KeyError:
+            return []
+
+    @property
+    def ref_transcripts(self):
+        try:
+            return self.data['reference']['transcripts']
+        except KeyError:
             return {}
 
     @property
     def n_transcripts(self):
-        try:
-            return len(self.data['transcripts'])
-        except KeyError:
-            return 0
+        return len(self.transcripts)
+    
+    @property
+    def n_ref_transcripts(self):
+        return len(self.ref_transcripts)
 
     @property
+    def ref_splice_graph(self): #raises key error if not self.is_annotated
+        assert self.is_annotated, "reference splice graph requested on novel gene"
+        if 'splice_graph' not in self.data['reference'] or self.data['reference']['splice_graph'] is None:
+            exons=[tr['exons'] for tr in self.ref_transcripts]
+            self.data['reference']['splice_graph']=isotools.splice_graph.SpliceGraph(exons)
+        return self.data['reference']['splice_graph']
+        
+    @property
     def splice_graph(self):
-        try:
-            return self.data['splice_graph']
-        except KeyError:
-            self.data['splice_graph']=isotools.splice_graph.SpliceGraph(self)
-            return self.data['splice_graph']
+        if 'splice_graph' not in self.data or self.data['splice_graph'] is None:
+            self.data['splice_graph']=isotools.splice_graph.SpliceGraph(self, samples=self._transcriptome.samples)
+        return self.data['splice_graph']
 
     def __copy__(self):
-        return Gene(self.start, self.end, self.data)        
+        return Gene(self.start, self.end, self.data, self._transcriptome)        
         
 
     def __deepcopy__(self, memo):
-        return Gene(self.start, self.end, copy.deepcopy(self.data, memo))
+        return Gene(self.start, self.end, copy.deepcopy(self.data, memo), self._transcriptome)
         
 
     def __reduce__(self):
-        return Gene, (self.start, self.end, self.data)  
+        return Gene, (self.start, self.end, self.data, self._transcriptome)  
 
     def copy(self):
         return self.__copy__()
@@ -782,29 +1041,12 @@ def query_bam(bam_fn,use_pbi=True,**kwargs):
                 yield read
                 
 
-
-def import_transcripts(fn, file_format='auto', **kwargs):
-    'import the transcripts from a gtf or bam file, or load a pickled transcriptome'
-    if file_format=='auto':        
-        file_format=os.path.splitext(fn)[1].lstrip('.')
-        if file_format=='gz':
-            file_format=os.path.splitext(fn[:-3])[1].lstrip('.')
-    log.info(f'importing transcriptome from {file_format} file {fn}')
-    if file_format == 'gtf':
-        genes,infos= import_gtf_transcripts(fn,  **kwargs)
-    elif file_format in ('gff', 'gff3'):
-        genes,infos= import_gff_transcripts(fn,  **kwargs)
-    elif file_format == 'bam':
-        genes,infos= import_pacbio_transcripts(fn,  **kwargs)
-    elif file_format == 'pkl':
-        genes,infos= pickle.load(open(fn, 'rb'))
-    else:
-        raise ValueError('unsupportet file format: {}'.format(file_format))    
-    return genes,infos
+ 
 
 def import_pacbio_transcripts(fn,sample_table,genome_fn=None, chromosomes=None, orf=False):
     '''import transcripts from pacbio bam
     'returns a dict interval trees for the genes, each containing the splice graph'''
+    raise Exception('import_pacbio_transcripts is broken/depreciated')
     n_secondary=0
     neglected_runs=set()
     #runs=pd.DataFrame(runs)
@@ -819,9 +1061,10 @@ def import_pacbio_transcripts(fn,sample_table,genome_fn=None, chromosomes=None, 
         with AlignmentFile(fn, "rb") as align:        
             stats = align.get_index_statistics()
             # try catch if sam/ no index /not pacbio?
-            total_reads = sum([s.mapped for s in stats])
+            
             if chromosomes is None:
                 chromosomes=align.references
+            total_reads = sum([s.mapped for s in stats if s.contig in chromosomes])
             #runs=set()
             genes={c:IntervalTree() for c in chromosomes}
             fusion=dict()
@@ -830,7 +1073,6 @@ def import_pacbio_transcripts(fn,sample_table,genome_fn=None, chromosomes=None, 
                 if read.flag & 0x100:
                     n_secondary+=1
                     continue # use only primary alignments
-
                 chrom = read.reference_name
                 if chrom not in chromosomes and not read.flag & 0x800: #allow secondary alignments form other chromosomes
                     continue
@@ -843,17 +1085,14 @@ def import_pacbio_transcripts(fn,sample_table,genome_fn=None, chromosomes=None, 
                     try:
                         cov[ run_idx[run] ]+=1
                     except KeyError:
-                        neglected_runs.add(run)
-                
+                        neglected_runs.add(run)              
                 
                 #transcript infos
                 tr={'exons':exons, 'source_len':len(read.query_sequence), 'cigar':read.cigarstring, 
                     'aligned': aligned_part(read.cigartuples, read.is_reverse),
                     'coverage':cov} 
-
                 if orf: #this takes time, hence made optional
                     tr['CDS']=find_orf(read.query_sequence)
-
                 if genome_fh is not None:
                     tr['mutations']=get_mutations(read.cigartuples, read.query_sequence, genome_fh, chrom,read.reference_start)
                 #gene infos
@@ -867,7 +1106,7 @@ def import_pacbio_transcripts(fn,sample_table,genome_fn=None, chromosomes=None, 
                         fusion_primary[read.query_name]=(tr,chrom,strand)
                     #chimeric transcripts are added to genes later, since the start and end  are not known yet
                 else:
-                    genes[chrom].add(Gene(exons[0][0],exons[-1][1],info))
+                    genes[chrom].add(Gene(exons[0][0],exons[-1][1],info, transcriptome))
     except:
         if genome_fh is not None:
             genome_fh.close()
@@ -965,18 +1204,6 @@ def merge_cigar(cigar1, cigar2, delta,intron_len):
     return f'{cigar1[:-idx1]}{gap}{intron_len+(delta if delta<0 else 0)}N{cigar2[idx2+1:]}'
     
 
-def get_annotation(chrom,exons,strand, reference):
-    'calculate the intersects of all overlapping genes and return the best'
-    if chrom in reference.data:
-        ref_genes_ol = [rg for rg in reference.data[chrom][exons[0][0]: exons[-1][1]] if rg.strand==strand]
-        if len(ref_genes_ol)>0:                                
-            intersect=[rg.splice_graph.get_intersects(exons) for rg in ref_genes_ol]
-            best_idx ,intersects= max(enumerate(intersect), key=lambda x:x[1])           # x=(idx,(sj_i,b_i)) -> first criterion: sj overlap, second: base overlap                     
-            if intersects[1] > 0 :    # at least some overlap (definition could be changed here)
-                return ref_genes_ol[best_idx],intersects
-    #todo: potentially antisense could be considered as well here
-    return None, (0,0)
-
 
 def get_transcript_sequence(chrom,exons,genome_fh):
     'construct the transcript sequence from genomic position and geneome sequence'
@@ -1019,7 +1246,7 @@ def cigarstring2tuples(cigarstring):
     return tuples
 
 def find_orf(seq, min_len=3):
-    ' look for open reading in "seq" frames and return the longest'
+    'look for open reading in "seq" frames and return the longest'
     # todo: incorperate codon usage to filter false positives
     # assuming seq is upper case and stranded
     # this is quite inefficient, can be improved:
@@ -1047,21 +1274,17 @@ def find_orf(seq, min_len=3):
 
 
 
-def import_gtf_transcripts(fn, genes=None,chromosomes=None):
+def import_gtf_transcripts(fn,transcriptome, chromosomes=None):
     '''import transcripts from gtf file (e.g. for a reference)
     returns a dict interval trees for the genes, each containing the splice graph'''
     gtf = TabixFile(fn)   
     exons = dict()  # transcript id -> exons
     transcripts = dict()  # gene_id -> transcripts
     skipped = set()
-    if genes is None:
-        genes=dict()  
-    elif(isinstance(genes, Transcriptome)) :
-        genes=genes.data
-    gene_dict={g.data['name']:g for t in genes.values() for g in t}
+    genes=dict()  
+    gene_dict={}
     for line in tqdm(gtf.fetch(), smoothing=.1): 
-        ls = line.split(sep="\t")
-        
+        ls = line.split(sep="\t")        
         if chromosomes is not None and ls[0] not in chromosomes:
             #warnings.warn('skipping line from chr '+ls[0])
             continue
@@ -1081,7 +1304,7 @@ def import_gtf_transcripts(fn, genes=None,chromosomes=None):
                 warnings.warn("gtf format error: gene without gene_id. Skipping line\n"+line)
             else:
                 info=_prepare_gene_info(info, ls[0], ls[6])
-                new_gene=Gene(start, end, info)
+                new_gene=Gene(start, end, info, transcriptome)
                 genes[ls[0]].add(new_gene)
                 gene_dict[info['gene_id']]=new_gene
         elif ls[2] == 'transcript':
@@ -1109,32 +1332,45 @@ def import_gtf_transcripts(fn, genes=None,chromosomes=None):
         for gene in genes[chrom]:
             g_id = gene.id
             t_ids = transcripts.get(g_id,  g_id)
-            gene.data.setdefault('transcripts', {})
+            gene.data['reference'].setdefault('transcripts', [])
             for t_id in t_ids:
                 try:
-                    gene.data['transcripts'][t_id] = {'exons':exons[t_id]}
+                    gene.data['reference']['transcripts'] = [{'transcript_id': t_id, 'exons':exons[t_id]}]
                 except KeyError:
                     # genes without transcripts get a single exons transcript
-                    gene.data['transcripts'] = {t_id: {'exons':[tuple(gene[:2])]}}                
-    return genes,dict()
+                    gene.data['reference']['transcripts'] =  [{'transcript_id': t_id,'exons':[tuple(gene[:2])]}]
+    return genes,{'reference_file':fn}
+
+def _set_alias(d,alias):
+    for pref,alt in alias.items():
+        alt=[a for a in alt if a in d]
+        if pref not in d:
+            try:
+                d[pref]=next(d[a] for a in alt)
+            except StopIteration:
+                log.error(f'did not find alternative for {pref}- suggested terms are {alt}, but have only those keys:{list(d)}')
+                raise
+        for a in alt:
+            d.pop(a,None)
+
+
 
 def _prepare_gene_info(info,chrom, strand, modify=True):
     if not modify:
         info=copy.deepcopy(info)
-    if 'name' not in info:
-        if 'Name' in info:
-            info['name']=info['gene_id']    
-            del info['Name']
-        else:
-            info['name']=info['gene_id']
-            del info['gene_id']
+    _set_alias(info, {'name':['Name','gene_id']})
+    assert 'ID' in info
     info['strand'] =strand
     info['chr'] = chrom
+    ref_info={k:v for k,v in info.items() if k not in Gene.required_infos}
+    info={k:info[k] for k in Gene.required_infos}
+    info['reference']=ref_info
     return info
 
-def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
+def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=['gene']):
     '''import transcripts from gff file (e.g. for a reference)
     returns a dict interval trees for the genes'''
+    file_size=os.path.getsize(fn)
     gff = TabixFile(fn)        
     chrom_ids = get_gff_chrom_dict(gff, chromosomes)    
     exons = dict()  # transcript id -> exons
@@ -1167,8 +1403,13 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
             info['strand'] = ls[6]
             info['chr'] = chrom
             #genes[chrom][start:end] = info
+            _set_alias(info,{'ID':['gene_id'],'name':['Name','gene_name']})
             gene_set.add(info['ID'])
-            genes[chrom].add(Gene(start,end,info))
+            
+            ref_info={k:v for k,v in info.items() if k not in Gene.required_infos}
+            info={k:info[k] for k in Gene.required_infos}
+            info['reference']=ref_info
+            genes[chrom].add(Gene(start,end,info, transcriptome))
         elif all([v in info for v in ['Parent', "ID"]]) and (ls[2] == 'transcript' or info['Parent'].startswith('gene')):# those denote transcripts
             tr_info={k:v for k,v in info.items() if k.startswith('transcript_')}
             transcripts.setdefault(info["Parent"], {})[info["ID"]]=tr_info
@@ -1189,14 +1430,16 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
         #log.debug('/n'.join(gid+str(tr) for gid, tr in missed_genes.items()))
         notfound=len(missed_genes)
         found=sum((len(t) for t in genes.values()) )
-        log.warning('found specific gene information with category {} for {}/{} genes'.format(gene_categories,found, found+notfound))
+        log.warning('Missing genes! Found gene information in categories {} for {}/{} genes'.format(gene_categories,found, found+notfound))
     log.info('building gene data structure...')
     # add transcripts to genes
     for chrom in genes:
         for gene in genes[chrom]:
-            g_id = gene.data['ID']
+            
+            g_id = gene.id
             tr=transcripts.get(g_id,  {g_id:{}})
             for t_id,tr_info in tr.items():
+                tr_info['transcript_id']=t_id
                 try:
                     tr_info['exons']=exons[t_id]
                 except KeyError:
@@ -1205,8 +1448,8 @@ def import_gff_transcripts(fn, chromosomes=None, gene_categories=['gene']):
                 #add cds
                 if t_id in cds_start and t_id in cds_stop:
                     tr_info['CDS']=(cds_start[t_id], cds_stop[t_id]) if cds_start[t_id]< cds_stop[t_id] else (cds_stop[t_id],cds_start[t_id])
-                gene.data.setdefault('transcripts', dict())[t_id]=tr_info
-    return genes,dict()
+                gene.data['reference'].setdefault('transcripts', []).append(tr_info)
+    return genes,{'reference_file':fn}
 
 def get_gff_chrom_dict(gff, chromosomes):
     'fetch chromosome ids - in case they use ids in gff for the chormosomes'
@@ -1229,40 +1472,7 @@ def get_gff_chrom_dict(gff, chromosomes):
                 chrom[c]=c
     return(chrom)
 
-def collapse_transcripts_to_genes( transcripts, spj_iou_th=0, reg_iou_th=.5, gene_prefix='PB_novel_', offset=0):
-    'transcripts is an interval tree of genes (e.g. from one chromosome)'
-    n_novel=0
-    idx=dict()
-    merge=dict()
-    for g in transcripts:
-        for trid,tr in g.transcripts.items():
-            idx[trid]=tr
-            merge_trid={trid}
-            candidates=[c for c in transcripts.overlap(g.start, g.end) if c.strand==g.strand]
-            for ol_trid,ol_tr in [(k,v) for c in candidates for k,v in c.transcripts.items()]:
-                if ol_trid in merge_trid  or ol_trid not in merge: # proceed if already added or not seen in the main loop so far
-                    continue
-                if is_same_gene(tr['exons'], ol_tr['exons'],spj_iou_th, reg_iou_th):
-                    #add all transcripts of overlapping
-                    merge_trid.update(merge[ol_trid])
-            #update all overlapping (add the current to them)
-            for ol_trid in merge_trid:
-                merge[ol_trid]=merge_trid
-    genes=IntervalTree()       
-    seen=set()
-    for g in transcripts:
-        for trid,tr in g.transcripts.items():
-            if trid in seen:
-                continue
-            n_novel+=1
-            new_transcripts={tid:idx[tid] for tid in merge[trid]}
-            seen.update(merge[trid])
-            start=min(tr['exons'][0][0] for tr in new_transcripts.values())
-            end=max(tr['exons'][-1][1] for tr in new_transcripts.values())
-            new_data={'chr':g.chrom, 'ID':f'{gene_prefix}{n_novel+offset}', 'strand':g.strand, 'transcripts':new_transcripts}
-            genes.add(Gene(start,end,new_data ))
-    return genes
-               
+           
 
 #utils
 
@@ -1364,19 +1574,24 @@ def aligned_part(cigartuples, is_reverse):
     parts=[]
     start=end=0
     for cigar in reversed(cigartuples) if is_reverse else cigartuples:
-        if cigar[0] in (0, 2, 7, 8):  # MD=X -> move forward on reference:
+        if cigar[0] in (0, 1, 7, 8):  # MI=X -> move forward on read:
             end+=cigar[1]
-        elif cigar[0] in (4,5):
+        elif cigar[0] in (4,5): #clipping at end
             if end>start:
-                parts.append([start,end])
+                return (start,end)
             end+=cigar[1]
             start=end
-    if end>start:
-        parts.append([start,end])
-    assert len(parts)==1, 'Unexpected result when analysing cigar clipping: No region or more than one aligned'
-    return parts[0]
+    return (start, end) #clipping at begining or no clipping
 
-
+def get_clipping(cigartuples, pos, is_reverse):
+    if cigartuples[0][0]==4:
+        #clipping at the begining
+        return(pos, -cigartuples[0][1])
+    elif cigartuples[-1][0]==4:
+        #clipping at the end - get the reference position
+        return(pos+sum(c[1] for c in cigartuples[:-1] if c[0] in (0, 2, 3, 7, 8)), cigartuples[-1][1])# MDN=X -> move forward on reference:
+    else:
+        return None
 
 def junctions_from_cigar(cigartuples, offset):
     'returns the exon positions'
@@ -1391,7 +1606,12 @@ def junctions_from_cigar(cigartuples, offset):
             exons.append([pos, pos])
         elif cigar[0] in (0, 2, 7, 8):  # MD=X -> move forward on reference
             exons[-1][1] += cigar[1]
+    if exons[-1][0]==exons[-1][1]: #delete 0 length exons at the end
+        del exons[-1]
     return exons
+
+def is_same_transcript(tr1, tr2):
+    'checks whether tr1 and tr2 are the same gene by calculating intersection over union of the intersects'
 
 def is_same_gene(tr1, tr2, spj_iou_th=0, reg_iou_th=.5):
     'checks whether tr1 and tr2 are the same gene by calculating intersection over union of the intersects'

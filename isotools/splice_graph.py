@@ -31,28 +31,24 @@ def overlap(pos1,pos2,width, height):
     return False
 
 class SpliceGraph():
-    def __init__(self, exons, end=None, weights=None, ids=None):      
-        if isinstance(exons,isotools.transcriptome.Gene):
-            #end=exons.end ?uncomment to increase performance
-            ids=list(exons.transcripts.keys())
-            try:
-                weights=np.array([tr['coverage'] for tr in exons.transcripts.values()]).swapaxes(0,1)
-            except KeyError:
-                weights=None
-            exons=[tr['exons'] for tr in exons.transcripts.values()]
-        if ids is None: #exons is a list of exons
-            ids=list(range(len(exons)))
-        if weights is None:
-            weights=np.ones((1,len(exons)))
-        self.weights=weights
-        self.ids=ids
-        if end is None:
-            end=max((e[-1][1] for e in exons))
+    def __init__(self, transcripts, samples=None):      
+        if isinstance(transcripts,isotools.transcriptome.Gene):
+            self.weights=np.zeros((len(samples), transcripts.n_transcripts))
+            for i,sa in enumerate(samples):
+                for j,tr in enumerate(transcripts.transcripts):
+                    try:
+                        self.weights[i,j]=sum(cov for cov in tr['samples'][sa]['range'].values())
+                    except KeyError:
+                        pass
+            transcripts=[tr['exons'] for tr in transcripts.transcripts]
+            
+        else:
+            self.weights=np.ones(len(transcripts)) #todo: is this necesary?
         open_exons=dict()
-        for tr in exons:
+        for tr in transcripts:
             for e in tr:
-                open_exons[e[0]]=open_exons.setdefault(e[0],0)+1
-                open_exons[e[1]]=open_exons.setdefault(e[1],0)-1
+                open_exons[e[0]]=open_exons.get(e[0],0)+1
+                open_exons[e[1]]=open_exons.get(e[1],0)-1
         #sort by value
         boundaries=sorted(open_exons)
         open_count=0
@@ -65,11 +61,11 @@ class SpliceGraph():
         #get the links
         start_idx={node.start:i for i,node in enumerate(self._graph)}
         end_idx={node.end:i for i,node in enumerate(self._graph)}
-        
-        self._tss=[start_idx[e[0][0]] for e in exons]
-        self._pas=[end_idx[e[-1][1]] for e in exons]
+        self._tss=[start_idx[e[0][0]] for e in transcripts]
+        self._pas=[end_idx[e[-1][1]] for e in transcripts]
+            
 
-        for i,tr in enumerate(exons):
+        for i,tr in enumerate(transcripts):
             for j,e in enumerate(tr):
                 if start_idx[e[0]]<end_idx[e[1]]: # psydojuctions within exon
                     self._graph[start_idx[e[0]]].suc[i]=start_idx[e[0]]+1
@@ -86,28 +82,30 @@ class SpliceGraph():
         idx=self._tss[i]
         exons=[[self._graph[idx].start, self._graph[idx].end]]
         while True:
+            if idx == self._pas[i]:
+                break
             idx=self._graph[idx].suc[i]
             if self._graph[idx].start==exons[-1][1]:#extend
                 exons[-1][1]=self._graph[idx].end
             else:
                 exons.append([self._graph[idx].start, self._graph[idx].end])
             #print(exons)
-            if idx == self._pas[i]:
-                break
+            
         return exons
 
     def restore_reverse(self, i):       #mainly for testing     
         idx=self._pas[i]
         exons=[[self._graph[idx].start, self._graph[idx].end]]
         while True:
+            if idx == self._tss[i]:
+                break
             idx=self._graph[idx].pre[i]
             if self._graph[idx].end==exons[-1][0]:#extend
                 exons[-1][0]=self._graph[idx].start
             else:
                 exons.append([self._graph[idx].start, self._graph[idx].end])
             #print(exons)
-            if idx == self._tss[i]:
-                break
+            
         exons.reverse()
         return exons
 
@@ -118,7 +116,7 @@ class SpliceGraph():
             return [] 
         #snd special case: single exon transcript: return all overlapping single exon transcripts form sg
         if len(exons)==1: 
-            return [self.ids[trid] for trid,(j1,j2) in enumerate(zip(self._tss,self._pas)) 
+            return [trid for trid,(j1,j2) in enumerate(zip(self._tss,self._pas)) 
                     if self.is_same_exon(j1,j2,trid) and self[j1].start<exons[0][1] and self[j2].end > exons[0][0]]
         # all junctions must be contained and no additional 
         tr=set(range(len(self._tss)))
@@ -138,7 +136,7 @@ class SpliceGraph():
         while j<len(self):#check last exon (no junction allowed)
             tr -= set(trid for trid, j2 in self[j].suc.items() if self[j].end != self[j2].start)
             j+=1    
-        return [self.ids[trid] for trid in tr]
+        return [trid for trid in tr]
 
 
     def is_same_exon(self, j1,j2,tr_nr):
@@ -284,8 +282,7 @@ class SpliceGraph():
                 j1=next(j for j in range(j1,len(self)) if self[j].end+size >=e1[1] )
                 #j1: first node intersecting size range of e1 end
             except StopIteration:
-                break
-            
+                break            
             shift=None
             while j1 < len(self) and self[j1].end - e1[1] <= size: # in case there are several nodes starting in the range around e1
                 shift_e1=self[j1].end - e1[1]
@@ -337,7 +334,7 @@ class SpliceGraph():
                     except IndexError:
                         print(long_idx)
                         raise
-                    yield gnode.end, self[target].start,w, longer_weight, [self.ids[i] for i in idx]
+                    yield gnode.end, self[target].start,w, longer_weight,  idx
         
     def splice_dependence(self, pval_th=0.05, min_sum=10):
         #starts[i]: list with paths that join at node i
@@ -380,47 +377,48 @@ class SpliceGraph():
 
     def get_splice_coverage(self):
         '''search for alternative paths in the splice graphs ("loops"), 
-        e.g. combinations of nodes A and B with more than one path from A to B'''
+        e.g. combinations of nodes A and B with more than one path from A to B.
+        returns the coverage of most direkt path and alternative paths, positions and type of alternative'''
+        alt_types=['ES','ASL', 'ASR','IR','ME'] # alternative types: intron retention, alternative splice site at left and right, exon skipping, mutually exclusive
+        inB_sets=[(set(),set())] #list of spliced and unspliced transcripts joining in B
+        for i, nB in enumerate(self[1:]):
+            inB_sets.append((set(),set()))
+            unspliced=self[i].end==nB.start
+            for tr,node_id in nB.pre.items():
+                inB_sets[i+1][unspliced and node_id==i].add(tr)
         for i, nA in enumerate(self):
-            junctions=sorted(list({j for j in nA.suc.values()})) # target nodes for junctions from node A ordered by intron size
+            junctions=sorted(list(set(nA.suc.values()))) # target nodes for junctions from node A ordered by intron size
             if len(junctions)<2:
                 continue #no alternative
-            j_sets={}#transcripts supporting the different  junctions
+            outA_sets={}#transcripts supporting the different  junctions
             for tr,node_id in nA.suc.items(): 
-                j_sets.setdefault(node_id,[]).append(tr)
-            log.debug(f'checking node {i}: {nA} ({junctions})')
+                outA_sets.setdefault(node_id,set()).add(tr)
+            unspliced=nA.end==self[junctions[0]].start
+            alternative=([],outA_sets[junctions[0]]) if unspliced else (outA_sets[junctions[0]],[])
+            log.debug(f'checking node {i}: {nA} ({list(zip(junctions,[outA_sets[j] for j in junctions]))})')
             for idx,joi in enumerate(junctions[1:]): # start from second, as first does not have an alternative
                 nB=self[joi]
-                #alternative=[tr for j in junctions[:idx+1] for tr in j_sets[j] if self._pas[tr] > joi]
-                alternative={j:[tr for tr in j_sets[j] if self._pas[tr] > joi] for j in junctions[:idx+1] }
-                log.debug(f'loop for {joi} from {nA.end} to {nB.start}: joi={j_sets[joi]}, alternatives={alternative}')
-                if any(a for a in alternative.values()):   
-                    #get type of alternative splicing                 
-                    alt_type=set()
-                    for j,j_set in alternative.items():
-                        if self[j].start==nA.end:
-                            if self[j].end==nB.start:
-                                alt_type.add('IR')#intron retention
-                            else:
-                                alt_type.add('AS1')#alternative splice site (5' on +, 3' on -)
-                        elif j+1==joi:
-                            if self[j].end==nB.start:
-                                alt_type.add('AS2')#alternative splice site (5' on -, 3' on +)
-                            else:
-                                alt_type.add('ES')#exon skiping
-                        else:
-                            #more than one node
-                            alt_type.add('UK')
-                        if not all(j in nB.pre for j in j_set):
-                            alt_type.add('ME')#mutually exclusive exon/sequence
-                    weight=self.weights[:,j_sets[joi]].sum(1)                            
-                    alt_weight=self.weights[:,[a for l in alternative.values() for a in l]].sum(1)
-                    yield weight, weight+alt_weight,nA.end,nB.start,alt_type
+                alternative=[{tr for tr in alternative[i] if self._pas[tr]>joi} for i in range(2)] #check that transcripts extend beyond nB
+                log.debug(alternative)
+                weight=self.weights[:,list(outA_sets[joi])].sum(1)  
+                found=[trL1.intersection(trL2) for trL1 in alternative for trL2 in inB_sets[joi]] #alternative transcript sets for the 4 types
+                found.append(set.union(*alternative)-inB_sets[joi][0]-inB_sets[joi][1]) #5th type: mutually exclusive
+                log.debug(f'checking junction {joi} (tr={outA_sets[joi]}) and found {found} at B={inB_sets[joi]}')                
+                for alt_type, alt in enumerate(found):
+                    if alt:
+                        alt_weight=self.weights[:,list(alt)].sum(1)
+                        log.debug(f'found loop {outA_sets[joi]} vs {alt} ({alt_type})')
+                        yield weight, weight+alt_weight,nA.end,nB.start,alt_type
+                alternative[0].update(outA_sets[joi]) #now transcripts supporting joi join the alternatives
+                
+                
+
                     
                 
 
 
     def get_splice_coverage_old(self):
+        'simpler version, but considering all transcripts spanning the junction (including transcripts where the splice sites are not exonic). Does not allow for classifying types'
         for i,first in enumerate(self):
             for j,second in ((idx,self[idx]) for idx in set(first.suc.values())):
                 if first.end== second.start: #only consider splice junctions (this excludes alternative tss and pas... todo)

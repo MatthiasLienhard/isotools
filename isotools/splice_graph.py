@@ -1,49 +1,17 @@
-#!/usr/bin/python3
-import itertools
-import warnings
 from itertools import combinations
-import argparse
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-
-from intervaltree import IntervalTree, Interval
 from tqdm import tqdm
 import logging
 import scipy.stats as stats
-from math import log10,pi
-import isotools.transcriptome 
-
-
-log=logging.getLogger(__name__)
-log.setLevel(logging.INFO)
-log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s: %(message)s')
-#log_file=logging.FileHandler('logfile.txt')
-log_stream=logging.StreamHandler()
-log_stream.setFormatter(log_format)
-log.handlers=[] #to prevent multiple messages upon reload
-log.addHandler(log_stream)
-
-def overlap(pos1,pos2,width, height):
-    if abs(pos1[0]-pos2[0])<width and abs(pos1[1]-pos2[1])<height:
-        return True
-    return False
+import logging
 
 class SpliceGraph():
-    def __init__(self, transcripts, samples=None):      
-        if isinstance(transcripts,isotools.transcriptome.Gene):
-            self.weights=np.zeros((len(samples), transcripts.n_transcripts))
-            for i,sa in enumerate(samples):
-                for j,tr in enumerate(transcripts.transcripts):
-                    try:
-                        self.weights[i,j]=sum(cov for cov in tr['samples'][sa]['range'].values())
-                    except KeyError:
-                        pass
-            transcripts=[tr['exons'] for tr in transcripts.transcripts]
-            
-        else:
+    def __init__(self, transcripts, samples=None, weights=None):      
+        if weights is None:
             self.weights=np.ones(len(transcripts)) #todo: is this necesary?
+        else:
+            self.weights=weights
         open_exons=dict()
         for tr in transcripts:
             for e in tr:
@@ -61,7 +29,7 @@ class SpliceGraph():
         #get the links
         start_idx={node.start:i for i,node in enumerate(self._graph)}
         end_idx={node.end:i for i,node in enumerate(self._graph)}
-        self._tss=[start_idx[e[0][0]] for e in transcripts]
+        self._tss=[start_idx[e[0][0]] for e in transcripts] #todo: this is missleading: on - strand this would not be the tss
         self._pas=[end_idx[e[-1][1]] for e in transcripts]
             
 
@@ -117,7 +85,7 @@ class SpliceGraph():
         #snd special case: single exon transcript: return all overlapping single exon transcripts form sg
         if len(exons)==1: 
             return [trid for trid,(j1,j2) in enumerate(zip(self._tss,self._pas)) 
-                    if self.is_same_exon(j1,j2,trid) and self[j1].start<exons[0][1] and self[j2].end > exons[0][0]]
+                    if self.is_same_exon(j1,j2,trid) and self[j1].start<=exons[0][1] and self[j2].end >= exons[0][0]]
         # all junctions must be contained and no additional 
         tr=set(range(len(self._tss)))
         j=0
@@ -147,9 +115,37 @@ class SpliceGraph():
         return True
 
 
+    def find_truncations(self):
+        truncated=set()
+        contains={}
+        starts=[set() for _ in range(len(self))]
+        for trid,idx in enumerate(self._tss):
+            starts[idx].add(trid)
+        for trid,idx in enumerate(self._tss):
+            if trid in truncated:
+                continue
+            start_in=set() #transcripts that are contained until idx
+            contains[trid]=set()
+            while True:
+                start_in.update(starts[idx])
+                contains[trid].update({c for c in start_in if self._pas[c]==idx}) # add fully contained
+                if idx == self._pas[trid]:
+                    contains[trid].remove(trid) #remove self
+                    truncated.update(contains[trid]) #those are not checkted 
+                    break
+                suc=self._graph[idx].suc
+                start_in={c for c in start_in if c in suc and suc[c] ==suc[trid] } #remove transcripts that split at idx
+                idx=suc[trid]
+        truncations={}
+        for big,smallL in contains.items():
+            if big not in truncated:
+                for trid in smallL:
+                    truncations.setdefault(trid,[]).append(big)
+        return truncations
 
 
     def get_alternative_splicing(self, exons,strand): 
+        'compares exons to splice graph and returns list of novel splicing events'
         #returns a list of novel splicing events or splice_identical or combination
         #t='novel exon','intron retention', 'novel exonic', 'novel intronic','splice identical','combination', 'truncation', 'extention'
         tr=self.search_transcript(exons)
@@ -172,7 +168,7 @@ class SpliceGraph():
                 end='3' if is_reverse else '5'
                 altsplice.setdefault(f'{end}\' truncation',[]).append([self[j0].start, exons[0][0]]) #at start (lower position)
         for i,_ in enumerate(exons[:-1]):                               
-            log.debug(f'check exon {i}:{exons[i]} between sg noded {j1}:{self[j1]} and {j2}:{self[j2]}')
+            logging.debug(f'check exon {i}:{exons[i]} between sg noded {j1}:{self[j1]} and {j2}:{self[j2]}')
             j1, exon_altsplice=self._check_exon(j1,j2,i==0,is_reverse,exons[i], exons[i+1])
             for k,v in exon_altsplice.items(): #e and the next if any
                 altsplice.setdefault(k,[]).extend(v)
@@ -202,7 +198,7 @@ class SpliceGraph():
         return altsplice
             
     def _check_exon(self,j1,j2,is_first,is_reverse, e, e2=None):
-        #checks wether exon is supported by splice graph between nodes j1 and j2
+        #checks whether exon is supported by splice graph between nodes j1 and j2
         #j1: index of first segment ending after exon start (i.e. first overlapping segment)
         #j2: index of last segment starting befor exon end (i.e. last overlapping  segment)
         if j1>j2: #e is not contained at all  -> intronic   
@@ -264,7 +260,7 @@ class SpliceGraph():
                         altsplice.setdefault('exon skipping',[]).append([introns[i][1], introns[i+1][0]])
                 else:
                     altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter
-        log.debug(f'check exon {e} resulted in {altsplice}')
+        logging.debug(f'check exon {e} resulted in {altsplice}')
         return j2, altsplice
             
     def fuzzy_junction(self,exons,size):
@@ -336,44 +332,37 @@ class SpliceGraph():
                         raise
                     yield gnode.end, self[target].start,w, longer_weight,  idx
         
-    def splice_dependence(self, pval_th=0.05, min_sum=10):
-        #starts[i]: list with paths that join at node i
-        #end[i]: list with paths that split at node i
-        # the lists contain tupels (i, [trids]) where i is the neighbour exon number (-1 at tss/pas) and a list of transcript numbers
-        n=len(self)
-        starts=[list() for _ in range(n)]
-        ends=[list() for _ in range(n)]
-        for i, gnode in enumerate(self):
-            if i in self._tss: 
-                starts[i].append((-1, [j for j,v in enumerate(self._tss) if v==i]))
-            if i in self._pas: 
-                ends[i].append((-1, [j for j,v in enumerate(self._pas) if v==i]))
-            starts[i].extend([(j, [k for k in gnode.pre if gnode.pre[k]==j]) for j in set(gnode.pre.values())])
-            ends[i].extend([(j, [k for k in gnode.suc if gnode.suc[k]==j]) for j in set(gnode.suc.values())])
-        found=list()
-        #test independence of starts[i] and ends[j] for i,j where i>=j
-        for i in range(len(starts)):
-            for j in range(i,len(ends)):
-                if len(starts[i])>1 and len(ends[j])>1:#there are options at both i and j   
-                    ma=np.zeros((len(starts[i]),len(ends[j]))) #the contingency table
-                    for ix, st in enumerate(starts[i]):
-                        for iy, en in enumerate(ends[j]):
-                            ma[ix][iy]=self.weights[:,[k for k in st[1] if k in en[1]]].sum()  #sum the weight for the test
-                    #fisher test requires 2x2 tables, and filter by row and colum sum
-                    ix=[i for i,s in enumerate(ma.sum(axis=1)) if s > min_sum]
-                    iy=[i for i,s in enumerate(ma.sum(axis=0)) if s > min_sum]
-                    for ixpair in combinations(ix, 2):
-                        for iypair in combinations(iy, 2):     
-                            subma=  ma[np.ix_(ixpair, iypair)]
-                            if any(subma.sum(0)<min_sum) or any(subma.sum(1)<min_sum):
-                                continue
-                            oddsratio, pvalue = stats.fisher_exact(subma)
-                            if pvalue<pval_th:
-                                #print(f'found {i}:{starts[i]} vs {j}:{ends[j]}\n{ma}\n:p={pvalue}\n-------')
-                                alt_from=['tss' if k == -1 else self[k].end for k,_ in [starts[i][idx] for idx in ixpair]]
-                                alt_to=['pas' if k == -1 else self[k].start for k,_ in [ends[j][idy] for idy in iypair]]
-                                found.append((pvalue,subma, alt_from,self[i].start,self[j].end,alt_to))
-        return found
+    def splice_dependence(self, sidx,min_cov):
+        tr_cov=self.weights[sidx,:].sum(0)
+        if tr_cov.sum()<2* min_cov:
+            return #no chance of getting above the coverage
+        jumps={}
+        for i,n in enumerate(self):
+            for trid,suc_i in n.suc.items():
+                if suc_i>i+1:
+                    jumps.setdefault((i,suc_i),set()).add(trid)
+        nonjumps={}
+        for j in jumps:
+            if tr_cov[list(jumps[j])].sum()<min_cov:
+                continue
+            jstart={trid for trid,suc_i in self[j[0]].suc.items() if suc_i<j[1]}
+            jend={trid for trid,pre_i in self[j[1]].pre.items() if pre_i>j[0]}
+            nojump_ids=jstart.intersection(jend)
+            if tr_cov[list(nojump_ids)].sum()>=min_cov:
+                nonjumps[j]=jstart.intersection(jend)
+        for j1 in nonjumps:
+            for j2 in (j for j in nonjumps if j[0]>j1[1]):
+                ma=np.array([
+                    tr_cov[list(jumps[j1].intersection(jumps[j2]))].sum(),
+                    tr_cov[list(jumps[j1].intersection(nonjumps[j2]))].sum(),
+                    tr_cov[list(nonjumps[j1].intersection(jumps[j2]))].sum(),
+                    tr_cov[list(nonjumps[j1].intersection(nonjumps[j2]))].sum()]).reshape((2,2))
+                if any(ma.sum(0)<min_cov) or any(ma.sum(1)<min_cov):
+                    continue
+                #oddsratio, pvalue = fisher_exact(ma)                
+                #log.debug('j1={}, j2={}, ma={}, or={}, p={}'.format(j1,j2,list(ma),oddsratio, pvalue))
+                yield ma,(self[j1[0]].end, self[j1[1]].start), (self[j2[0]].end, self[j2[1]].start)
+
 
     def get_splice_coverage(self):
         '''search for alternative paths in the splice graphs ("loops"), 
@@ -395,19 +384,19 @@ class SpliceGraph():
                 outA_sets.setdefault(node_id,set()).add(tr)
             unspliced=nA.end==self[junctions[0]].start
             alternative=([],outA_sets[junctions[0]]) if unspliced else (outA_sets[junctions[0]],[])
-            log.debug(f'checking node {i}: {nA} ({list(zip(junctions,[outA_sets[j] for j in junctions]))})')
+            logging.debug(f'checking node {i}: {nA} ({list(zip(junctions,[outA_sets[j] for j in junctions]))})')
             for idx,joi in enumerate(junctions[1:]): # start from second, as first does not have an alternative
                 nB=self[joi]
                 alternative=[{tr for tr in alternative[i] if self._pas[tr]>joi} for i in range(2)] #check that transcripts extend beyond nB
-                log.debug(alternative)
+                logging.debug(alternative)
                 weight=self.weights[:,list(outA_sets[joi])].sum(1)  
                 found=[trL1.intersection(trL2) for trL1 in alternative for trL2 in inB_sets[joi]] #alternative transcript sets for the 4 types
                 found.append(set.union(*alternative)-inB_sets[joi][0]-inB_sets[joi][1]) #5th type: mutually exclusive
-                log.debug(f'checking junction {joi} (tr={outA_sets[joi]}) and found {found} at B={inB_sets[joi]}')                
+                logging.debug(f'checking junction {joi} (tr={outA_sets[joi]}) and found {found} at B={inB_sets[joi]}')                
                 for alt_type, alt in enumerate(found):
                     if alt:
                         alt_weight=self.weights[:,list(alt)].sum(1)
-                        log.debug(f'found loop {outA_sets[joi]} vs {alt} ({alt_type})')
+                        logging.debug(f'found loop {outA_sets[joi]} vs {alt} ({alt_type})')
                         yield weight, weight+alt_weight,nA.end,nB.start,alt_type
                 alternative[0].update(outA_sets[joi]) #now transcripts supporting joi join the alternatives
                 
@@ -494,15 +483,3 @@ for tr in exons:
                     nodes[j][1].add(e[1]) #successor
         self._graph=[SpliceGraphNode(*pos, *link) for pos,link in zip(chain,nodes)]
 '''
-
-if __name__ == '__main__':
-    
-    arg_parser = argparse.ArgumentParser(
-        description='compare isoseq alignment to refseq')
-    arg_parser.add_argument('-i', '--bam_fn',    help='input bam file', type=str, default='/project/42/pacbio/hecatos_isoseq/05-gmap/all_merged_hq_isoforms.bam')
-    arg_parser.add_argument('-r', '--refseq_fn', help='refseq gtf file', type=str)
-    arg_parser.add_argument('-o', '--outsuffix', help='suffix for output file', type=str, default='_refseq_tab.txt')
-    arg_parser.add_argument('-a', '--analyse',   help='analyse table', type=str)
-    args=arg_parser.parse_args()
-    #isoseq=import_bam_transcripts(args.bam_fn, n_lines=1000)
-    #collapse_transcripts(isoseq)

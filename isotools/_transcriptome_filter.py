@@ -1,0 +1,116 @@
+from pysam import TabixFile, AlignmentFile, FastaFile
+from tqdm import tqdm
+
+default_gene_filter={'NOVEL_GENE':'reference',
+                    'EXPRESSED':'transcripts'}
+
+default_ref_transcript_filter={
+        'UNSPLICED':'len(exons)==1','MULTIEXON':'len(exons)>1',
+        'A_CONTENT':'downstream_A_content>.5'}
+
+default_transcript_filter={
+        'CLIPPED_ALIGNMENT':'any("clipped" in s for s in samples.values())',
+        'A_CONTENT':'downstream_A_content>.5', #more than 50% a
+        'RTTS':'template_switching and any(ts[2]<=10 and ts[2]/(ts[2]+ts[3])<.2 for ts in template_switching)', #less than 10 reads and less then 20% of total reads for at least one junction
+        'NONCANONICAL_SPLICING':'noncanonical_splicing',
+        'NOVEL_TRANSCRIPT':'annotation is None or "splice_identical" not in annotation["as"]',
+        'TRUNCATION':'truncated',
+        'REFERENCE':'annotation',# and "splice_identical" in annotation',
+        'UNSPLICED':'len(exons)==1','MULTIEXON':'len(exons)>1'}
+
+# filtering functions for the transcriptome class
+def add_biases(self, genome_fn):
+    'populates transcript["biases"] information, which can be used do create filters'
+    with FastaFile(genome_fn) as genome_fh:
+        for g in tqdm(self):                
+            if g.is_expressed:
+                ts_candidates=g.splice_graph.find_ts_candidates()
+                for start, end, js, ls, idx in ts_candidates:
+                    for tr in (g.transcripts[i] for i in idx):
+                        tr.setdefault('template_switching',[]).append((start, end, js, ls))
+                g.add_direct_repeat_len(genome_fh) 
+                g.add_noncanonical_splicing(genome_fh)
+                g.add_threeprime_a_content(genome_fh)
+                g.add_truncations()
+    self.infos['biases']=True # flag to check that the function was called
+
+def add_filter(self, transcript_filter=None,gene_filter=None, ref_transcript_filter=None):
+    'create filter flags which can be used by iter_transcripts'
+    gene_attributes={k for g in self for k in g.data.keys() }
+    tr_attributes={k for g in self for tr in g.transcripts for k in tr.keys() }
+    ref_tr_attributes={k for g in self if g.is_annotated for tr in g.ref_transcripts for k in tr.keys() }
+    tr_attributes.add('filter')
+    ref_tr_attributes.add('filter')
+    if  gene_filter is None:
+        gene_filter=default_gene_filter
+    if transcript_filter is None:
+        transcript_filter=default_transcript_filter
+    if ref_transcript_filter is None:
+        ref_transcript_filter=default_ref_transcript_filter
+    gene_ffun={label:_filter_function(gene_attributes, fun) for label,fun in gene_filter.items()}
+    tr_ffun={label:_filter_function(tr_attributes, fun) for label,fun in transcript_filter.items()}
+    reftr_ffun={label:_filter_function(ref_tr_attributes, fun) for label,fun in ref_transcript_filter.items()}
+    for g in tqdm(self):
+        g.add_filter(gene_ffun,tr_ffun,reftr_ffun)
+    self.infos['filter']={'gene_filter':gene_filter, 'transcript_filter':transcript_filter, 'ref_transcript_filter':ref_transcript_filter}
+
+def iter_genes(self, region=None,include=None, remove=None):
+    'iterate over the genes of a region, optionally applying filters'
+    if include or remove:
+        assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
+        assert not include or all(f in self.infos['filter']['gene_filter'] for f in include), 'not all filters to include found'
+        assert not remove or all(f in self.infos['filter']['gene_filter'] for f in remove), 'not all filters to remove found'
+    if region is None:
+        genes=self
+    elif region in self.data:
+        genes=self.data[region] #provide chromosome
+    else:
+        try:
+            chrom,start,end=region
+        except ValueError:
+            chrom, pos=region.split(':')
+            start, end=[int(v) for v in pos.split('-')]
+        except:
+            raise ValueError('incorrect region {} - specify as string "chr:start-end" or tuple ("chr",start,end)'.format(region))
+        else:
+            genes=self.data[chrom][start:end]
+    for g in genes:
+        if not include or any(f in include for f in g.data['filter']):
+            if not remove or all(f not in remove for f in g.data['filter']):        
+                yield g
+
+def iter_transcripts(self,region=None,include=None, remove=None):
+    'iterate over the transcripts of a region, optionally applying filters'   
+    if include or remove:
+        assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
+        all_filter=self.infos['filter']        
+    g_include=[f for f in include if f in all_filter['gene_filter']] if include else []
+    g_remove=[f for f in remove if f in all_filter['gene_filter']] if remove else []
+    t_include=[f for f in include if f not in all_filter['gene_filter']] if include else []
+    t_remove=[f for f in remove if f not in all_filter['gene_filter']] if remove else []
+    assert not t_include or all(f in all_filter['transcript_filter'] for f in t_include), 'not all filters to include found'
+    assert not t_remove or all(f in all_filter['transcript_filter'] for f in t_remove), 'not all filters to remove found'
+    for g in self.iter_genes(region, g_include, g_remove):
+        for i,tr in g.filter_transcripts(t_include, t_remove):
+            yield g,i,tr
+
+def iter_ref_transcripts(self,region=None,include=None, remove=None):
+    'iterate over the transcripts of a region, optionally applying filters'   
+    if include or remove:
+        assert 'ref_filter' in self.infos, 'no filter flags found - run .add_filter() method first'
+        all_filter=self.infos['filter']
+    g_include=[f for f in include if f in all_filter['gene_filter']] if include else []
+    g_remove=[f for f in remove if f in all_filter['gene_filter']] if remove else []
+    t_include=[f for f in include if f not in all_filter['gene_filter']] if include else []
+    t_remove=[f for f in remove if f not in all_filter['gene_filter']] if remove else []
+    assert all(f in all_filter['transcript_ref_filter'] for f in t_include), 'not all filters to include found'
+    assert all(f in all_filter['transcript_ref_filter'] for f in t_remove), 'not all filters to remove found'
+    for g in self.iter_genes(region, g_include, g_remove):
+        if g.is_annotated:
+            for i,tr in g.filter_ref_transcripts(t_include, t_remove):
+                yield g,i,tr
+
+
+def _filter_function(argnames, expression):
+    'converts a string e.g. "all x[0]/x[1]>3" into a function'
+    return eval (f'lambda {",".join(arg+"=None" for arg in argnames)}: bool({expression})\n',{},{})

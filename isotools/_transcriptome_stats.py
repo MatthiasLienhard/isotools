@@ -10,6 +10,9 @@ import pandas as pd
 import itertools
 from tqdm import tqdm
 
+import logging
+logger=logging.getLogger('isotools')
+
 # differential splicing
 def proportion_test(x,n):
     # Normal approximation
@@ -20,7 +23,7 @@ def proportion_test(x,n):
     p1=[x[i]/n[i] for i in range(2)]
     p0=(x[0]+x[1])/(n[0]+n[1])
     z=abs(p1[0]-p1[1])/np.sqrt(p0*(1-p0)*(1/n[0]+1/n[1]))
-    return(2*norm.sf(z)), (*p1,p0)#two sided alternative
+    return(2*norm.sf(z)), (p1[0],0,p1[1],0,p0,0)#two sided alternative
     
 def binom_lr_test(x,n):
     # likelihood ratio test
@@ -34,9 +37,8 @@ def binom_lr_test(x,n):
     l0 = binom.logpmf(x, n, p0).sum() 
     l1 = binom.logpmf(x,n, p1).sum()
     # calculate the pvalue (sf=1-csf(), 1df)
-    return chi2.sf(2*(l1-l0),1),(*p1,p0)
+    return chi2.sf(2*(l1-l0),1),(p1[0],0,p1[1],0,p0,0)
 
-# Differential splicing
 def loglike_betabinom(params, k,n):
     '''returns  log likelihood of betabinomial and its partial derivatives'''
     a, b = params
@@ -56,71 +58,57 @@ def betabinom_lr_test(x,n):
      '''    
     params=list()
     success=True
-    for xi,ni in itertools.chain(zip(x,n),((np.concatenate(x),np.concatenate(n)),)):
+    x_all, n_all=(np.concatenate(x),np.concatenate(n))
+    for xi,ni in itertools.chain(zip(x,n),((x_all,n_all),)):
         xi, ni=xi[ni>0], ni[ni>0] #avoid div by 0
         #x and n must be np arrays
         prob=xi/ni    
         m=prob.mean() #estimate initial parameters
-        d=max(prob.var(),1e-6) #max to avoid division by 0
-        e=(m**2-m+d) #helper          
-        #find ml estimates for a and b
-        mle = minimize(loglike_betabinom, x0=[-m*e/d,((m-1)*e)/d],bounds=((1e-6,None),(1e-6,None)),  args=(xi,ni),options={'maxiter': 250}, method='L-BFGS-B', jac=True)
-        params.append(mle.x)                
-        #mle = minimize(loglike_betabinom2, x0=[-d/(m*e),d/((m-1)*e)],bounds=((1e-9,None),(1e-9,None)),  args=(xi,ni),options={'maxiter': 250}, method='L-BFGS-B', tol=1e-6)
-        #params.append([1/p for p in mle.x])                
-        if not mle.success:
-            logging.debug(f'no convergence in betabinomial fit: k={xi}\nn={ni}\nparams={params}\nmessage={mle.message}') #should not happen to often, mainly with mu close to boundaries
-            success=False #prevent calculation of p-values based on non optimal parameters
+        d=prob.var()
+        if d==0: #just one sample?
+            params.append((m,None)) # in this case the betabinomial reduces to the binomial
+        else:
+            d=max(d,1e-6)# to avoid division by 0
+            e=(m**2-m+d) #helper          
+            #find ml estimates for a and b
+            mle = minimize(loglike_betabinom, x0=[-m*e/d,((m-1)*e)/d],bounds=((1e-6,None),(1e-6,None)),  args=(xi,ni),options={'maxiter': 250}, method='L-BFGS-B', jac=True)
+            params.append(mle.x)                
+            #mle = minimize(loglike_betabinom2, x0=[-d/(m*e),d/((m-1)*e)],bounds=((1e-9,None),(1e-9,None)),  args=(xi,ni),options={'maxiter': 250}, method='L-BFGS-B', tol=1e-6)
+            #params.append([1/p for p in mle.x])                
+            if not mle.success:
+                logger.debug(f'no convergence in betabinomial fit: k={xi}\nn={ni}\nparams={params}\nmessage={mle.message}') #should not happen to often, mainly with mu close to boundaries
+                success=False #prevent calculation of p-values based on non optimal parameters
     # calculate the log likelihoods
-    params_alt=[(a/(a+b),  a*b/((a+b)**2*(a+b+1))) for a,b in params] #get alternative parametrization (mu and disp)
+    params_alt=[(a/(a+b),  a*b/((a+b)**2*(a+b+1))) if b is not None else (a,0) for a,b in params ] #get alternative parametrization (mu and disp)
     if not success:
-        return np.nan, params_alt
+        return np.nan, [v for p in params_alt for v in p]
     try:
-        l0 = betabinom.logpmf(np.concatenate(x), np.concatenate(n), *params[2]).sum() 
-        l1 = betabinom.logpmf(x[0],n[0], *params[0]).sum()+betabinom.logpmf(x[1],n[1], *params[1]).sum()
-    except ValueError:
-        logging.critical(f'betabinom error: x={x}\nn={n}\nparams={params}')#should not happen
+        l0 = betabinom_ll(x_all,n_all, *params[2]).sum() 
+        l1 = betabinom_ll(x[0],n[0], *params[0]).sum()+betabinom_ll(x[1],n[1], *params[1]).sum()
+    except (ValueError, TypeError):
+        logger.critical(f'betabinom error: x={x}\nn={n}\nparams={params}')#should not happen
         raise
-    return chi2.sf(2*(l1-l0),2), params_alt #note that we need two degrees of freedom here as h0 hsa two parameters, h1 has 4
+    return chi2.sf(2*(l1-l0),2), [v for p in params_alt for v in p] #note that we need two degrees of freedom here as h0 hsa two parameters, h1 has 4
 
-def loglike_betabinom_alt(params, k,n):
-    #alternative parametrization with mean, disp - less efficient and seems to have numerical issues
-    m,v=params #0<m<1 and 0<v<m-m^2
-    e=(m**2-m+v) #helper
-    a=-m*e/v
-    b=((m-1)*e)/v
-    logpdf = gammaln(n+1) + gammaln(k+a) + gammaln(n-k+b) + gammaln(a+b) - \
-     (gammaln(k+1) + gammaln(n-k+1) + gammaln(a) + gammaln(b) + gammaln(n+a+b))
-    return - np.sum(logpdf) 
+def betabinom_ll(x,n,a,b):
+    if b is None:
+        return binom.logpmf(x, n, a).sum() 
+    else:
+        return betabinom.logpmf(x,n,a,b).sum() 
 
-def betabinom_lr_test_alt(x,n, disp=None): #alternative formulation
-    ''' alternative parametrization of betabinomial log likelihood function L(mu, disp), mainly for testing purposes
-     '''
-    
-    params=list()
-    d_range=(1e-6,None) if disp is None else (disp,disp)
-    for xi,ni in itertools.chain(zip(x,n),((np.concatenate(x),np.concatenate(n)),)):
-        xi, ni=xi[ni>0], ni[ni>0] #avoid div by 0
-        #x and n must be np arrays
-        #find good initialization parameters for a and b
-        prob=xi/ni
-        m=prob.mean()
-        d=max(prob.var(),1e-6) #to avoid division by 0
-        mle = minimize(loglike_betabinom_alt, x0=(m,d),bounds=((1e-6,1-1e-6),d_range),  args=(xi,ni),options={'maxiter': 250})
-        if not mle.success:
-            logging.debug(f'{mle.message}')
-        params.append(mle.x)                
-    try:
-        params_alt=[((-m*(m**2-m+v))/v,((m-1)*(m**2-m+v))/v)  for m,v in params]
-        l0 = betabinom.logpmf(np.concatenate(x), np.concatenate(n), *params_alt[2]).sum() 
-        l1 = betabinom.logpmf(x[0],n[0], *params_alt[0]).sum()+betabinom.logpmf(x[1],n[1], *params_alt[1]).sum()
-        
-    except ValueError:
-        logging.error(f'betabinom error: x={x}\nn={n}\nparams={params}')
-        raise
-    return chi2.sf(2*(l1-l0),2), params #note that we need two degrees of freedom here as h0 hsa two parameters, h1 has 4
-    
-def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.5, test=betabinom_lr_test,padj_method='fdr_bh'):
+
+TESTS={ 'betabinom_lr':betabinom_lr_test,
+        'binom_lr':binom_lr_test,
+        'proportions': proportion_test}
+
+
+def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='betabinom_lr',padj_method='fdr_bh'):
+    if isinstance(test,str):
+        try:
+            test=TESTS[test]
+        except KeyError:
+            raise ValueError('test must be one of %s', str(list(TESTS)))
+
     #multitest_default={}
     assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
     if isinstance(groups, dict):
@@ -136,7 +124,7 @@ def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.5, test=betabinom_
     notfound=[sa for grp in groups for sa in grp if sa not in self.samples]
     if notfound:
         raise ValueError(f"Cannot find the following samples: {notfound}")    
-    logging.info('testing differential splicing for {g}',g="vs".join(f'{groupnames[i]} ({len(groups[i])})' for i in range(2)) )
+    logger.info('testing differential splicing for {g}',g="vs".join(f'{groupnames[i]} ({len(groups[i])})' for i in range(2)) )
     sa_idx={sa:idx[0] for sa,idx in self._get_sample_idx().items()}
     grp_idx=[[sa_idx[sa] for sa in grp] for grp in groups]
     if min_sa<1:
@@ -148,7 +136,7 @@ def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.5, test=betabinom_
             try:
                 x=[junction_cov[grp] for grp in grp_idx]
             except IndexError:
-                logging.error(f'error at {g.name}:{start}-{end}')
+                logger.error(f'error at {g.name}:{start}-{end}')
                 raise
             n=[total_cov[grp] for grp in grp_idx]
             if sum((ni>=min_n).sum() for ni in n)<min_sa:
@@ -161,20 +149,22 @@ def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.5, test=betabinom_
             res.append(tuple(itertools.chain((g.name,g.id,g.chrom, start, end,splice_type[sti],pval),params ,
                 (val for lists in zip(x,n) for pair in zip(*lists) for val in pair ))))
     df=pd.DataFrame(res, columns= (['gene','gene_id','chrom', 'start', 'end','splice_type','pvalue']+ 
-            ['prop_'+gn for gn in groupnames+['total']]+  
+            [gn+part for gn in groupnames+['total'] for part in ['_fraction', '_disp'] ]+  
             [f'{w}_{sa}_{gn}' for gn,grp in zip(groupnames, groups) for sa in grp for w in ['cov', 'span_cov'] ]))
     try:
         mask = np.isfinite(df['pvalue'])
         padj = np.empty(mask.shape)
         padj.fill(np.nan) 
         padj[mask] = multi.multipletests(df.loc[mask,'pvalue'],method=padj_method)[1]
-        df.insert(5,'padj',padj)
+        df.insert(7,'padj',padj)
     except TypeError as e: #apparently this happens if df is empty...
-        logging.error('unexpected error during calculation of adjusted p-values: {e}' ,e=e)
+        logger.error('unexpected error during calculation of adjusted p-values: {e}' ,e=e)
     return df
 
 def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',region=None):
-    if samples is None:
+    if isinstance(samples, str):
+        samples=[samples]
+    elif samples is None:
         samples=self.samples
     sa_dict=self._get_sample_idx()
     sa_idx=[sa_dict[sa][0] for sa in samples]
@@ -183,7 +173,7 @@ def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',re
         for ma,j1,j2 in g.splice_graph.splice_dependence(sa_idx, min_cov):
             oddsratio, pval = fisher_exact(ma)    
             res.append((g.name,g.id,g.chrom, j1, j2,pval,oddsratio,ma))
-    df=pd.DataFrame(res, columns= (['gene','gene_id','chrom', 'junction1', 'junction1','pvalue', 'oddsratio','counts']))
+    df=pd.DataFrame(res, columns= (['gene','gene_id','chrom', 'junction1', 'junction2','pvalue', 'oddsratio','counts']))
     try:
         mask = np.isfinite(df['pvalue'])
         padj = np.empty(mask.shape)
@@ -191,7 +181,7 @@ def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',re
         padj[mask] = multi.multipletests(df.loc[mask,'pvalue'],method=padj_method)[1]
         df.insert(5,'padj',padj)
     except TypeError as e: #apparently this happens if df is empty...
-        logging.error('unexpected error during calculation of adjusted p-values: {e}' ,e=e)
+        logger.error('unexpected error during calculation of adjusted p-values: {e}' ,e=e)
     return df            
         
 
@@ -208,16 +198,16 @@ def embedding(self, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,sa
         s_filter=[True]*len(self.samples)
     if genes is None:        
         genes=[g for i,g in enumerate(self) if all(g.splice_graph.weights[s_filter].sum(1)>=min_cov)] #all covered genes
-        logging.info(f'found {len(genes)} genes > {min_cov} reads in all {sum(s_filter)} selected samples.')
+        logger.info(f'found {len(genes)} genes > {min_cov} reads in all {sum(s_filter)} selected samples.')
     else:
         n_in=len(genes)
         if isinstance(genes, dict):
             joi=genes
         genes=[self[g] for i,g in enumerate(genes) if g in self and all(self[g].splice_graph.weights[s_filter].sum(1)>=min_cov)] #all covered genes
-        logging.info(f'{len(genes)} of {n_in} genes have > {min_cov} reads in all {sum(s_filter)} selected samples.')
+        logger.info(f'{len(genes)} of {n_in} genes have > {min_cov} reads in all {sum(s_filter)} selected samples.')
     if n_subsample is not None and n_subsample<len(genes):
         genes=[genes[i] for i in np.random.choice(range(len(genes)), n_subsample)]
-        logging.info(f'sampled {n_subsample} random genes')        
+        logger.info(f'sampled {n_subsample} random genes')        
     data={}
     # since junctions of a single gene are often correlated, I select one top variable junction per gene
     for g in tqdm(genes):   
@@ -245,7 +235,7 @@ def embedding(self, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,sa
                 data[top_idx]=jcov[top_idx]
     data=pd.DataFrame(data,index=self.infos['sample_table'].loc[s_filter,'name'])
     #filter for highest variance
-    logging.info(f'selecting the most variable junction from {min(data.shape[1],n_top_var)} genes.')
+    logger.info(f'selecting the most variable junction from {min(data.shape[1],n_top_var)} genes.')
     topvar=data[data.var(0).nlargest(n_top_var).index]
 
     #compute embedding
@@ -463,7 +453,7 @@ def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1
         try:
             ref_acontent=[tr['downstream_A_content'] for _,_,tr in self.iter_ref_transcripts(**ref_filter)]
         except KeyError:
-            logging.error('No A content for reference found. Run add_biases for reference first')
+            logger.error('No A content for reference found. Run add_biases for reference first')
         else:
             counts['reference']=np.histogram(ref_acontent, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})

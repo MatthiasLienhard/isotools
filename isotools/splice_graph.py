@@ -5,6 +5,7 @@ from tqdm import tqdm
 import logging
 import scipy.stats as stats
 import logging
+logger=logging.getLogger('isotools')
 
 class SpliceGraph():
     def __init__(self, transcripts, samples=None, weights=None):      
@@ -168,7 +169,7 @@ class SpliceGraph():
                 end='3' if is_reverse else '5'
                 altsplice.setdefault(f'{end}\' truncation',[]).append([self[j0].start, exons[0][0]]) #at start (lower position)
         for i,_ in enumerate(exons[:-1]):                               
-            logging.debug(f'check exon {i}:{exons[i]} between sg noded {j1}:{self[j1]} and {j2}:{self[j2]}')
+            logger.debug(f'check exon {i}:{exons[i]} between sg noded {j1}:{self[j1]} and {j2}:{self[j2]}')
             j1, exon_altsplice=self._check_exon(j1,j2,i==0,is_reverse,exons[i], exons[i+1])
             for k,v in exon_altsplice.items(): #e and the next if any
                 altsplice.setdefault(k,[]).extend(v)
@@ -260,7 +261,7 @@ class SpliceGraph():
                         altsplice.setdefault('exon skipping',[]).append([introns[i][1], introns[i+1][0]])
                 else:
                     altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter
-        logging.debug(f'check exon {e} resulted in {altsplice}')
+        logger.debug(f'check exon {e} resulted in {altsplice}')
         return j2, altsplice
             
     def fuzzy_junction(self,exons,size):
@@ -384,19 +385,19 @@ class SpliceGraph():
                 outA_sets.setdefault(node_id,set()).add(tr)
             unspliced=nA.end==self[junctions[0]].start
             alternative=([],outA_sets[junctions[0]]) if unspliced else (outA_sets[junctions[0]],[])
-            logging.debug(f'checking node {i}: {nA} ({list(zip(junctions,[outA_sets[j] for j in junctions]))})')
+            logger.debug(f'checking node {i}: {nA} ({list(zip(junctions,[outA_sets[j] for j in junctions]))})')
             for idx,joi in enumerate(junctions[1:]): # start from second, as first does not have an alternative
                 nB=self[joi]
                 alternative=[{tr for tr in alternative[i] if self._pas[tr]>joi} for i in range(2)] #check that transcripts extend beyond nB
-                logging.debug(alternative)
+                logger.debug(alternative)
                 weight=self.weights[:,list(outA_sets[joi])].sum(1)  
                 found=[trL1.intersection(trL2) for trL1 in alternative for trL2 in inB_sets[joi]] #alternative transcript sets for the 4 types
                 found.append(set.union(*alternative)-inB_sets[joi][0]-inB_sets[joi][1]) #5th type: mutually exclusive
-                logging.debug(f'checking junction {joi} (tr={outA_sets[joi]}) and found {found} at B={inB_sets[joi]}')                
+                logger.debug(f'checking junction {joi} (tr={outA_sets[joi]}) and found {found} at B={inB_sets[joi]}')                
                 for alt_type, alt in enumerate(found):
                     if alt:
                         alt_weight=self.weights[:,list(alt)].sum(1)
-                        logging.debug(f'found loop {outA_sets[joi]} vs {alt} ({alt_type})')
+                        logger.debug(f'found loop {outA_sets[joi]} vs {alt} ({alt_type})')
                         yield weight, weight+alt_weight,nA.end,nB.start,alt_type
                 alternative[0].update(outA_sets[joi]) #now transcripts supporting joi join the alternatives
                 

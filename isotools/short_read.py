@@ -2,6 +2,8 @@
 from pysam import TabixFile, AlignmentFile, FastaFile
 from ._utils import junctions_from_cigar
 import numpy as np
+import logging
+logger=logging.getLogger('isotools')
 
 
 class Coverage: 

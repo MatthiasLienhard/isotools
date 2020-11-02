@@ -4,50 +4,103 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import numpy as np
+from math import log10
+import logging
+logger=logging.getLogger('isotools')
 
+def _label_overlap(pos1,pos2,width, height):
+    if abs(pos1[0]-pos2[0])<width and abs(pos1[1]-pos2[1])<height:
+        return True
+    return False
+
+
+DEFAULT_JPARAMS=[   {'color':'lightgrey'  ,'lwd':1,'draw_label':False}, #low coverage junctions
+                    {'color':'green' ,'lwd':1,'draw_label':True},  #high coverage junctions
+                    {'color':'purple','lwd':2,'draw_label':True}]  #junctions of interest
+DEFAULT_PARAMS=dict(high_cov_th=.05, text_width=.02, arc_type='both',text_height=1, exon_color='green')
+
+def extend_params(params):
+    if params is None:
+        params=dict()
+    params.setdefault('jparams',[{},{},{}])
+    #jparams=[params.pop(k,jparams[i]) for i,k in enumerate(['low_cov_junctions','high_cov_junctions','interest_junctions'])]
+    for i,k1 in enumerate(['low_cov_junctions','high_cov_junctions','interest_junctions']):
+        params['jparams'][i]=params.pop(k1,params['jparams'][i])
+        for k2,v in DEFAULT_JPARAMS[i].items():
+            params['jparams'][i].setdefault(k2,v)
+    for k,v in DEFAULT_PARAMS.items():
+        params.setdefault(k,v)
+    return params
+
+def get_index(samples,names):
+    if not samples:
+        return {}
+    idx={sa:i for i,sa in names.items()}
+    if isinstance(samples,list):
+        samples=[[s] if isinstance(s,str) else s for s in samples]
+        samples={','.join(sl):sl for sl in samples}
+    try:
+        samples={n:[idx[sa] for sa in sl] for n,sl in samples.items()}
+    except KeyError:
+        notfound=list({sa for sl in samples for sa in sl if sa not in idx})
+        logger.error('did not find the following samples: %s',','.join(notfound))
+        raise
+    return samples
 
 #sashimi plots
-def sashimi_plot_bam(self,ax=None,text_width=.02, text_height=1, title=None,group=None, high_cov_th=.1,chrom_map=None,junctions_of_interest=None, exon_color='blue', 
-                low_cov_junctions={'color':'grey','lwd':1,'draw_label':False} , 
-                high_cov_junctions={'color':'green','lwd':1,'draw_label':True}, 
-                interest_junctions={'color':'purple','lwd':2,'draw_label':True}):
-    jparams=[low_cov_junctions,high_cov_junctions,interest_junctions]
-    delta=np.zeros(self.end-self.start)
-    chrom=self.chrom
-    if title is None:
-        title=self.name    
-    if text_width<1:
-        text_width=(self.end-self.start)*text_width
-    #cov=np.array([sum(illu[pos] for i, illu in enumerate(self.illumina_coverage) if groups is None or i in groups) for pos in range(self.start, self.end)])
-    cov=np.zeros(self.end-self.start)
-    junctions={}
-    for i,illu in enumerate(self.illumina_coverage):
-        if group is None or i in group:
-            cov+=illu.profile
-            for k,v in illu.junctions.items():            
-                junctions[k]=junctions.get(k,0)+v     
-                   
-    total_weight=max(cov)
-    if high_cov_th<1:
-        high_cov_th=high_cov_th*total_weight
 
-    if ax is None:
-        fig,ax = plt.subplots(1)
+def sashimi_plot(self,samples=None,short_read_samples=None,gene_track=True,long_read_params=None, short_read_params=None ,junctions_of_interest=None, x_range=None):
+    gene_track=bool(gene_track)
+    if samples is None and short_read_samples is None:
+        samples={'all':self._transcriptome.samples} #all samples grouped
+    samples=get_index(samples, self._transcriptome.sample_table.name)
+    short_read_samples=get_index(short_read_samples, self._transcriptome.infos.get('short_reads',{}))    
+    long_read_params=extend_params(long_read_params)
+    short_read_params=extend_params(short_read_params)
+    if x_range is None:
+        x_range=(self.start-100, self.end+100)
+
+    f,axes=plt.subplots(len(samples)+len(short_read_samples) +gene_track)
+
+    if gene_track:
+        self.gene_track(ax=axes[0],x_range=x_range)
         
-    ax.fill_between(range(self.start, self.end), 0, np.log10(cov, where=cov>0, out=np.nan*cov),facecolor=exon_color )
+
+    for i,(sname,sidx) in enumerate(samples.items()):
+        _sashimi_plot_long_reads(self.splice_graph,sidx,sname,axes[i+gene_track],junctions_of_interest,x_range=x_range, **long_read_params)
+        
+
+    for i,(sname,sidx) in enumerate(short_read_samples.items()):
+        _sashimi_plot_short_reads([self.short_reads[idx] for idx in sidx],sname,axes[i+len(samples)+gene_track],junctions_of_interest,x_range=x_range, **long_read_params)
+        
     
+    return f,axes
+
+
+def _sashimi_plot_short_reads(short_reads,      title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th, text_width, arc_type,text_height):
+    #jparams=[low_cov_junctions,high_cov_junctions,interest_junctions]
+    start=short_reads[0].reg[1]
+    end=short_reads[0].reg[2]
+    delta=np.zeros(end-start)
+    cov=np.zeros(end-start)
+    junctions={}
+    for sr_cov in enumerate(short_reads):
+        cov+=sr_cov.profile
+        for k,v in sr_cov.junctions.items():            
+            junctions[k]=junctions.get(k,0)+v                      
+    if high_cov_th<1:
+        high_cov_th*=max(cov)
+    #exons
+    ax.fill_between(range(start, end), 0, np.log10(cov, where=cov>0, out=np.nan*cov),facecolor=exon_color )    
+    #junctions
     textpositions=[]
     for (x1,x2),w in junctions.items():
-        if x1<=self.start or x2>=self.end:
-            #todo: this seems to happen at some chrMT genes?
-            logging.debug(f'attempt to plot junction ({(x1,x2)}) outside of gene: {self.__str__()}')
-            continue
-        y1=cov[x1-self.start-1]+.5
-        y2=cov[x2-self.start]+.5
+        y1=cov[x1-start-1]+.5
+        y2=cov[x2-start]+.5
         center=(x1+x2)/2 
         width=x2-x1
         bow_height=text_height
-        while any(label_overlap((center,log10(max(y1,y2))+bow_height), tp,text_width,text_height) for tp in textpositions):
+        while any(_label_overlap((center,log10(max(y1,y2))+bow_height), tp,text_width,text_height) for tp in textpositions):
             bow_height+=text_height
         textpositions.append((center, log10(max(y1,y2))+bow_height))
         if y1<y2: 
@@ -71,7 +124,7 @@ def sashimi_plot_bam(self,ax=None,text_width=.02, text_height=1, title=None,grou
         #bbox_list.append(txt.get_tightbbox(renderer = fig.canvas.renderer))
 
     
-    ax.set_xlim(self.start-100, self.end+100)
+    ax.set_xlim(*x_range)
     if textpositions:
         ax.set_ylim(-text_height,max(tp[1] for tp in textpositions)+2*text_height)
     else:
@@ -82,36 +135,24 @@ def sashimi_plot_bam(self,ax=None,text_width=.02, text_height=1, title=None,grou
     #ax.ticklabel_format(axis='x', style='sci',scilimits=(6,6))
     ax.set_title(title)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
-    return(ax)
 
-def sashimi_plot(self, ax=None,text_width=.02, arc_type='coverage',text_height=1,
-                title=None,group=None,  high_cov_th=.1,junctions_of_interest=None,  exon_color='blue', 
-                low_cov_junctions={'color':'grey','lwd':1,'draw_label':False} , 
-                high_cov_junctions={'color':'green','lwd':1,'draw_label':True}, 
-                interest_junctions={'color':'purple','lwd':2,'draw_label':True}):
-    jparams=[low_cov_junctions,high_cov_junctions,interest_junctions]
+def _sashimi_plot_long_reads(splice_graph,sidx, title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th, text_width, arc_type,text_height):
     
-    sg=self.splice_graph
-    if title is None:
-        title=self.name
-    if group is None:
-        group=list(range(sg.weights.shape[0])) #all
-    
-    boxes=[(node[0], node[1], sg.weights[np.ix_(group,[i for i in set(node[2]).union(node[3])])].sum()) for node in sg]
+    boxes=[(node[0], node[1], splice_graph.weights[np.ix_(sidx,[i for i in set(node[2]).union(node[3])])].sum()) for node in splice_graph]
     if text_width<1:
-        text_width=(sg[-1][1]-sg[0][0])*text_width
-    total_weight=sg.weights[group,:].sum()
+        text_width=(splice_graph[-1][1]-splice_graph[0][0])*text_width
+    total_weight=splice_graph.weights[sidx,:].sum()
     if high_cov_th<1:
         high_cov_th=high_cov_th*total_weight
     
-    #idx=list(range(len(sg)))
+    #idx=list(range(len(splice_graph)))
     arcs=[]
-    for i,(_,ee, _, suc) in enumerate(sg._graph):
+    for i,(_,ee, _, suc) in enumerate(splice_graph._graph):
         weights={}
         for tr,next_i in suc.items():
             weights.setdefault(next_i,0)
-            weights[next_i]+=sg.weights[np.ix_(group,[tr])].sum()
-        arcs_new=[(ee,boxes[i][2],sg[next_i][0],boxes[next_i][2],w) for next_i, w in weights.items() if sg[next_i][0]>ee and w>0]
+            weights[next_i]+=splice_graph.weights[np.ix_(sidx,[tr])].sum()
+        arcs_new=[(ee,boxes[i][2],splice_graph[next_i][0],boxes[next_i][2],w) for next_i, w in weights.items() if splice_graph[next_i][0]>ee and w>0]
         if arcs_new:
             arcs.extend(arcs_new)
     if ax is None:
@@ -126,7 +167,7 @@ def sashimi_plot(self, ax=None,text_width=.02, arc_type='coverage',text_height=1
         center=(x1+x2)/2 
         width=x2-x1
         bow_height=text_height
-        while any(label_overlap((center,log10(max(y1,y2))+bow_height), tp,text_width,text_height) for tp in textpositions):
+        while any(_label_overlap((center,log10(max(y1,y2))+bow_height), tp,text_width,text_height) for tp in textpositions):
             bow_height+=text_height
         textpositions.append((center, log10(max(y1,y2))+bow_height))
         if y1<y2: 
@@ -157,8 +198,6 @@ def sashimi_plot(self, ax=None,text_width=.02, arc_type='coverage',text_height=1
                     bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)).set_clip_on(True)
         #bbox_list.append(txt.get_tightbbox(renderer = fig.canvas.renderer))
 
-    #ax.set_yscale('log') 
-    ax.set_xlim(self.start-100, self.end+100)
     if textpositions:
         ax.set_ylim(-text_height,max(tp[1] for tp in textpositions)+2*text_height)
     else:
@@ -169,17 +208,18 @@ def sashimi_plot(self, ax=None,text_width=.02, arc_type='coverage',text_height=1
 
 
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
-
+    ax.set_xlim(*x_range)
     #ax.ticklabel_format(axis='x', style='sci',scilimits=(6,6))
     #ax.set_xscale(1e-6, 'linear')
     ax.set_title(title)
-    return(ax)
 
-def gene_track(self, ax=None,title=None, draw_exon_numbers=True, color='blue'):
+def gene_track(self, ax=None,title=None, draw_exon_numbers=True, color='blue',x_range=None):
     contrast='white' if np.mean(plt_col.to_rgb(color))<.5 else 'black'
     if ax is None:
         _,ax = plt.subplots(1)    
     i=0
+    if x_range is None:
+        x_range=(self.start-100, self.end+100)
     for tr in self.ref_transcripts:
         #line from TSS to PAS at 0.25
         ax.plot((tr['exons'][0][0], tr['exons'][-1][1]), [i+.25]*2, color=color)
@@ -207,10 +247,10 @@ def gene_track(self, ax=None,title=None, draw_exon_numbers=True, color='blue'):
         title=self.name
     ax.set_title(title)
     ax.set(frame_on=False)   
-    ax.set_yticks([i+.25 for i in range(self.n_ref_transcript)])
-    ax.set_yticklabels(tr['transcript_name'] for tr in self.ref_transcripts) #todo: refence transcript names
+    ax.set_yticks([i+.25 for i in range(self.n_ref_transcripts)])
+    ax.set_yticklabels(tr['transcript_name'] if 'transcript_name' in tr else f'transcript {i}' for i,tr in enumerate(self.ref_transcripts) ) 
     ax.tick_params(left=False)
     ax.set_ylim(-.5,self.n_ref_transcripts+1)
-    ax.set_xlim(self.start-100, self.end+100)
+    ax.set_xlim(*x_range)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
     return ax

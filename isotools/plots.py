@@ -7,12 +7,7 @@ import pandas as pd
 import numpy as np
 from math import log10
 import logging
-
-
-def label_overlap(pos1,pos2,width, height):
-    if abs(pos1[0]-pos2[0])<width and abs(pos1[1]-pos2[1])<height:
-        return True
-    return False
+logger=logging.getLogger('isotools')
 
     
 def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5), splice_types=None):
@@ -22,32 +17,39 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
     f,axs=plt.subplots(*grid_shape)
     axs=axs.flatten()
     x=[i/1000 for i in range(1001)]
-    group_names=[c[5:] for c in result_table.columns if c[:5]=='prop_'][:2]
+    group_names=[c[:-9] for c in result_table.columns if c[-9:]=='_fraction'][:2]
     groups={gn:[c[4:] for c in  result_table.columns if c[:4]=='cov_' and c.endswith(gn)] for gn in group_names}
+    logger.debug('groups: %s',str(groups))
     for idx,row in result_table.iterrows():
-        logging.debug(f'plotting {idx}: {row.gene}')
+        logger.debug(f'plotting {idx}: {row.gene}')
         if splice_types is not None and row.splice_type not in splice_types:
             continue
         if row.gene in set(plotted.gene):
             continue
-        params_alt={gn:row[f'prop_{gn}'] for gn in group_names}
+        params_alt={gn:(row[f'{gn}_fraction'],row[f'{gn}_disp']) for gn in group_names}
         psi_gr={gn:[row[f'cov_{sa}']/row[f'span_cov_{sa}'] for sa in gr if row[f'span_cov_{sa}']>0] for gn,gr in groups.items()}
         support={s: sum(abs(i-params_alt[s][0]) < abs(i-params_alt[o][0]) for i in psi_gr[s]) for s,o in zip(group_names, reversed(group_names))}
         if any(sup<min_support for sup in support.values()):
-            logging.debug(f'skipping {row.gene} with {support} supporters')
+            logger.debug(f'skipping {row.gene} with {support} supporters')
             continue
         if abs(params_alt[group_names[0]][0]-params_alt[group_names[1]][0])<min_diff:  
-            logging.debug(f'{row.gene} with {"vs".join(str(p[0]) for p in params_alt.values())}')  
+            logger.debug(f'{row.gene} with {"vs".join(str(p[0]) for p in params_alt.values())}')  
             continue
         #get the paramters for the beta distiribution
-        params={gn:((-m*(m**2-m+v))/v,((m-1)*(m**2-m+v))/v)  for gn,(m,v) in params_alt.items()}
         #print(param)
         ax=axs[len(plotted)]
         #ax.boxplot([mut,wt], labels=['mut','wt'])
         sns.swarmplot(data=pd.DataFrame(list(psi_gr.values()), index=psi_gr).T, ax=ax, orient='h')
         for i,gn in enumerate(group_names):
-            ax2 = ax.twinx()  # instantiate a second axes that shares the same x-axis
-            ax2.plot(x, beta(*params[gn]).pdf(x), color=f'C{i}')
+            if params_alt[gn][1]>0:
+                m,v=params_alt[gn]
+                params=((-m*(m**2-m+v))/v,((m-1)*(m**2-m+v))/v)  
+                y=beta(*params).pdf(x)
+                ax2 = ax.twinx()  # instantiate a second axes that shares the same x-axis
+            else:
+                y=np.zeros(len(x))
+                y[int(params_alt[gn][0]*(len(x)-1))]=1
+            ax2.plot(x,y , color=f'C{i}')
             ax2.tick_params( right=False, labelright=False)
         ax.set_title(f'{row.gene} {row.splice_type}\nFDR={row.padj:.5f}')
         plotted=plotted.append(row)

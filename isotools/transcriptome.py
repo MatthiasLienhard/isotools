@@ -5,6 +5,9 @@ from ._transcriptome_io import import_gtf_transcripts, import_gff_transcripts
 from .gene import Gene
 from intervaltree import IntervalTree, Interval
 import pandas as pd
+import logging
+logger=logging.getLogger('isotools')
+
 # as this class has diverse functionality, its split among:
 # transcriptome.py (this file- initialization and user level basic functions)
 # _transcriptome_io.py (input/output primary data files/tables)
@@ -36,7 +39,7 @@ class Transcriptome:
             file_format=os.path.splitext(reference_file)[1].lstrip('.')
             if file_format=='gz':
                 file_format=os.path.splitext(reference_file[:-3])[1].lstrip('.')
-        logging.info(f'importing reference from {file_format} file {reference_file}')
+        logger.info(f'importing reference from {file_format} file {reference_file}')
         if file_format == 'gtf':
             tr.data,tr.infos= import_gtf_transcripts(reference_file,tr,  **kwargs)
         elif file_format in ('gff', 'gff3'):
@@ -45,7 +48,7 @@ class Transcriptome:
             genes,infos= pickle.load(open(reference_file, 'rb'))
             tr=next(iter(next(iter(genes.values()))))._transcriptome            
             if [k for k in infos if k!='reference_file']:
-                logging.warning('the pickle file seems to contain additional expression information... extracting refrence')
+                logger.warning('the pickle file seems to contain additional expression information... extracting refrence')
                 ref_data=tr._extract_reference()
                 tr.data,tr.infos=tr._extract_reference(), {'reference_file':infos['reference_file']}
         return tr
@@ -53,7 +56,7 @@ class Transcriptome:
     @classmethod
     def load(cls, pickle_file):
         'restores the information of a transcriptome from a pickle file'
-        logging.info('loading transcriptome from '+pickle_file)
+        logger.info('loading transcriptome from '+pickle_file)
         data, infos=pickle.load(open(pickle_file, 'rb'))
         tr=next(iter(next(iter(data.values()))))._transcriptome
         return tr
@@ -62,7 +65,7 @@ class Transcriptome:
         'saves the reference information of a transcriptome in a pickle file'
         if fn is None:
             fn=self.infos['reference_file']+'.isotools.pkl'
-        logging.info('saving reference to '+fn)       
+        logger.info('saving reference to '+fn)       
         ref_data=self._extract_reference() 
         pickle.dump((ref_data,{'reference_file':self.infos['reference_file']}), open(fn, 'wb'))
 
@@ -78,7 +81,7 @@ class Transcriptome:
         'saves the information of a transcriptome (including reference) in a pickle file'
         if fn is None:
             fn=self.infos['file_name']+'.isotools.pkl'
-        logging.info('saving transcriptome to '+fn)
+        logger.info('saving transcriptome to '+fn)
         pickle.dump((self.data,self.infos), open(fn, 'wb'))
     
     def make_index(self):
@@ -86,7 +89,7 @@ class Transcriptome:
         idx=dict()
         for g in self:
             if g.id in idx: # at least id should be unique - maybe raise exception?
-                logging.warn(f'{g.id} seems to be ambigous: {str(self[g.id])} vs {str(g)}')
+                logger.warn(f'{g.id} seems to be ambigous: {str(self[g.id])} vs {str(g)}')
             idx[g.name] = g
             idx[g.id]=g
         self._idx=idx

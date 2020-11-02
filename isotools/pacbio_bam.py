@@ -6,8 +6,8 @@ import hashlib
 import struct
 from Bio import bgzf
 import logging
+logger=logging.getLogger('isotools')
 
-log=logging.getLogger(__name__)
 log.setLevel(logging.INFO)
 log_format=logging.Formatter('%(levelname)s: [%(asctime)s] %(name)s: %(message)s')
 #log_file=logging.FileHandler('logfile.txt')

@@ -5,12 +5,26 @@ import numpy as np
 import copy
 from .splice_graph import SpliceGraph
 from ._utils import splice_identical
+from .short_read import Coverage
+
 import logging
+logger=logging.getLogger('isotools')
+
+def _eval_filter_fun(fun,name,args):
+    #print a more specific error message if something went wrong with the filter
+    try:
+        return fun(**args)
+    except Exception as e:
+        logger.error('error when evaluating filter %s with arguments %s: %s',name,str(args), str(e))
+        raise           #either stop evaluation 
+        #return False   #or continue
+
 
 class Gene(Interval):
     'this class stores all gene information and transcripts. It is derived from intervaltree.Interval'
     required_infos=['ID','name', 'chr', 'strand']
 
+    ###initialization
     def __new__(cls,begin, end, data, transcriptome):
         return super().__new__(cls,begin, end, data) #required as Interval (and Gene) is immutable
 
@@ -23,13 +37,25 @@ class Gene(Interval):
     def __repr__(self):
         return object.__repr__(self)
 
+    from ._gene_plots import sashimi_plot,gene_track
+
+    def short_reads(self,idx):
+        try:
+            return self.data['short_reads'][idx]
+        except (KeyError, IndexError):
+            self.data.setdefault('short_reads',[])
+            srdf=self._transcriptome.infos['short_reads']
+            for i in range(len(self.data['short_reads']),len(srdf)):
+                self.data['short_reads'].append(Coverage.from_bam(srdf.file[i],self) for bamfile in srdf.values())
+        return self.data['short_reads'][idx]
+
     def add_filter(self, gene_filter,transcript_filter,ref_transcript_filter):   
         'add the filter flags'
-        self.data['filter']=[name for name,fun in gene_filter.items() if  fun(**self.data)]
+        self.data['filter']=[name for name,fun in gene_filter.items() if  _eval_filter_fun(fun,name,self.data)]
         for tr in self.transcripts:
-            tr['filter']=[name for name,fun in transcript_filter.items() if fun(**tr)]
+            tr['filter']=[name for name,fun in transcript_filter.items() if _eval_filter_fun(fun,name,tr)]
         for tr in self.ref_transcripts:
-            tr['filter']=[name for name,fun in ref_transcript_filter.items() if fun(**tr)]
+            tr['filter']=[name for name,fun in ref_transcript_filter.items() if _eval_filter_fun(fun,name,tr)]
 
     def filter_transcripts(self, include, remove):
         ''' iterator over the transcripts of the gene. Filtering implemented by passing lists of flags to the parameters:
@@ -59,8 +85,7 @@ class Gene(Interval):
                 exons[i+1][0]+=sh
                 
         return shifts
-        
-
+ 
     def to_gtf(self, source='isoseq', use_gene_name=False, include=None, remove=None):
         'creates the gtf lines of the gene as strings'
         info={'gene_id':self.name if use_gene_name else self.id}
@@ -76,9 +101,7 @@ class Gene(Interval):
         if lines:
             lines.append(gene)
         return(lines)
-    
-
-
+ 
     def add_noncanonical_splicing(self, genome_fh):
         '''for all transcripts, add the the index and sequence of noncanonical (i.e. not GT-AG) splice sites
         i.e. save the dinucleotides of donor and aceptor as XX-YY string in the transcript biases dicts
@@ -211,7 +234,6 @@ class Gene(Interval):
     def coverage(self):
         return self.splice_graph.weights
 
-
     @property
     def gene_coverage(self):
         return self.coverage.sum(1)
@@ -246,7 +268,7 @@ class Gene(Interval):
         try:
             return self.data['ID']    
         except KeyError:
-            logging.error(self.data)
+            logger.error(self.data)
             raise
             
     @property
@@ -264,11 +286,9 @@ class Gene(Interval):
     def is_expressed(self):
         return bool(self.transcripts)
 
-
     @property
     def strand(self):
         return self.data['strand']
-        
 
     @property
     def transcripts(self):
@@ -308,7 +328,7 @@ class Gene(Interval):
             for i,sa in enumerate(samples):
                 for j,tr in enumerate(self.transcripts):
                     try:
-                        weights[i,j]=sum(cov for cov in tr['samples'][sa]['range'].values())
+                        weights[i,j]=tr['samples'][sa]['coverage']#sum(cov for cov in tr['samples'][sa]['range'].values())
                     except KeyError:
                         pass
             exons=[tr['exons'] for tr in self.transcripts]
@@ -317,11 +337,9 @@ class Gene(Interval):
 
     def __copy__(self):
         return Gene(self.start, self.end, self.data, self._transcriptome)        
-        
 
     def __deepcopy__(self, memo):
         return Gene(self.start, self.end, copy.deepcopy(self.data, memo), self._transcriptome)
-        
 
     def __reduce__(self):
         return Gene, (self.start, self.end, self.data, self._transcriptome)  

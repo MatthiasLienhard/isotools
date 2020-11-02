@@ -1,5 +1,7 @@
 from pysam import TabixFile, AlignmentFile, FastaFile
 from tqdm import tqdm
+import logging
+logger=logging.getLogger('isotools')
 
 default_gene_filter={'NOVEL_GENE':'reference',
                     'EXPRESSED':'transcripts'}
@@ -23,15 +25,14 @@ def add_biases(self, genome_fn):
     'populates transcript["biases"] information, which can be used do create filters'
     with FastaFile(genome_fn) as genome_fh:
         for g in tqdm(self):                
-            if g.is_expressed:
-                ts_candidates=g.splice_graph.find_ts_candidates()
-                for start, end, js, ls, idx in ts_candidates:
-                    for tr in (g.transcripts[i] for i in idx):
-                        tr.setdefault('template_switching',[]).append((start, end, js, ls))
-                g.add_direct_repeat_len(genome_fh) 
-                g.add_noncanonical_splicing(genome_fh)
-                g.add_threeprime_a_content(genome_fh)
-                g.add_truncations()
+            ts_candidates=g.splice_graph.find_ts_candidates()
+            for start, end, js, ls, idx in ts_candidates:
+                for tr in (g.transcripts[i] for i in idx):
+                    tr.setdefault('template_switching',[]).append((start, end, js, ls))
+            g.add_direct_repeat_len(genome_fh) 
+            g.add_noncanonical_splicing(genome_fh)
+            g.add_threeprime_a_content(genome_fh)
+            g.add_truncations()
     self.infos['biases']=True # flag to check that the function was called
 
 def add_filter(self, transcript_filter=None,gene_filter=None, ref_transcript_filter=None):
@@ -51,7 +52,7 @@ def add_filter(self, transcript_filter=None,gene_filter=None, ref_transcript_fil
     tr_ffun={label:_filter_function(tr_attributes, fun) for label,fun in transcript_filter.items()}
     reftr_ffun={label:_filter_function(ref_tr_attributes, fun) for label,fun in ref_transcript_filter.items()}
     for g in tqdm(self):
-        g.add_filter(gene_ffun,tr_ffun,reftr_ffun)
+            g.add_filter(gene_ffun,tr_ffun,reftr_ffun)
     self.infos['filter']={'gene_filter':gene_filter, 'transcript_filter':transcript_filter, 'ref_transcript_filter':ref_transcript_filter}
 
 def iter_genes(self, region=None,include=None, remove=None):
@@ -114,3 +115,4 @@ def iter_ref_transcripts(self,region=None,include=None, remove=None):
 def _filter_function(argnames, expression):
     'converts a string e.g. "all x[0]/x[1]>3" into a function'
     return eval (f'lambda {",".join(arg+"=None" for arg in argnames)}: bool({expression})\n',{},{})
+    

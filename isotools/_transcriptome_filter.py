@@ -3,22 +3,25 @@ from tqdm import tqdm
 import logging
 logger=logging.getLogger('isotools')
 
-default_gene_filter={'NOVEL_GENE':'reference',
-                    'EXPRESSED':'transcripts'}
+default_gene_filter={'NOVEL_GENE':'not reference',
+                    'EXPRESSED':'transcripts',
+                    'CHIMERIC':'chimeric'}
 
 default_ref_transcript_filter={
-        'UNSPLICED':'len(exons)==1','MULTIEXON':'len(exons)>1',
-        'A_CONTENT':'downstream_A_content>.5'}
+        'UNSPLICED':'len(exons)==1',
+        'MULTIEXON':'len(exons)>1',
+        'INTERNAL_PRIMING':'downstream_A_content>.5'}
 
 default_transcript_filter={
-        'CLIPPED_ALIGNMENT':'any("clipped" in s for s in samples.values())',
-        'A_CONTENT':'downstream_A_content>.5', #more than 50% a
+        #'CLIPPED_ALIGNMENT':'clipping',
+        'INTERNAL_PRIMING':'downstream_A_content>.5', #more than 50% a
         'RTTS':'template_switching and any(ts[2]<=10 and ts[2]/(ts[2]+ts[3])<.2 for ts in template_switching)', #less than 10 reads and less then 20% of total reads for at least one junction
         'NONCANONICAL_SPLICING':'noncanonical_splicing',
         'NOVEL_TRANSCRIPT':'annotation is None or "splice_identical" not in annotation["as"]',
         'TRUNCATION':'truncated',
-        'REFERENCE':'annotation',# and "splice_identical" in annotation',
-        'UNSPLICED':'len(exons)==1','MULTIEXON':'len(exons)>1'}
+        'NOVEL':'not annotation',# and "splice_identical" in annotation',
+        'UNSPLICED':'len(exons)==1',
+        'MULTIEXON':'len(exons)>1'}
 
 # filtering functions for the transcriptome class
 def add_biases(self, genome_fn):
@@ -35,7 +38,7 @@ def add_biases(self, genome_fn):
             g.add_truncations()
     self.infos['biases']=True # flag to check that the function was called
 
-def add_filter(self, transcript_filter=None,gene_filter=None, ref_transcript_filter=None):
+def add_filter(self, gene_filter=None,transcript_filter=None, ref_transcript_filter=None):
     'create filter flags which can be used by iter_transcripts'
     gene_attributes={k for g in self for k in g.data.keys() }
     tr_attributes={k for g in self for tr in g.transcripts for k in tr.keys() }
@@ -98,14 +101,14 @@ def iter_transcripts(self,region=None,include=None, remove=None):
 def iter_ref_transcripts(self,region=None,include=None, remove=None):
     'iterate over the transcripts of a region, optionally applying filters'   
     if include or remove:
-        assert 'ref_filter' in self.infos, 'no filter flags found - run .add_filter() method first'
+        assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
         all_filter=self.infos['filter']
     g_include=[f for f in include if f in all_filter['gene_filter']] if include else []
     g_remove=[f for f in remove if f in all_filter['gene_filter']] if remove else []
     t_include=[f for f in include if f not in all_filter['gene_filter']] if include else []
     t_remove=[f for f in remove if f not in all_filter['gene_filter']] if remove else []
-    assert all(f in all_filter['transcript_ref_filter'] for f in t_include), 'not all filters to include found'
-    assert all(f in all_filter['transcript_ref_filter'] for f in t_remove), 'not all filters to remove found'
+    assert all(f in all_filter['ref_transcript_filter'] for f in t_include), 'not all reference filters to include found'
+    assert all(f in all_filter['ref_transcript_filter'] for f in t_remove), 'not all  reference filters to remove found'
     for g in self.iter_genes(region, g_include, g_remove):
         if g.is_annotated:
             for i,tr in g.filter_ref_transcripts(t_include, t_remove):

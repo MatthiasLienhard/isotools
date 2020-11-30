@@ -52,8 +52,9 @@ class Coverage:
                 delta[e]-=1            
                 if i>0:
                     jpos=(exons[i-1][1],exon[0])
-                    if jpos[1]-jpos[0]<1:
+                    if jpos[1]-jpos[0]<1 or jpos[0]<reg[1] or jpos[1]>reg[2]:
                         continue
+                    
                     junctions[jpos]=junctions.get(jpos,0)+1            
         cov=np.cumsum(delta) #todo: use rle instead?  
         return cov,junctions
@@ -61,7 +62,7 @@ class Coverage:
     def load(self):
         'load the coverage from bam file'
         with AlignmentFile(self.bam_fn, 'rb') as align:
-            log.debug(f'Illumina coverage of region {self.reg[0]}:{self.reg[1]}-{self.reg[2]} is loaded from {self.bam_fn}') #info or debug?
+            logger.debug(f'Illumina coverage of region {self.reg[0]}:{self.reg[1]}-{self.reg[2]} is loaded from {self.bam_fn}') #info or debug?
             self._cov, self._junctions=type(self)._import_coverage(align, self.reg)
             
     @property
@@ -82,7 +83,7 @@ class Coverage:
                                         None if subscript.stop is None else subscript.stop-self.reg[1],
                                         subscript.step)] #does not get extended if outside range       
         elif subscript < self.reg[1] or subscript >= self.reg[2]:
-            log.warning('requested coverage outside range')
+            logger.warning('requested coverage outside range')
             return None
         else:
             return(self.profile[subscript-self.reg[1]])

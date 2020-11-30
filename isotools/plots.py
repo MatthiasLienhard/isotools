@@ -1,6 +1,6 @@
 import matplotlib.colors as plt_col
 import matplotlib.pyplot as plt
-from scipy.stats import beta
+from scipy.stats import beta,nbinom
 
 import seaborn as sns
 import pandas as pd
@@ -16,7 +16,7 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
         splice_types=[splice_types]
     f,axs=plt.subplots(*grid_shape)
     axs=axs.flatten()
-    x=[i/1000 for i in range(1001)]
+    x=[i/100 for i in range(101)]
     group_names=[c[:-9] for c in result_table.columns if c[-9:]=='_fraction'][:2]
     groups={gn:[c[4:] for c in  result_table.columns if c[:4]=='cov_' and c.endswith(gn)] for gn in group_names}
     logger.debug('groups: %s',str(groups))
@@ -41,14 +41,16 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
         #ax.boxplot([mut,wt], labels=['mut','wt'])
         sns.swarmplot(data=pd.DataFrame(list(psi_gr.values()), index=psi_gr).T, ax=ax, orient='h')
         for i,gn in enumerate(group_names):
+            max_i=int(params_alt[gn][0]*(len(x)-1))
+            ax2 = ax.twinx()  # instantiate a second axes that shares the same x-axis
             if params_alt[gn][1]>0:
                 m,v=params_alt[gn]
                 params=((-m*(m**2-m+v))/v,((m-1)*(m**2-m+v))/v)  
                 y=beta(*params).pdf(x)
-                ax2 = ax.twinx()  # instantiate a second axes that shares the same x-axis
+                y[max_i]=beta(*params).pdf(params_alt[gn][0])                
             else:
                 y=np.zeros(len(x))
-                y[int(params_alt[gn][0]*(len(x)-1))]=1
+                y[max_i]=1#point mass
             ax2.plot(x,y , color=f'C{i}')
             ax2.tick_params( right=False, labelright=False)
         ax.set_title(f'{row.gene} {row.splice_type}\nFDR={row.padj:.5f}')
@@ -74,7 +76,7 @@ def plot_embedding(embedding, col=None, groups=None, labels=True, ax=None, comp=
             ax.text(x,y,s=idx)
   
 #plots
-def plot_bar(df,ax=None, drop_categories=None, legend=True,**axparams):    
+def plot_bar(df,ax=None, drop_categories=None, legend=True, annotate=True,**axparams):    
     if ax is None:
         _, ax=  plt.subplots()
     if 'total' in df.index:
@@ -87,18 +89,18 @@ def plot_bar(df,ax=None, drop_categories=None, legend=True,**axparams):
         dcat=[]
     else:
         dcat=[d for d in drop_categories if d in df.index]
-    fractions.drop(dcat).plot.bar( ax=ax)   
+    fractions.drop(dcat).plot.bar( ax=ax, legend=legend)   
     #add numbers 
-    numbers=[int(v) for c in df.drop(dcat).T.values for v in c]
-    frac=[v for c in fractions.drop(dcat).T.values for v in c]
-    for n,f,p in zip(numbers,frac,ax.patches):
-        small=f<max(frac)/2
-        #contrast=tuple(1-cv for cv in p.get_facecolor()[:3])
-        contrast='white' if np.mean(p.get_facecolor()[:3])<.5 else 'black'
-        ax.annotate(f' {f/100:.2%} ({n}) ', (p.get_x()+p.get_width()/2 , p.get_height() ) ,ha='center',  va='bottom' if small else 'top' ,rotation=90, color='black' if small else contrast, fontweight='bold')
+    if annotate:
+        numbers=[int(v) for c in df.drop(dcat).T.values for v in c]
+        frac=[v for c in fractions.drop(dcat).T.values for v in c]
+        for n,f,p in zip(numbers,frac,ax.patches):
+            small=f<max(frac)/2
+            #contrast=tuple(1-cv for cv in p.get_facecolor()[:3])
+            contrast='white' if np.mean(p.get_facecolor()[:3])<.5 else 'black'
+            ax.annotate(f' {f/100:.2%} ({n}) ', (p.get_x()+p.get_width()/2 , p.get_height() ) ,ha='center',  va='bottom' if small else 'top' ,rotation=90, color='black' if small else contrast, fontweight='bold')
     ax.set(**axparams)
-    if legend:
-        ax.legend()
+    
     return ax
 
 def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,**axparams):
@@ -116,6 +118,29 @@ def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,
             ax.fill_between(x, 0, gc/sz, label=gn, alpha=.5)
     ax.plot(x, counts.divide(sz, axis=0))
     ax.set(**axparams)
+    if legend:
+        ax.legend()
+    return ax
+
+def plot_saturation(sample_reads=None,ax=None,cov_th=2,expr_th=[.5,1,2,5,10],x_range=(1e4,1e7,1e4),legend=True,**axparams):
+    if ax is None:
+        _, ax=  plt.subplots()
+    if sample_reads is None:
+        sample_reads={}
+    k=np.arange(*x_range)
+    axparams.setdefault(title,'Saturation Analysis') #[nr],{'fontsize':20}, loc='left', pad=10)
+    axparams.setdefault(ylabel,(f'probaility of sampling at least {cov_th} transcript{"s" if cov_th>1 else ""}'))
+    axparams.setdefault(ylim,(0,1))
+    axparams.setdefault(xlabel,'number of full length transcripts [million]')
+    #n_reads=isoseq.sample_table.set_index('name')['total_reads']
+    for tpm_th in expr:
+        chance = nbinom.cdf(k-cov_th, n=cov_th, p=tpm_th*1e-6) # 0 to k-cov_th failiors
+        ax.plot(k/1e6, chance, label=f'{tpm_th} TPM')
+    for i,(sa,cov) in enumerate(n_reads.items()):
+        ax.axvline(cov/1e6, color='grey', linestyle='--')
+        ax.text((cov+(k[-1]-k[0])/200)/1e6,0.1,f'{sa} ({cov/1e6:.2f} M)',rotation=-90)
+    ax.set(**axparams)
+    
     if legend:
         ax.legend()
     return ax

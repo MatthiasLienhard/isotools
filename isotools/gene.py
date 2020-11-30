@@ -43,10 +43,10 @@ class Gene(Interval):
         try:
             return self.data['short_reads'][idx]
         except (KeyError, IndexError):
+            srdf=self._transcriptome.infos['short_reads'] #raises key_error if no short reads added
             self.data.setdefault('short_reads',[])
-            srdf=self._transcriptome.infos['short_reads']
             for i in range(len(self.data['short_reads']),len(srdf)):
-                self.data['short_reads'].append(Coverage.from_bam(srdf.file[i],self) for bamfile in srdf.values())
+                self.data['short_reads'].append(Coverage.from_bam(srdf.file[i],self))
         return self.data['short_reads'][idx]
 
     def add_filter(self, gene_filter,transcript_filter,ref_transcript_filter):   
@@ -89,18 +89,22 @@ class Gene(Interval):
     def to_gtf(self, source='isoseq', use_gene_name=False, include=None, remove=None):
         'creates the gtf lines of the gene as strings'
         info={'gene_id':self.name if use_gene_name else self.id}
-        gene=(self.chrom, source, 'gene', self.start+1, self.end, '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items() ))
         lines=list()
-        for i,tr in enumerate(self.filter_transcripts(include, remove)):
-            info['transcript_id']=f'{self.id}.{i}'
+        starts=[]
+        ends=[]
+        for i,tr in self.filter_transcripts(include, remove):
+            info['transcript_id']='{}.{}'.format(info['gene_id'],i)
             #todo: print only relevant infos
-            lines.append((self.chrom, source, 'transcript', tr['exons'][0][0]+1, tr['exons'][-1][1], '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items() if k != 'exon_id')))
+            starts.append(tr['exons'][0][0]+1)
+            ends.append(tr['exons'][-1][1])
+            lines.append((self.chrom, source, 'transcript', tr['exons'][0][0]+1, tr['exons'][-1][1], '.',self.strand, '.', '; '.join(f'{k} "{v}"' for k,v in info.items() if k != 'exon_id')))
             for enr, pos in enumerate(tr['exons']):
                 info['exon_id']='{}.{}_{}'.format(self.id,i, enr)
-                lines.append((self.chrom, source, 'exon', pos[0]+1, pos[1], '.',self.strand, '.', '; '.join('{} "{}"'.format(k,v) for k,v in info.items())))
+                lines.append((self.chrom, source, 'exon', pos[0]+1, pos[1], '.',self.strand, '.', '; '.join(f'{k} "{v}"' for k,v in info.items())))
         if lines:
-            lines.append(gene)
-        return(lines)
+            #add gene line
+            lines.append((self.chrom, source, 'gene', min(starts), max(ends), '.',self.strand, '.', '{} "{}"'.format('gene_id',info['gene_id'])))
+        return lines
  
     def add_noncanonical_splicing(self, genome_fh):
         '''for all transcripts, add the the index and sequence of noncanonical (i.e. not GT-AG) splice sites
@@ -165,9 +169,9 @@ class Gene(Interval):
 
     def add_truncations(self): 
         'check for truncations and save indices of truncated transcripts'
-        for trid, containers in self.splice_graph.find_truncations().items():
-            self.transcripts[trid]['truncated']=containers # list of transcript ids containing trid
-        #todo: add this information how much is truncated: transcripts[trid1]['truncated']=(trid2,delta5, delta3)
+        for trid, containers in self.splice_graph.find_truncations(strand=self.strand).items():
+            self.transcripts[trid]['truncated']=containers # list of (containing transcript id, truncated 5' exons, truncated 3'exons)
+       
         
     def coding_len(self, trid):
         'returns length of 5\'UTR, coding sequence and 3\'UTR'
@@ -182,33 +186,32 @@ class Gene(Interval):
             coding_len.reverse()
         return coding_len
 
-    def get_values(self ,trid, what):
-        'get the gene information specified in "what" as a tuple'
-        if what is None:
-            return ()
-        return tuple((v for w in what for v in self._get_value(trid, w)))
+    def get_infos(self,trid, keys):
+        'returns the transcript information specified in "keys" as a list'
+        return [value for k in keys for value in self._get_info(trid,k)]
 
-    def _get_value(self, trid, what):
-        if what=='length':
-            return sum((e-b for b,e in self.transcripts[trid]['exons'])),#return a tuple (hence the comma)
-        if what=='filter':
+
+    def _get_info(self ,trid, key):
+        #returns tuples (as some keys return multiple values)
+        if key=='length':
+            return sum((e-b for b,e in self.transcripts[trid]['exons'])),
+        if key=='filter':
             if self.transcripts[trid]['filter']:
                 return ','.join(self.transcripts[trid]['filter']),
             else:
                 return 'PASS',
-        elif what=='n_exons':
+        elif key=='n_exons':
             return len(self.transcripts[trid]['exons']),
-        elif what=='exon_starts':
+        elif key=='exon_starts':
             return ','.join(str(e[0]) for e in self.transcripts[trid]['exons']),
-        elif what=='exon_ends':
+        elif key=='exon_ends':
             return ','.join(str(e[1]) for e in self.transcripts[trid]['exons']),
-        elif what=='annotation':
+        elif key=='annotation':
             #sel=['sj_i','base_i', 'as']
             support=self.transcripts[trid]['annotation']
             if support is None:
                 return ('NA',)*3
             else:
-                #vals=support[n] if n in support else 'NA' for n in sel
                 stype=support['as']
                 if isinstance(stype, dict):
                     type_string=';'.join(k if v is None else '{}:{}'.format(k,v) for k,v in stype.items())
@@ -216,12 +219,10 @@ class Gene(Interval):
                     type_string=';'.join(str(x) for x in stype)
                 vals=(support['sj_i'],support['base_i'],type_string)
                 return(vals)
-        elif what=='coverage':
-            return self.transcripts[trid]['coverage']
-        elif what=='downstream_A_content':
-            return self.transcripts[trid]['downstream_A_content'],
-        elif what in self.transcripts[trid]:
-            val=str(self.transcripts[trid][what])
+        elif key=='coverage':
+            return self.coverage[:,trid]
+        elif key in self.transcripts[trid]:
+            val=str(self.transcripts[trid][key])
             try:
                 iter(val)
             except TypeError:
@@ -230,9 +231,36 @@ class Gene(Interval):
                 return str(val), #iterables get converted to string
         return '',
 
+    def _set_coverage(self, force=False):
+        samples=self._transcriptome.samples
+        cov=np.zeros((len(samples), self.n_transcripts), dtype=int)
+        if not force: #save the splice graph if present
+            known=self.data.get('coverage', None)            
+            if known is not None and known.shape[1]==self.n_transcripts: #in this case we can save the splice graph
+                if known.shape==cov.shape:
+                    return
+                cov[:known.shape[0],:]=known
+                for i in range(known.shape[0],len(samples)):
+                    for j,tr in enumerate(self.transcripts):
+                        cov[i,j]=tr['coverage'].get(samples[i],0)
+                self.data['coverage']=cov
+                if 'splice_graph' in self.data and self.data['splice_graph']:
+                    self.data['splice_graph'].weights=cov
+                return
+        for i,sa in enumerate(samples):
+            for j,tr in enumerate(self.transcripts):
+                    cov[i,j]=tr['coverage'].get(sa,0)
+        self.data['coverage']=cov
+        self.data['splice_graph']=None
+
+
     @property
     def coverage(self):
-        return self.splice_graph.weights
+        cov=self.data.get('coverage', None)
+        if cov is not None:
+            return cov
+        self._set_coverage()
+        return self.data['coverage']
 
     @property
     def gene_coverage(self):
@@ -323,14 +351,9 @@ class Gene(Interval):
     @property
     def splice_graph(self):
         if 'splice_graph' not in self.data or self.data['splice_graph'] is None:        
-            samples=self._transcriptome.samples            
-            weights=np.zeros((len(samples), self.n_transcripts))
-            for i,sa in enumerate(samples):
-                for j,tr in enumerate(self.transcripts):
-                    try:
-                        weights[i,j]=tr['samples'][sa]['coverage']#sum(cov for cov in tr['samples'][sa]['range'].values())
-                    except KeyError:
-                        pass
+            samples=self._transcriptome.samples    
+            self._set_coverage()        
+            weights=self.coverage
             exons=[tr['exons'] for tr in self.transcripts]
             self.data['splice_graph']=SpliceGraph(exons, samples, weights)
         return self.data['splice_graph']

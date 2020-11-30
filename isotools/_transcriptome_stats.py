@@ -102,15 +102,9 @@ TESTS={ 'betabinom_lr':betabinom_lr_test,
         'proportions': proportion_test}
 
 
-def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='betabinom_lr',padj_method='fdr_bh'):
-    if isinstance(test,str):
-        try:
-            test=TESTS[test]
-        except KeyError:
-            raise ValueError('test must be one of %s', str(list(TESTS)))
-
-    #multitest_default={}
+def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='auto',padj_method='fdr_bh'):
     assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
+    #multitest_default={}
     if isinstance(groups, dict):
         groupnames=list(groups)
         groups=list(groups.values())
@@ -124,7 +118,19 @@ def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='betabino
     notfound=[sa for grp in groups for sa in grp if sa not in self.samples]
     if notfound:
         raise ValueError(f"Cannot find the following samples: {notfound}")    
-    logger.info('testing differential splicing for {g}',g="vs".join(f'{groupnames[i]} ({len(groups[i])})' for i in range(2)) )
+
+    if isinstance(test,str):
+        if test=='auto':
+            test='betabinom_lr' if min(len(g) for g in groups)>2 else 'proportions'
+        test_name=test
+        try:
+            test=TESTS[test]
+        except KeyError:
+            raise ValueError('test must be one of %s', str(list(TESTS)))
+    else:
+        test_name='custom'
+    
+    logger.info('testing differential splicing for %s using %s test',' vs '.join(f'{groupnames[i]} ({len(groups[i])})' for i in range(2)) ,test_name)
     sa_idx={sa:idx[0] for sa,idx in self._get_sample_idx().items()}
     grp_idx=[[sa_idx[sa] for sa in grp] for grp in groups]
     if min_sa<1:
@@ -186,7 +192,7 @@ def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',re
         
 
 # PCA and UMAP
-def embedding(self, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,samples=None, min_cov=20):
+def embedding(self, genes=None, reducer='PCA',n_top_var=500, n_subsample=1000,samples=None, min_cov=20):
     ''' Compute embedding of most variable junction for each gene if genes are provided as a list (e.g. genes=[gene_name1, gene_name2 ...]). 
         Alternatively, if genes is a dict, junctions can be provided as a list (e.g. genes[gene_name]=[(jstart,jend)]).
         If genes is None, all genes with coverage > min_cov are considered. 
@@ -197,13 +203,13 @@ def embedding(self, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,sa
     else:
         s_filter=[True]*len(self.samples)
     if genes is None:        
-        genes=[g for i,g in enumerate(self) if all(g.splice_graph.weights[s_filter].sum(1)>=min_cov)] #all covered genes
+        genes=[g for g in self if all(g.coverage[s_filter].sum(1)>=min_cov)] #all covered genes
         logger.info(f'found {len(genes)} genes > {min_cov} reads in all {sum(s_filter)} selected samples.')
     else:
         n_in=len(genes)
         if isinstance(genes, dict):
             joi=genes
-        genes=[self[g] for i,g in enumerate(genes) if g in self and all(self[g].splice_graph.weights[s_filter].sum(1)>=min_cov)] #all covered genes
+        genes=[self[g] for g in genes if g in self and all(self[g].splice_graph.weights[s_filter].sum(1)>=min_cov)] #all covered genes
         logger.info(f'{len(genes)} of {n_in} genes have > {min_cov} reads in all {sum(s_filter)} selected samples.')
     if n_subsample is not None and n_subsample<len(genes):
         genes=[genes[i] for i in np.random.choice(range(len(genes)), n_subsample)]
@@ -235,8 +241,11 @@ def embedding(self, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,sa
                 data[top_idx]=jcov[top_idx]
     data=pd.DataFrame(data,index=self.infos['sample_table'].loc[s_filter,'name'])
     #filter for highest variance
-    logger.info(f'selecting the most variable junction from {min(data.shape[1],n_top_var)} genes.')
-    topvar=data[data.var(0).nlargest(n_top_var).index]
+    if n_top_var<data.shape[1]:
+        logger.info(f'selecting the {n_top_var} genes with the most variable junction')
+        topvar=data[data.var(0).nlargest(n_top_var).index]
+    else:
+        topvar=data
 
     #compute embedding
     if reducer=='PCA':
@@ -250,32 +259,33 @@ def embedding(self, genes=None, reducer='PCA',n_top_var=500, n_subsample=None,sa
     return pd.DataFrame(reducer.fit_transform(topvar), index=topvar.index)
 
 # summary tables (can be used as input to plot_bar / plot_dist)
-def altsplice_stats(self, coverage=True,groups=None,  min_coverage=1, filter={}):    #todo: filter like in make table
-    runs=self.samples
-
+def altsplice_stats(self, groups=None , weight_by_coverage=True, min_coverage=2, tr_filter={}):    
     weights=dict()
     #if groups is not None:
     #    gi={r:i for i,r in enumerate(runs)}
     #    groups={gn:[gi[r] for r in gr] for gn,gr in groups.items()}
-    for _,_,tr in self.iter_transcripts(**filter):
-        w=tr['coverage'] 
-        if groups is not None:
-            w=[sum(w[gi] for gi in g) for g in groups.values()]
-        if not coverage:
-            w=[1 if wi>=min_coverage else 0 for wi in w]
-        if tr['annotation'] is None:
-            weights['novel/unknown']=weights.get('novel/unknown',np.zeros(len(w)))+w
+    current=None
+    if groups is not None:
+        sidx={sa:i for i,sa in enumerate(self.samples)} #idx
+        groups={gn:[sidx[sa] for sa in gr] for gn,gr in groups.items()}
+
+    for g,trid,tr in self.iter_transcripts(**tr_filter):
+        if g!=current:
+            current=g
+            w=g.coverage.copy() if groups is None else np.array([g.coverage[grp,:].sum(0) for grp in groups.values()])
+            w[w<min_coverage]=0
+            if not weight_by_coverage:
+                w[w>0]=1
+        if 'annotation' not in tr or tr['annotation'] is None:
+            weights['novel/unknown']=weights.get('novel/unknown',np.zeros(w.shape[0]))+w[:,trid]
         else:
             for stype in tr['annotation']['as']:
-                weights[stype]=weights.get(stype,np.zeros(len(w)))+w
-        weights['total']=weights.get('total',np.zeros(len(w)))+w
+                weights[stype]=weights.get(stype,np.zeros(w.shape[0]))+w[:,trid]
+        weights['total']=weights.get('total',np.zeros(w.shape[0]))+w[:,trid]
 
-    df=pd.DataFrame(weights, index=runs if groups is None else groups.keys()).T
-    #if groups is not None:
-    #    df=pd.DataFrame({grn:df[grp].sum(1) for grn, grp in groups.items()})
-        # sum per group
-    df=df.reindex(df.mean(1).sort_values(ascending=False).index, axis=0)
-    if coverage:
+    df=pd.DataFrame(weights, index=self.samples if groups is None else groups.keys()).T
+    df=df.reindex(df.mean(1).sort_values(ascending=False).index, axis=0) #sort by row mean
+    if weight_by_coverage:
         title='Expressed Transcripts'
         ylab='fraction of reads'
     else:
@@ -287,37 +297,32 @@ def altsplice_stats(self, coverage=True,groups=None,  min_coverage=1, filter={})
     return df, {'ylabel':ylab,'title':title}
     #
     
-def filter_stats(self, groups=None, coverage=True, min_coverage=1,consider=None, filter={}):    #todo: filter like in make table
-    try:
-        runs=self.samples
-    except KeyError:
-        runs=['self']
+def filter_stats(self, groups=None, weight_by_coverage=True, min_coverage=2,consider=None, tr_filter={}):   
+
     weights=dict()
-    #if groups is not None:
-    #    gi={r:i for i,r in enumerate(runs)}
-    #    groups={gn:[gi[r] for r in gr] for gn,gr in groups.items()}
+    if groups is not None:
+        sidx={sa:i for i,sa in enumerate(self.samples)} #idx
+        groups={gn:[sidx[sa] for sa in gr] for gn,gr in groups.items()}
     current=None
-    for g,trid,tr in self.iter_transcripts(**filter):
+    for g,trid,tr in self.iter_transcripts(**tr_filter):
         if g!=current:
             current=g
-            current_cov=g.coverage       
-        w= current_cov[:,trid]
-        if groups is not None:
-            w=[sum(w[gi] for gi in g) for g in groups.values()]
-        if not coverage:
-            w=[1 if wi>=min_coverage else 0 for wi in w]        
-        relevant_filter=[f for f in tr['filter']+g.data['filter'] if f in consider]
+            w=g.coverage.copy() if groups is None else np.array([g.coverage[grp,:].sum(0) for grp in groups.values()])
+            w[w<min_coverage]=0
+            if not weight_by_coverage:
+                w[w>0]=1
+        relevant_filter=[f for f in tr['filter'] if  consider is None or f in consider]
         for f in relevant_filter:
-            weights[f]=weights.get(f,np.zeros(len(w)))+w
+            weights[f]=weights.get(f,np.zeros(w.shape[0]))+w[:,trid]
         if not relevant_filter:
-            weights['PASS']=weights.get('PASS',np.zeros(len(w)))+w
-        weights['total']=weights.get('total',np.zeros(len(w)))+w
+            weights['PASS']=weights.get('PASS',np.zeros(w.shape[0]))+w[:,trid]
+        weights['total']=weights.get('total',np.zeros(w.shape[0]))+w[:,trid]
             
-    df=pd.DataFrame(weights, index=runs if groups is None else groups.keys()).T
+    df=pd.DataFrame(weights, index=self.samples if groups is None else groups.keys()).T
 
     df=df.reindex(df.mean(1).sort_values(ascending=False).index, axis=0)
-    ylab='fraction of reads' if coverage else 'fraction of different transcripts'
-    if coverage:
+    ylab='fraction of reads' if weight_by_coverage else 'fraction of different transcripts'
+    if weight_by_coverage:
         title='Expressed Transcripts'
     else:
         title='Different Transcripts'
@@ -325,43 +330,43 @@ def filter_stats(self, groups=None, coverage=True, min_coverage=1,consider=None,
             title+=f' > {min_coverage} reads'
     return df, {'ylabel':ylab,'title':title}
 
-def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,x_range=(100,10000),coverage=True,min_coverage=1,use_alignment=False, filter={}, ref_filter={}):
+def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,x_range=(100,10000),weight_by_coverage=True,min_coverage=2,use_alignment=True, tr_filter={}, ref_filter={}):
     trlen=[]
     cov=[]
     current=None
-    for g,trid,tr in self.iter_transcripts(**filter):
+    for g,trid,tr in self.iter_transcripts(**tr_filter):
         if g!=current:
             current=g
             current_cov=g.coverage        
         cov.append(current_cov[:,trid])
         trlen.append(sum(e[1]-e[0] for e in tr['exons']) if use_alignment else tr['source_len']) #source_len is not set in the current version
-    cov=pd.DataFrame(cov)
+    cov=pd.DataFrame(cov,columns=self.samples)
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
         bins=np.linspace(x_range[0],x_range[1],bins)
-    if not coverage:
-        cov[cov<min_coverage]=0
+    cov[cov<min_coverage]=0
+    if not weight_by_coverage:    
         cov[cov>0]=1
     counts=pd.DataFrame({gn:np.histogram(trlen, weights=g_cov, bins=bins)[0] for gn,g_cov in cov.items()})   
-    if add_reference is not None:
+    if add_reference:
         ref_len=[sum(e[1]-e[0] for e in tr['exons']) for _,_,tr in self.iter_ref_transcripts(**ref_filter)]
         counts['reference']=np.histogram(ref_len, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     params=dict(yscale='linear', title='transcript length',xlabel='transcript length [bp]', ylabel='density', density=True)
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(0.5,1000), filter={}):
+def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(0.5,1000), tr_filter={}):
     # get the transcript coverage in bins for groups
     # return count dataframe and suggested default parameters for plot_distr
     cov=[]
     current=None
-    for g,trid,_ in self.iter_transcripts(**filter):
+    for g,trid,_ in self.iter_transcripts(**tr_filter):
         if g!=current:
             current=g
             current_cov=g.coverage        
         cov.append(current_cov[:,trid])
-    cov=pd.DataFrame(cov)
+    cov=pd.DataFrame(cov, columns=self.samples)
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
@@ -375,87 +380,95 @@ def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(0.5,1000), filt
     # ax=counts.plot.bar() 
     # ax.plot(x, counts)
    
-def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=50,x_range=(.5,49.5), min_coverage=1, filter={}, ref_filter={}):
+def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=50,x_range=(.5,49.5), min_coverage=2, tr_filter={}, ref_filter={}):
     ntr=[]
     current=None
-    for g,trid,_ in self.iter_transcripts(**filter):
+    if groups is None:
+        group_names=self.samples        
+    else:
+        group_names=groups.keys()
+        sidx={sa:i for i,sa in enumerate(self.samples)} #idx
+        groups={gn:[sidx[sa] for sa in gr] for gn,gr in groups.items()}
+    n_sa=len(group_names)
+    for g,trid,_ in self.iter_transcripts(**tr_filter):
         if g!=current:
             current=g
-            current_cov=g.coverage  
-            ntr.append(0)      
-        if current_cov[:,trid]>= min_coverage:
-            ntr[-1]+=1
-
-    ntr=pd.DataFrame([n for n in ntr if n>0])
-    if groups is not None:
-        ntr=pd.DataFrame({grn:ntr[grp].sum(1) for grn, grp in groups.items()})
+            current_cov=g.coverage if groups is None else np.array([g.coverage[grp,:].sum(0) for grp in groups.values()])
+            ntr.append(np.zeros(n_sa))
+        ntr[-1]+= current_cov[:,trid]>= min_coverage
+        
+    ntr=pd.DataFrame((n for n in ntr if n.sum()>0), columns=group_names)    
     if isinstance(bins,int):
         bins=np.linspace(x_range[0],x_range[1],bins)
-    counts=pd.DataFrame({gn:np.histogram(trl, bins=bins)[0] for gn,trl in ntr.items()})   
+    counts=pd.DataFrame({gn:np.histogram(n, bins=bins)[0] for gn,n in ntr.items()})   
     if add_reference:
+        if ref_filter:
+            logger.warning('reference filter not implemented')
         ref_ntr=[g.n_ref_transcripts for g in self] #todo: add reference filter
         counts['reference']=np.histogram(ref_ntr, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     sub=f'counting transcripts covered by >= {min_coverage} reads'
-    if 'include' in filter:
-        sub+=f'; only the following categories:{filter["include"]}'
-    if 'remove' in filter:
-        sub+=f'; without the following categories:{filter["remove"]}'
+    if 'include' in tr_filter:
+        sub+=f', only including {", ".join(tr_filter["include"])}'
+    if 'remove' in tr_filter:
+        sub+=f', excluding {", ".join(tr_filter["remove"])}'
     params=dict(yscale='log',title='transcript per gene\n'+sub,xlabel='transcript per gene', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
     
-def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=35,x_range=(0.5,69.5),coverage=True,  min_coverage=2, filter={}, ref_filter={}):
+def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=35,x_range=(0.5,69.5),weight_by_coverage=True,  min_coverage=2, tr_filter={}, ref_filter={}):
+
     n_exons=[]
     cov=[]
     current=None
-    for g,trid,tr in self.iter_transcripts(**filter):
+    for g,trid,tr in self.iter_transcripts(**tr_filter):
         if g!=current:
             current=g
             current_cov=g.coverage        
         cov.append(current_cov[:,trid])
         n_exons.append(len(tr['exons']))
-    cov=pd.DataFrame(cov)
+    cov=pd.DataFrame(cov, columns=self.samples) 
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
         bins=np.linspace(x_range[0],x_range[1],bins)
-    if not coverage:
-        cov[cov<min_coverage]=0
+    cov[cov<min_coverage]=0
+    if not weight_by_coverage:        
         cov[cov>0]=1
     counts=pd.DataFrame({gn:np.histogram(n_exons, weights=g_cov, bins=bins)[0] for gn,g_cov in cov.items()})   
     if add_reference:
         ref_n_exons=[len(tr['exons']) for _,_,tr in self.iter_ref_transcripts(**ref_filter)]
         counts['reference']=np.histogram(ref_n_exons, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
-    params=dict(yscale='log', title='exons per transcript',xlabel='number of exons per transcript', ylabel='# transcripts')
+    sub=f'counting transcripts covered by >= {min_coverage} reads'
+    if 'include' in tr_filter:
+        sub+=f', only including {", ".join(tr_filter["include"])}'
+    if 'remove' in tr_filter:
+        sub+=f', excluding {", ".join(tr_filter["remove"])}'
+    params=dict(yscale='log', title='exons per transcript\n'+sub,xlabel='number of exons per transcript', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1),coverage=True,  min_coverage=2, filter={}, ref_filter={}):
+def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1),weight_by_coverage=True,  min_coverage=2, tr_filter={}, ref_filter={}):
     acontent=[]
     cov=[]
     current=None
-    for g,trid,tr in self.iter_transcripts(**filter):
+    for g,trid,tr in self.iter_transcripts(**tr_filter):
         if g!=current:
             current=g
             current_cov=g.coverage        
         cov.append(current_cov[:,trid])
         acontent.append(tr['downstream_A_content'])
-    cov=pd.DataFrame(cov)
+    cov=pd.DataFrame(cov, columns=self.samples)
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
         bins=np.linspace(x_range[0],x_range[1],bins)
-    if not coverage:
-        cov[cov<min_coverage]=0
+    cov[cov<min_coverage]=0
+    if not weight_by_coverage:        
         cov[cov>0]=1
     counts=pd.DataFrame({gn:np.histogram(acontent, weights=g_cov, bins=bins)[0] for gn,g_cov in cov.items()})   
-    if add_reference is not None:
-        try:
-            ref_acontent=[tr['downstream_A_content'] for _,_,tr in self.iter_ref_transcripts(**ref_filter)]
-        except KeyError:
-            logger.error('No A content for reference found. Run add_biases for reference first')
-        else:
-            counts['reference']=np.histogram(ref_acontent, bins=bins)[0]
+    if add_reference:
+        ref_acontent=[tr['downstream_A_content'] for _,_,tr in self.iter_ref_transcripts(**ref_filter)]
+        counts['reference']=np.histogram(ref_acontent, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     params=dict( title='downstream genomic A content',xlabel='fraction of A downstream the transcript', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params

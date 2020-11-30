@@ -23,66 +23,70 @@ class Transcriptome:
         if pickle_file is not None:
             obj=cls.load(pickle_file)
         else:
-            obj=super().__new__(cls,**kwargs)
+            obj=super().__new__(cls)
         return obj
 
     def __init__(self, pickle_file=None,**kwargs ):     
         if 'data' in kwargs:
-            self.data,self.infos=kwargs['data'],kwargs.get('infos',dict())
+            self.data,self.infos, self.chimeric=kwargs['data'],kwargs.get('infos',dict()),kwargs.get('chimeric',{})
             assert 'reference_file' in self.infos 
             self.make_index()
+        
+            
     
     @classmethod
     def from_reference(cls, reference_file, file_format='auto',**kwargs):
-        tr = cls.__new__(cls)         
+        tr=cls.__new__(cls)
+        tr.infos={'reference_file':reference_file}
+        tr.chimeric={}
         if file_format=='auto':        
             file_format=os.path.splitext(reference_file)[1].lstrip('.')
             if file_format=='gz':
                 file_format=os.path.splitext(reference_file[:-3])[1].lstrip('.')
         logger.info(f'importing reference from {file_format} file {reference_file}')
         if file_format == 'gtf':
-            tr.data,tr.infos= import_gtf_transcripts(reference_file,tr,  **kwargs)
-        elif file_format in ('gff', 'gff3'):
-            tr.data,tr.infos= import_gff_transcripts(reference_file,tr,  **kwargs)
+            tr.data= import_gtf_transcripts(reference_file,tr,  **kwargs)
+        elif file_format in ('gff', 'gff3'):            
+            tr.data= import_gff_transcripts(reference_file,tr,  **kwargs)
         elif file_format == 'pkl':
-            genes,infos= pickle.load(open(reference_file, 'rb'))
-            tr=next(iter(next(iter(genes.values()))))._transcriptome            
-            if [k for k in infos if k!='reference_file']:
+            tr= pickle.load(open(reference_file, 'rb'))            
+            if [k for k in tr.infos if k!='reference_file']:
                 logger.warning('the pickle file seems to contain additional expression information... extracting refrence')
-                ref_data=tr._extract_reference()
-                tr.data,tr.infos=tr._extract_reference(), {'reference_file':infos['reference_file']}
+                tr=tr._extract_reference()
+        else: logger.error('unknown file format %s',file_format)
         return tr
 
     @classmethod
     def load(cls, pickle_file):
         'restores the information of a transcriptome from a pickle file'
         logger.info('loading transcriptome from '+pickle_file)
-        data, infos=pickle.load(open(pickle_file, 'rb'))
-        tr=next(iter(next(iter(data.values()))))._transcriptome
-        return tr
+        return pickle.load(open(pickle_file, 'rb'))
+        
 
     def save_reference(self, fn=None):    
         'saves the reference information of a transcriptome in a pickle file'
         if fn is None:
             fn=self.infos['reference_file']+'.isotools.pkl'
         logger.info('saving reference to '+fn)       
-        ref_data=self._extract_reference() 
-        pickle.dump((ref_data,{'reference_file':self.infos['reference_file']}), open(fn, 'wb'))
+        ref_tr=self._extract_reference() 
+        pickle.dump(ref_tr, open(fn, 'wb'))
 
     def _extract_reference(self):
         if not [k for k in self.infos if k!='reference_file']:
-            return self.data #only reference info - assume that self.data only contains reference data
-        ref_data={} # extract the reference
+            return self #only reference info - assume that self.data only contains reference data
+        #make a new transcriptome
+        ref_tr=type(self)(data={} ,infos={'reference_file':self.infos['reference_file']})
+        # extract the reference genes and link them to the new ref_tr
         for chrom,tree in self.data.items():
-            ref_data[chrom]=IntervalTree(Gene(g.start,g.end,{k:g.data[k] for k in Gene.required_infos+['reference']}, self) for g in tree if g.is_annotated)
-        return ref_data
+            ref_tr.data[chrom]=IntervalTree(Gene(g.start,g.end,{k:g.data[k] for k in Gene.required_infos+['reference']}, ref_tr) for g in tree if g.is_annotated)
+        return ref_tr
 
     def save(self, fn=None):
         'saves the information of a transcriptome (including reference) in a pickle file'
         if fn is None:
-            fn=self.infos['file_name']+'.isotools.pkl'
+            fn=self.infos['out_file_name']+'.isotools.pkl' #key error if not set
         logger.info('saving transcriptome to '+fn)
-        pickle.dump((self.data,self.infos), open(fn, 'wb'))
+        pickle.dump(self, open(fn, 'wb'))
     
     def make_index(self):
         'updates the index used for __getitem__, e.g. the [] operator'
@@ -165,10 +169,10 @@ class Transcriptome:
     from ._transcriptome_io import add_sample_from_bam,remove_samples,add_short_read_coverage
 
     ### IO: utility functions
-    from ._transcriptome_io import _add_sample_transcript, _add_novel_genes, _get_intersects
+    from ._transcriptome_io import _add_sample_transcript, _add_novel_genes, _get_intersects, _add_chimeric
     
     ### IO: output data as tables or other human readable format
-    from ._transcriptome_io import gene_table, transcript_table,fusion_table,write_gtf
+    from ._transcriptome_io import gene_table, transcript_table,chimeric_table,write_gtf
 
     ### filtering functionality and iterators
     from ._transcriptome_filter import add_biases, add_filter,iter_genes,iter_transcripts,iter_ref_transcripts

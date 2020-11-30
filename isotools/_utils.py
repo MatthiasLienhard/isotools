@@ -1,4 +1,11 @@
 import numpy as np
+import itertools
+
+def pairwise(iterable): #e.g. usefull for enumerating introns
+    "s -> (s0,s1), (s1,s2), (s2, s3), ..."
+    a, b = itertools.tee(iterable)
+    next(b, None)
+    return zip(a, b) 
 
 def junctions_from_cigar(cigartuples, offset):
     'returns the exon positions'

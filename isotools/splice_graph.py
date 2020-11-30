@@ -86,7 +86,7 @@ class SpliceGraph():
         #snd special case: single exon transcript: return all overlapping single exon transcripts form sg
         if len(exons)==1: 
             return [trid for trid,(j1,j2) in enumerate(zip(self._tss,self._pas)) 
-                    if self.is_same_exon(j1,j2,trid) and self[j1].start<=exons[0][1] and self[j2].end >= exons[0][0]]
+                    if self.is_same_exon(trid,j1,j2) and self[j1].start<=exons[0][1] and self[j2].end >= exons[0][0]]
         # all junctions must be contained and no additional 
         tr=set(range(len(self._tss)))
         j=0
@@ -108,40 +108,58 @@ class SpliceGraph():
         return [trid for trid in tr]
 
 
-    def is_same_exon(self, j1,j2,tr_nr):
+    def is_same_exon(self, tr_nr,j1,j2):
         #test if nodes j1 and j2 belong to same exon in transcript tr_nr
         for j in range(j1,j2):
             if tr_nr not in self[j].suc or self[j].suc[tr_nr]>j+1 or self[j].end!= self[j+1].start:
                 return False
         return True
+    
+    def _count_introns(self,tr_nr,j1,j2):
+        #count the number of junctions between j1 and j2
+        logger.debug('counting introns of transcript %i between nodes %i and %i',tr_nr,j1,j2)
+        delta=0
+        if j1==j2:
+            return 0
+        assert tr_nr in self[j1].suc, f'transcript {tr_nr} does not contain node {j1}'
+        while j1<j2:
+            j_next=self[j1].suc[tr_nr]
+            if j_next>j1+1 or self[j1].end != self[j1+1].start:
+                delta+=1
+            j1=j_next
+        return delta
 
-
-    def find_truncations(self):
+    def find_truncations(self,strand):
         truncated=set()
         contains={}
         starts=[set() for _ in range(len(self))]
         for trid,idx in enumerate(self._tss):
             starts[idx].add(trid)
-        for trid,idx in enumerate(self._tss):
+        nodes=np.array([[True if tss==j or trid in n.pre else False for j,n in enumerate(self)] for trid,tss in enumerate(self._tss)])
+        for trid,(tss,pas) in enumerate(zip(self._tss, self._pas)):
             if trid in truncated:
                 continue
-            start_in=set() #transcripts that are contained until idx
-            contains[trid]=set()
-            while True:
-                start_in.update(starts[idx])
-                contains[trid].update({c for c in start_in if self._pas[c]==idx}) # add fully contained
-                if idx == self._pas[trid]:
-                    contains[trid].remove(trid) #remove self
-                    truncated.update(contains[trid]) #those are not checkted 
-                    break
-                suc=self._graph[idx].suc
-                start_in={c for c in start_in if c in suc and suc[c] ==suc[trid] } #remove transcripts that split at idx
-                idx=suc[trid]
+            contains[trid]={trid2 for trid2,(tss2,pas2) in enumerate(zip(self._tss, self._pas)) if trid2!=trid and tss2>= tss and pas2<= pas and all(nodes[trid2,tss2:pas2+1]==nodes[trid,tss2:pas2+1])}
+            truncated.update(contains[trid])#those are not checked 
+            #start_in=set() #transcripts that are contained until idx
+            #contains[trid]=set()
+            #while True:
+            #    start_in.update(starts[idx])
+            #    contains[trid].update({c for c in start_in if self._pas[c]==idx}) # add fully contained
+            #    if idx == self._pas[trid]:
+            #        contains[trid].remove(trid) #remove self
+            #        truncated.update(contains[trid]) #those are not checked 
+            #        break
+            #    suc=self._graph[idx].suc
+            #    start_in={c for c in start_in if c in suc and suc[c] ==suc[trid] } #remove transcripts that split at idx
+            #    idx=suc[trid]
         truncations={}
         for big,smallL in contains.items():
             if big not in truncated:
                 for trid in smallL:
-                    truncations.setdefault(trid,[]).append(big)
+                    delta1=self._count_introns(big,self._tss[big], self._tss[trid])
+                    delta2=self._count_introns(big,self._pas[trid], self._pas[big])
+                    truncations.setdefault(trid,[]).append((big,delta1,delta2) if strand=='+' else (big,delta2,delta1))
         return truncations
 
 
@@ -165,7 +183,7 @@ class SpliceGraph():
 
         if self[j1].pre and not any(j in self._tss for j in range(j1,j2+1)):
             tr_nr, j0=max(((trid,self._tss[trid]) for trid in self[j1].pre), key=lambda x:x[1])#j0 is the closest start node
-            if not self.is_same_exon(j0,j1,tr_nr):
+            if not self.is_same_exon(tr_nr,j0,j1):
                 end='3' if is_reverse else '5'
                 altsplice.setdefault(f'{end}\' truncation',[]).append([self[j0].start, exons[0][0]]) #at start (lower position)
         for i,_ in enumerate(exons[:-1]):                               
@@ -191,7 +209,7 @@ class SpliceGraph():
                 altsplice.setdefault(k,[]).extend(v)
         if self[j2].suc and not any(j in self._pas for j in range(j1,j2+1)):
             tr_nr, j3=min(((trid,self._pas[trid]) for trid in self[j2].suc), key=lambda x:x[1]) #j3 is the next end node (pas/tss on fwd/rev)
-            if not self.is_same_exon(j2,j3,tr_nr):
+            if not self.is_same_exon(tr_nr,j2,j3):
                 end='5' if is_reverse else '3'
                 altsplice.setdefault(f'{end}\' truncation',[]).append([exons[-1][1],self[j3].end])
         if not altsplice:#all junctions are contained but search_transcript() did not find it
@@ -333,7 +351,7 @@ class SpliceGraph():
                         raise
                     yield gnode.end, self[target].start,w, longer_weight,  idx
         
-    def splice_dependence(self, sidx,min_cov):
+    def splice_dependence(self, sidx,min_cov, ignore_unspliced=True):
         tr_cov=self.weights[sidx,:].sum(0)
         if tr_cov.sum()<2* min_cov:
             return #no chance of getting above the coverage
@@ -348,22 +366,35 @@ class SpliceGraph():
                 continue
             jstart={trid for trid,suc_i in self[j[0]].suc.items() if suc_i<j[1]}
             jend={trid for trid,pre_i in self[j[1]].pre.items() if pre_i>j[0]}
-            nojump_ids=jstart.intersection(jend)
+            if ignore_unspliced:
+                nojump_ids= {trid for trid in jstart.intersection(jend) if self._is_spliced(trid,j[0], j[1])}
+            else:
+                nojump_ids=jstart.intersection(jend)
             if tr_cov[list(nojump_ids)].sum()>=min_cov:
-                nonjumps[j]=jstart.intersection(jend)
+                nonjumps[j]=nojump_ids
         for j1 in nonjumps:
             for j2 in (j for j in nonjumps if j[0]>j1[1]):
+                double_negative=list(nonjumps[j1].intersection(nonjumps[j2]))
+                #if ignore_unspliced:
+                #    double_negative=[trid for trid in double_negative if self._is_spliced(trid,j1[0], j2[1])]
                 ma=np.array([
                     tr_cov[list(jumps[j1].intersection(jumps[j2]))].sum(),
                     tr_cov[list(jumps[j1].intersection(nonjumps[j2]))].sum(),
                     tr_cov[list(nonjumps[j1].intersection(jumps[j2]))].sum(),
-                    tr_cov[list(nonjumps[j1].intersection(nonjumps[j2]))].sum()]).reshape((2,2))
+                    tr_cov[double_negative].sum()]).reshape((2,2))
                 if any(ma.sum(0)<min_cov) or any(ma.sum(1)<min_cov):
                     continue
                 #oddsratio, pvalue = fisher_exact(ma)                
                 #log.debug('j1={}, j2={}, ma={}, or={}, p={}'.format(j1,j2,list(ma),oddsratio, pvalue))
                 yield ma,(self[j1[0]].end, self[j1[1]].start), (self[j2[0]].end, self[j2[1]].start)
 
+    def _is_spliced(self,trid,ni1,ni2):
+        'checks if transcript is spliced (e.g. has an intron) between nodes ni1 and ni2'
+        if any(self[i].end<self[i+1].start for i in range(ni1, ni2)): #all transcripts are spliced
+            return True
+        if all(trid in self[i].suc for i in range(ni1, ni2)): 
+            return False
+        return True
 
     def get_splice_coverage(self):
         '''search for alternative paths in the splice graphs ("loops"), 

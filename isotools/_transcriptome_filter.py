@@ -14,11 +14,11 @@ default_ref_transcript_filter={
 
 default_transcript_filter={
         #'CLIPPED_ALIGNMENT':'clipping',
-        'INTERNAL_PRIMING':'downstream_A_content>.5', #more than 50% a
+        'INTERNAL_PRIMING':'len(exons)==1 and downstream_A_content and downstream_A_content>.5', #more than 50% a
         'RTTS':'template_switching and any(ts[2]<=10 and ts[2]/(ts[2]+ts[3])<.2 for ts in template_switching)', #less than 10 reads and less then 20% of total reads for at least one junction
         'NONCANONICAL_SPLICING':'noncanonical_splicing',
-        'NOVEL_TRANSCRIPT':'annotation is None or "splice_identical" not in annotation["as"]',
-        'TRUNCATION':'truncated',
+        'NOVEL_TRANSCRIPT':'annotation is None or annotation[0]>0',
+        'FRAGMENT':'fragments',
         'NOVEL':'not annotation',# and "splice_identical" in annotation',
         'UNSPLICED':'len(exons)==1',
         'MULTIEXON':'len(exons)>1'}
@@ -27,15 +27,22 @@ default_transcript_filter={
 def add_biases(self, genome_fn):
     'populates transcript["biases"] information, which can be used do create filters'
     with FastaFile(genome_fn) as genome_fh:
+        missing_chr=set(self.chromosomes)-set(genome_fh.references)
+        if missing_chr:
+            missing_genes=sum(len(self.data[mc]) for mc in missing_chr)
+            logger.warning(f'{len(missing_chr)} contigs are not contained in genome, affecting {missing_genes} genes. Some metrics cannot be computed: {missing_chr}')
+
         for g in tqdm(self):                
             ts_candidates=g.splice_graph.find_ts_candidates()
             for start, end, js, ls, idx in ts_candidates:
                 for tr in (g.transcripts[i] for i in idx):
-                    tr.setdefault('template_switching',[]).append((start, end, js, ls))
-            g.add_direct_repeat_len(genome_fh) 
-            g.add_noncanonical_splicing(genome_fh)
-            g.add_threeprime_a_content(genome_fh)
-            g.add_truncations()
+                    tr.setdefault('template_switching',[]).append((start, end, js, ls)) 
+            g.add_fragments()
+            if g.chrom in genome_fh.references:
+                g.add_direct_repeat_len(genome_fh) 
+                g.add_noncanonical_splicing(genome_fh)
+                g.add_threeprime_a_content(genome_fh)
+                
     self.infos['biases']=True # flag to check that the function was called
 
 def add_filter(self, gene_filter=None,transcript_filter=None, ref_transcript_filter=None):

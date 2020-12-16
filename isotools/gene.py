@@ -124,32 +124,28 @@ class Gene(Interval):
 
     def add_direct_repeat_len(self, genome_fh,delta=10):
         'perform a global alignment of the sequences at splice sites and report the score. Direct repeats indicate template switching'
+        
+        intron_seq={}
+        score={}
         for tr in self.transcripts:
-            introns=((tr['exons'][i][1], tr['exons'][i+1][0]) for i in range(len(tr['exons'])-1))
-            intron_seq=((genome_fh.fetch(self.chrom, pos-delta, pos+delta) for pos in i) for i in introns)
-            #intron_seq=[[genome_fh.fetch(self.chrom, pos-delta, pos+delta) for pos in i] for i in introns]
-            #align=[pairwise2.align.globalms(seq5, seq3, 1,-1, -1, 0) for seq5, seq3 in intron_seq] 
-            #align=[pairwise2.align.globalxs(seq5, seq3,-1,-1, score_only=True) for seq5, seq3 in intron_seq] # number of equal bases at splice site
-            align=[[a==b for a,b in zip(*seq)] for seq in intron_seq ]
-            score=[0]*len(align)
-            for i,a in enumerate(align): #get the length of the direct repeat at the junction (no missmatches or gaps)
-                pos=delta
-                while(a[pos]):
-                    score[i]+=1
-                    pos+=1
-                    if pos==len(a):
-                        break
-                pos=delta-1
-                while(a[pos]):
-                    score[i]+=1
-                    pos-=1
-                    if pos<0:
-                        break
-            #parameters 2,-3,-1,-1 = match , missmatch, gap open, gap extend
-            #this is not optimal, since it does not account for the special requirements here: 
-            #a direct repeat shoud start at the same position in the seqs, so start and end missmatches free, but gaps not
-            #tr['ts_score']=list(zip(score,intron_seq))
-            tr['direct_repeat_len']=[min(s, delta) for s in score]
+            for intron in ((tr['exons'][i][1], tr['exons'][i+1][0]) for i in range(len(tr['exons'])-1)):
+                for pos in intron:
+                    intron_seq.setdefault(pos, genome_fh.fetch(self.chrom, pos-delta, pos+delta))
+                if intron not in score:
+                    #align=[pairwise2.align.globalms(seq5, seq3, 1,-1, -1, 0) for seq5, seq3 in intron_seq] 
+                    #align=[pairwise2.align.globalxs(seq5, seq3,-1,-1, score_only=True) for seq5, seq3 in intron_seq] # number of equal bases at splice site
+                    align=[a==b for a,b in zip(intron_seq[intron[0]],intron_seq[intron[1]])]
+                    score[intron]=0
+                    for a in align[delta:]: #find the runlength at the middle (delta)
+                        if not a:
+                            break
+                        score[intron]+=1
+                    for a in reversed(align[:delta]):
+                        if not a:
+                            break
+                        score[intron]+=1
+        for tr in self.transcripts:
+            tr['direct_repeat_len']=[min(score[intron], delta) for intron in ((tr['exons'][i][1], tr['exons'][i+1][0]) for i in range(len(tr['exons'])-1))]
     
     def add_threeprime_a_content(self, genome_fh, length=30):
         'add the information of the genomic A content downstream the transcript. High values indicate genomic origin of the pacbio read'
@@ -167,10 +163,10 @@ class Gene(Interval):
                     a_content[pos]=seq.upper().count('T')/length
             tr['downstream_A_content']=a_content[pos]
 
-    def add_truncations(self): 
-        'check for truncations and save indices of truncated transcripts'
-        for trid, containers in self.splice_graph.find_truncations(strand=self.strand).items():
-            self.transcripts[trid]['truncated']=containers # list of (containing transcript id, truncated 5' exons, truncated 3'exons)
+    def add_fragments(self): 
+        'check for transcripts that are fully contained in other transcripts and save indices of these fragments'
+        for trid, containers in self.splice_graph.find_fragments(strand=self.strand).items():
+            self.transcripts[trid]['fragments']=containers # list of (containing transcript id, first 5' exons, first 3'exons)
        
         
     def coding_len(self, trid):
@@ -355,7 +351,7 @@ class Gene(Interval):
             self._set_coverage()        
             weights=self.coverage
             exons=[tr['exons'] for tr in self.transcripts]
-            self.data['splice_graph']=SpliceGraph(exons, samples, weights)
+            self.data['splice_graph']=SpliceGraph(exons, weights)
         return self.data['splice_graph']
 
     def __copy__(self):

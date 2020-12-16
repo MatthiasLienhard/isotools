@@ -12,7 +12,7 @@ import logging
 logger=logging.getLogger('isotools')
 
 #### io functions for the transcriptome class
-
+SPLICE_CATEGORY=['FSM','ISM','NIC','NNC','NOVEL']
 def add_short_read_coverage(self, bam_files,names=None, load=False):
     'Add short read coverage to the genes.\n This does, by default (e.g. if load==False), not actually read the bams, but reading is done at first access'
     self.infos.setdefault('short_reads', pd.DataFrame(columns=['name', 'file']))
@@ -81,7 +81,7 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                 #transcripts=IntervalTree()
                 #novel=IntervalTree()
                 chr_len=align.get_reference_length(chrom)
-                transcripts=IntervalArray(chr_len)
+                transcripts=IntervalArray(chr_len) #intervaltree was pretty slow
                 novel=IntervalArray(chr_len)
                 for read in align.fetch(chrom):
                     pbar.update()
@@ -102,7 +102,7 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                             chimeric.setdefault(read.query_name, [{sample_name:cov},[]])[1].append([chrom,strand,exons, aligned_part(read.cigartuples, read.is_reverse),None]) 
                         continue
 
-                    for tr_interval in transcripts.overlap(*tr_range):                        
+                    for tr_interval in transcripts.overlap(*tr_range):    #did we see this transcript already?
                         if tr_interval.data['strand'] != strand:
                             continue
                         if splice_identical(exons, tr_interval.data['exons']):   
@@ -182,12 +182,12 @@ def _add_chimeric(self,new_chimeric, min_cov):
                 self.chimeric[new_bp].append(new_chim)
                 for part in new_chim[1]:
                     if part[0] in self.data:
-                        genes_ol=[g for g in self.data[part[0]][part[2][0][0]: part[2][-1][1]] if g.strand==part[1] and g.is_annotated]
-                        #todo: considder adding annotation from novel genes (not is_annotated)
-                        g,_=_get_intersects(genes_ol, part[2])
-                        if g:
+                        genes_ol=[g for g in self.data[part[0]][part[2][0][0]: part[2][-1][1]] if g.strand==part[1]]
+                        #g,_=_get_intersects(genes_ol, part[2])
+                        g,_,_=_find_splice_sites(genes_ol, part[2]) #take the best - ignore other hits here
+                        if g is not None:
                             part[4]=g.name
-                            g.data.setdefault('chimeric',{})[new_bp]=self.chimeric[new_bp] #assume if 
+                            g.data.setdefault('chimeric',{})[new_bp]=self.chimeric[new_bp]
                 
 
 def _breakpoints(chimeric):
@@ -250,8 +250,11 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
                 #todo:check other infos that might get lost here
                 return g
     #check if gene is already there (e.g. from same or other sample):
-    g,(sj_i, base_i)=_get_intersects(genes_ol, tr['exons'])
+    #g,_=_get_intersects(genes_ol, tr['exons'])
+    g,additional,not_covered=_find_splice_sites(genes_ol, tr['exons'])
     if g is not None:            
+        if additional:
+            tr['additional_ref_genes']=additional
         if g.is_annotated: #check for fuzzy junctions (e.g. same small shift at 5' and 3' compared to reference annotation)
             shifts=g.correct_fuzzy_junctions(tr, fuzzy_junction, modify=True) #this modifies tr['exons']
             if shifts: 
@@ -261,19 +264,22 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
                         tr2.setdefault('fuzzy_junction', {}).setdefault(sample_name,[]).append(shifts) #keep the info, mainly for testing/statistics    
                         tr2['coverage'][sample_name]=tr2['coverage'].get(sample_name,0)+tr['coverage'][sample_name]
                         return g 
-            altsplice= g.ref_splice_graph.get_alternative_splicing(tr['exons'], g.strand)
-            tr['annotation']={'sj_i': sj_i, 'base_i':base_i,'as':altsplice}
+            tr['annotation']=g.ref_splice_graph.get_alternative_splicing(tr['exons'], g.strand)
+            if not_covered:
+                tr['novel_splice_sites']=not_covered #todo: might be changed by fuzzy junction
+            #{'sj_i': sj_i, 'base_i':base_i,'category':SPLICE_CATEGORY[altsplice[1]],'subcategory':altsplice[1]} #intersects might have changed due to fuzzy junctions
 
-        else: # range of the novel gene might have changed
+        else: #add to existing novel (e.g. not in reference) gene
             start, end=min(tr['exons'][0][0],g.start),max(tr['exons'][-1][1],g.end)
-            if start<g.start or end>g.end: #todo: potential issue: in this case two genes may have grown together
+            if start<g.start or end>g.end:# range of the novel gene might have changed 
+                tr['annotation']=(5,{'intergenic':[]})
                 new_gene=Gene(start, end,g.data,self)
-                self.data[chrom].add(new_gene)
+                self.data[chrom].add(new_gene)#todo: potential issue: in this case two genes may have grown together
                 self.data[chrom].remove(g)
                 g=new_gene
         g.data.setdefault('transcripts',[]).append(tr) 
         g.data['splice_graph']=None #gets recomputed on next request      
-        g.data['coverage'] =None
+        g.data['coverage'] =None   
     return g
 
 def _add_novel_genes( self,novel,chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix='PB_novel_'):
@@ -281,7 +287,8 @@ def _add_novel_genes( self,novel,chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix
     n_novel=self.novel_genes
     idx={id(tr):i for i,tr in enumerate(novel)}
     merge=list()
-    for i,tr in enumerate(novel):    
+    for i,tr in enumerate(novel):  
+        tr.data['annotation']  =(5,{'intergenic':[]})
         merge.append({tr})
         candidates=[c for c in novel.overlap(tr.begin, tr.end) if c.data['strand']==tr.data['strand'] and idx[id(c)]<i]
         for c in candidates:
@@ -307,20 +314,42 @@ def _add_novel_genes( self,novel,chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix
         self.data.setdefault(chrom,IntervalTree()).add(Gene(start,end,new_data,self ))
     self.infos['novel_counter']=n_novel
 
+def _find_splice_sites(genes_ol, exons):
+    '''check the splice site intersect of all overlapping genes and return 
+        1) the best gene, 2) names of genes that cover additional splice sites, and 3) splice sites that are not covered. 
+        For mono-exon genes return the gene with largest exonic overlap'''
+    if genes_ol:
+        if len(exons)==1: #no splice sites, but return gene with largest overlap
+            ol=np.array([g.ref_splice_graph.get_overlap(exons) if g.is_annotated else g.splice_graph.get_overlap(exons) for  g in genes_ol ])
+            best_idx=ol.argmax()
+            if ol[best_idx]>0:
+                return genes_ol[best_idx],None,None
+        splice_sites=np.array([g.ref_splice_graph.find_splice_sites(exons) if g.is_annotated else g.splice_graph.find_splice_sites(exons) for  g in genes_ol ])
+        sum_ol=splice_sites.sum(1)
+        best_idx=sum_ol.argmax() #index of gene that covers the most splice sites
+        if sum_ol[best_idx]>0:
+            additional=splice_sites[:,~splice_sites[best_idx]]# additional= sites not covered by top gene
+            elsefound=[(g.name,a) for g,a in zip(genes_ol,additional) if a.sum()>0 ] # genes that cover additional splice sites
+            notfound=(splice_sites.sum(0)==0).nonzero() #not covered splice sites
+            return (genes_ol[best_idx], elsefound, notfound)
+    return None,None,np.zeros((len(exons)-1)*2, dtype=bool) 
+
+
 def _get_intersects(genes_ol, exons):
     'calculate the intersects of all overlapping genes and return the best'  
+    logger.warning('_get_intersects is depreciated')
     ## todo: in order to detect readthrough fusion genes, report all overlapping reference genes? or exon/junction wise?
     # prefer annotated genes
     intersect=[(i,g.ref_splice_graph.get_intersects(exons)) for i,g in enumerate(genes_ol) if g.is_annotated]
     if intersect:
         best_idx ,intersects= max(intersect, key=lambda x:x[1])
-        if intersects[1] > 0 :    # at least some overlap (definition could be changed here)
+        if intersects[0] > 0 or (len(exons)==1 and intersects[1] > 0) :    # at least one splice overlap for multiexon genes
             return genes_ol[best_idx],intersects
     #no annotated overlap, look for novel genes
     intersect=[(i,g.splice_graph.get_intersects(exons)) for i,g in enumerate(genes_ol) if not g.is_annotated]
     if intersect:
         best_idx ,intersects= max(intersect, key=lambda x:x[1])
-        if intersects[1] > 0 :    # at least some overlap (definition could be changed here)
+        if intersects[0] > 0 or (len(exons)==1 and intersects[1] > 0) :    # at least one splice overlap for multiexon genes
             return genes_ol[best_idx],intersects
     #todo: potentially antisense could be considered as well here
     return None, (0,0)
@@ -619,6 +648,7 @@ def chimeric_table(self, region=None,  include=None, remove=None, star_chimeric=
     return chim_tab
 
     #todo: integrate short read coverage from star files    
+    breakpoints={} #todo: this should be the isoseq breakpoints
     offset=10+len(self.infos['sample_table'])
     for sa_idx,sa in enumerate(star_chimeric):
         star_tab=pd.read_csv(star_chimeric[sa], sep='\t')
@@ -629,10 +659,10 @@ def chimeric_table(self, region=None,  include=None, remove=None, star_chimeric=
                     idx2={bp.data for bp in breakpoints[row['chr_acceptorB']][row['brkpt_acceptorB']]}
                     idx_ol={idx for idx,snd in idx2 if (idx, not snd) in idx1}
                     for idx in idx_ol:
-                        fusion_coverage[idx][offset+sa_idx]+=1
+                        chim_tab[idx][offset+sa_idx]+=1
                     
-    fusion_coverage=pd.DataFrame(fusion_coverage, columns=['trid','len', 'gene1','part1','breakpoint1', 'gene2','part2','breakpoint2','total_cov']+[s+'_cov' for s in self.infos['sample_table'].name]+[s+"_shortread_cov" for s in star_chimeric])
-    return fusion_coverage        
+    chim_tab=pd.DataFrame(chim_tab, columns=['trid','len', 'gene1','part1','breakpoint1', 'gene2','part2','breakpoint2','total_cov']+[s+'_cov' for s in self.infos['sample_table'].name]+[s+"_shortread_cov" for s in star_chimeric])
+    return chim_tab        
 
 def write_gtf(self, fn, source='isotools',use_gene_name=False,  include=None, remove=None):     
     'writes the transcripts in gtf format to a file'

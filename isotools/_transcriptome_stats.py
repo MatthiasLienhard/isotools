@@ -279,7 +279,7 @@ def altsplice_stats(self, groups=None , weight_by_coverage=True, min_coverage=2,
         if 'annotation' not in tr or tr['annotation'] is None:
             weights['novel/unknown']=weights.get('novel/unknown',np.zeros(w.shape[0]))+w[:,trid]
         else:
-            for stype in tr['annotation']['as']:
+            for stype in tr['annotation'][1]:
                 weights[stype]=weights.get(stype,np.zeros(w.shape[0]))+w[:,trid]
         weights['total']=weights.get('total',np.zeros(w.shape[0]))+w[:,trid]
 
@@ -456,7 +456,10 @@ def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1
             current=g
             current_cov=g.coverage        
         cov.append(current_cov[:,trid])
-        acontent.append(tr['downstream_A_content'])
+        try:
+            acontent.append(tr['downstream_A_content'])
+        except KeyError:
+            acontent.append(-1)
     cov=pd.DataFrame(cov, columns=self.samples)
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
@@ -467,7 +470,7 @@ def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1
         cov[cov>0]=1
     counts=pd.DataFrame({gn:np.histogram(acontent, weights=g_cov, bins=bins)[0] for gn,g_cov in cov.items()})   
     if add_reference:
-        ref_acontent=[tr['downstream_A_content'] for _,_,tr in self.iter_ref_transcripts(**ref_filter)]
+        ref_acontent=[tr['downstream_A_content'] for _,_,tr in self.iter_ref_transcripts(**ref_filter) if 'downstream_A_content' in tr]
         counts['reference']=np.histogram(ref_acontent, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     params=dict( title='downstream genomic A content',xlabel='fraction of A downstream the transcript', ylabel='# transcripts')

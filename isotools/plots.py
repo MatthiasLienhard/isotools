@@ -113,10 +113,11 @@ def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,
         counts=(counts/counts.sum())
     if smooth:
         counts=counts.ewm(span=smooth).mean()
-    if fill:
-        for gn,gc in counts.items():
-            ax.fill_between(x, 0, gc/sz, label=gn, alpha=.5)
-    ax.plot(x, counts.divide(sz, axis=0))
+    for gn,gc in counts.items():
+        ax.plot(x, gc/sz, label=gn)    
+        if fill:
+            ax.fill_between(x, 0, gc/sz,  alpha=.5)
+    #ax.plot(x, counts.divide(sz, axis=0))
     ax.set(**axparams)
     if legend:
         ax.legend()

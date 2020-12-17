@@ -111,6 +111,9 @@ def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,
         _, ax=  plt.subplots()
     if density: 
         counts=(counts/counts.sum())
+        axparams.setdefault('ylabel','density')
+    else:
+        axparams.setdefault('ylabel','# transcripts')
     if smooth:
         counts=counts.ewm(span=smooth).mean()
     for gn,gc in counts.items():
@@ -123,21 +126,19 @@ def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,
         ax.legend()
     return ax
 
-def plot_saturation(sample_reads=None,ax=None,cov_th=2,expr_th=[.5,1,2,5,10],x_range=(1e4,1e7,1e4),legend=True,**axparams):
+def plot_saturation(isoseq=None,ax=None,cov_th=2,expr_th=[.5,1,2,5,10],x_range=(1e4,1e7,1e4),legend=True,**axparams):
     if ax is None:
         _, ax=  plt.subplots()
-    if sample_reads is None:
-        sample_reads={}
     k=np.arange(*x_range)
-    axparams.setdefault(title,'Saturation Analysis') #[nr],{'fontsize':20}, loc='left', pad=10)
-    axparams.setdefault(ylabel,(f'probaility of sampling at least {cov_th} transcript{"s" if cov_th>1 else ""}'))
-    axparams.setdefault(ylim,(0,1))
-    axparams.setdefault(xlabel,'number of full length transcripts [million]')
-    #n_reads=isoseq.sample_table.set_index('name')['total_reads']
-    for tpm_th in expr:
+    axparams.setdefault('title','Saturation Analysis') #[nr],{'fontsize':20}, loc='left', pad=10)
+    axparams.setdefault('ylabel',(f'probaility of sampling at least {cov_th} transcript{"s" if cov_th>1 else ""}'))
+    axparams.setdefault('ylim',(0,1))
+    axparams.setdefault('xlabel','number of reads [million]')
+    n_reads=isoseq.sample_table.set_index('name')['total_reads'] if isoseq is not None else {}
+    for tpm_th in expr_th:
         chance = nbinom.cdf(k-cov_th, n=cov_th, p=tpm_th*1e-6) # 0 to k-cov_th failiors
         ax.plot(k/1e6, chance, label=f'{tpm_th} TPM')
-    for i,(sa,cov) in enumerate(n_reads.items()):
+    for sa,cov in n_reads.items():
         ax.axvline(cov/1e6, color='grey', linestyle='--')
         ax.text((cov+(k[-1]-k[0])/200)/1e6,0.1,f'{sa} ({cov/1e6:.2f} M)',rotation=-90)
     ax.set(**axparams)

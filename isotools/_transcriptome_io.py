@@ -271,8 +271,8 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
 
         else: #add to existing novel (e.g. not in reference) gene
             start, end=min(tr['exons'][0][0],g.start),max(tr['exons'][-1][1],g.end)
+            tr['annotation']=(5,{'intergenic':[]})
             if start<g.start or end>g.end:# range of the novel gene might have changed 
-                tr['annotation']=(5,{'intergenic':[]})
                 new_gene=Gene(start, end,g.data,self)
                 self.data[chrom].add(new_gene)#todo: potential issue: in this case two genes may have grown together
                 self.data[chrom].remove(g)
@@ -328,8 +328,9 @@ def _find_splice_sites(genes_ol, exons):
         sum_ol=splice_sites.sum(1)
         best_idx=sum_ol.argmax() #index of gene that covers the most splice sites
         if sum_ol[best_idx]>0:
-            additional=splice_sites[:,~splice_sites[best_idx]]# additional= sites not covered by top gene
-            elsefound=[(g.name,a) for g,a in zip(genes_ol,additional) if a.sum()>0 ] # genes that cover additional splice sites
+            not_in_best=np.where(~splice_sites[best_idx])[0]
+            additional=splice_sites[:,not_in_best]# additional= sites not covered by top gene
+            elsefound=[(g.name,not_in_best[a]) for g,a in zip(genes_ol,additional) if a.sum()>0 ] # genes that cover additional splice sites
             notfound=(splice_sites.sum(0)==0).nonzero() #not covered splice sites
             return (genes_ol[best_idx], elsefound, notfound)
     return None,None,np.zeros((len(exons)-1)*2, dtype=bool) 

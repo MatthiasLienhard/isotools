@@ -326,8 +326,8 @@ def filter_stats(self, groups=None, weight_by_coverage=True, min_coverage=2,cons
         title='Expressed Transcripts'
     else:
         title='Different Transcripts'
-        if min_coverage>1:
-            title+=f' > {min_coverage} reads'
+    if min_coverage>1:
+        title+=f' > {min_coverage} reads'
     return df, {'ylabel':ylab,'title':title}
 
 def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,x_range=(100,10000),weight_by_coverage=True,min_coverage=2,use_alignment=True, tr_filter={}, ref_filter={}):
@@ -344,7 +344,7 @@ def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(x_range[0],x_range[1],bins)
+        bins=np.linspace(x_range[0],x_range[1],bins+1)
     cov[cov<min_coverage]=0
     if not weight_by_coverage:    
         cov[cov>0]=1
@@ -353,7 +353,7 @@ def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,
         ref_len=[sum(e[1]-e[0] for e in tr['exons']) for _,_,tr in self.iter_ref_transcripts(**ref_filter)]
         counts['reference']=np.histogram(ref_len, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
-    params=dict(yscale='linear', title='transcript length',xlabel='transcript length [bp]', ylabel='density', density=True)
+    params=dict(yscale='linear', title='transcript length',xlabel='transcript length [bp]', density=True)
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
 def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(0.5,1000), tr_filter={}):
@@ -370,10 +370,10 @@ def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(0.5,1000), tr_f
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(x_range[0],x_range[1],bins)
+        bins=np.linspace(x_range[0],x_range[1],bins+1)
     counts=pd.DataFrame({gn:np.histogram(g_cov, bins=bins)[0] for gn,g_cov in cov.items()})
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
-    params=dict(yscale='log', title='transcript coverage',xlabel='reads per transcript', ylabel='# transcripts')
+    params=dict(yscale='log', title='transcript coverage',xlabel='reads per transcript')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
     #plot histogram
     # cov.mask(cov.lt(x_range[0]) | cov.gt(x_range[1])).plot.hist(ax=ax, alpha=0.5, bins=n_bins)
@@ -399,7 +399,7 @@ def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=50,
         
     ntr=pd.DataFrame((n for n in ntr if n.sum()>0), columns=group_names)    
     if isinstance(bins,int):
-        bins=np.linspace(x_range[0],x_range[1],bins)
+        bins=np.linspace(x_range[0],x_range[1],bins+1)
     counts=pd.DataFrame({gn:np.histogram(n, bins=bins)[0] for gn,n in ntr.items()})   
     if add_reference:
         if ref_filter:
@@ -412,7 +412,7 @@ def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=50,
         sub+=f', only including {", ".join(tr_filter["include"])}'
     if 'remove' in tr_filter:
         sub+=f', excluding {", ".join(tr_filter["remove"])}'
-    params=dict(yscale='log',title='transcript per gene\n'+sub,xlabel='transcript per gene', ylabel='# transcripts')
+    params=dict(yscale='log',title='transcript per gene\n'+sub,xlabel='transcript per gene')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
     
 def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=35,x_range=(0.5,69.5),weight_by_coverage=True,  min_coverage=2, tr_filter={}, ref_filter={}):
@@ -444,7 +444,7 @@ def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=35,x
         sub+=f', only including {", ".join(tr_filter["include"])}'
     if 'remove' in tr_filter:
         sub+=f', excluding {", ".join(tr_filter["remove"])}'
-    params=dict(yscale='log', title='exons per transcript\n'+sub,xlabel='number of exons per transcript', ylabel='# transcripts')
+    params=dict(yscale='log', title='exons per transcript\n'+sub,xlabel='number of exons per transcript')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
 def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1),weight_by_coverage=True,  min_coverage=2, tr_filter={}, ref_filter={}):
@@ -464,7 +464,7 @@ def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(x_range[0],x_range[1],bins)
+        bins=np.linspace(x_range[0],x_range[1],bins+1)
     cov[cov<min_coverage]=0
     if not weight_by_coverage:        
         cov[cov>0]=1
@@ -473,5 +473,43 @@ def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1
         ref_acontent=[tr['downstream_A_content'] for _,_,tr in self.iter_ref_transcripts(**ref_filter) if 'downstream_A_content' in tr]
         counts['reference']=np.histogram(ref_acontent, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
-    params=dict( title='downstream genomic A content',xlabel='fraction of A downstream the transcript', ylabel='# transcripts')
+    params=dict( title='downstream genomic A content',xlabel='fraction of A downstream the transcript')
+    return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
+
+def direct_repeat_hist(self, groups=None, bins=10, x_range=(-.5,10.5), weight_by_coverage=True, min_coverage=2, tr_filter={}):
+    novel_rl=[]
+    known_rl=[]
+    for g,trid,tr in self.iter_transcripts():
+        if 'annotation' in tr and 'novel exonic splice donor' in tr['annotation'][1] and 'novel exonic splice acceptor' in tr['annotation'][1]:
+            novel1, novel2=(tr['annotation'][1][k] for k in ('novel exonic splice donor','novel exonic splice acceptor'))
+            if g.strand=='-':
+                novel1, novel2=novel2,novel1
+            e1=[next(i for i,e in enumerate(tr['exons']) if e[1]==alt[0]) for alt in novel1]    
+            e2=[next(i for i,e in enumerate(tr['exons']) if e[0]==alt[0]) for alt in novel2]    
+            candidates=[e for e in e1 if e+1 in e2]
+            nc={v[0] for v in tr['noncanonical_splicing']} if 'noncanonical_splicing' in tr else {}
+            #splicesite=dict(tr.get('noncanonical_splicing',[]))
+            #novel_rl.extend((tr['direct_repeat_len'][c],g.coverage[:,trid],splicesite.get(c,'GTAG')) for c in candidates)
+            novel_rl.extend((tr['direct_repeat_len'][c],g.coverage[:,trid]) for c in candidates if c in nc)
+        if 'annotation' in tr and tr['annotation'][0]==0:
+            known_rl.extend((l,g.coverage[:,trid]) for l in tr['direct_repeat_len'])
+
+    known_rl_cov=pd.DataFrame((v[1] for v in known_rl), columns=self.samples)
+    novel_rl_cov=pd.DataFrame((v[1] for v in novel_rl), columns=self.samples)
+    if groups is not None:
+        known_rl_cov=pd.DataFrame({grn:known_rl_cov[grp].sum(1) for grn, grp in groups.items()})
+        novel_rl_cov=pd.DataFrame({grn:novel_rl_cov[grp].sum(1) for grn, grp in groups.items()})
+    known_rl_cov[known_rl_cov<min_coverage]=0
+    novel_rl_cov[novel_rl_cov<min_coverage]=0
+    if not weight_by_coverage:        
+        known_rl_cov[known_rl_cov>0]=1
+        novel_rl_cov[novel_rl_cov>0]=1
+    rl={'novel noncanonical':novel_rl, 'known':known_rl}
+    cov={'novel noncanonical':novel_rl_cov, 'known':known_rl_cov}
+    if isinstance(bins,int):
+        bins=np.linspace(x_range[0],x_range[1],bins+1)
+    counts=pd.DataFrame({f'{sa} {k}':np.histogram([val[0] for val in v],weights=cov[k][sa], bins=bins)[0]  for k,v in rl.items() for sai,sa in enumerate(groups)}   )
+
+    bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
+    params=dict( title='direct repeat length',xlabel='length of direct repeats at splice junctons', ylabel='# transcripts')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params

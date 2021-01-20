@@ -1,0 +1,13 @@
+numpy
+pandas
+tqdm
+intervaltree
+matplotlib
+seaborn
+biopython
+pysam
+umap
+sklearn
+scipy
+statsmodels
+

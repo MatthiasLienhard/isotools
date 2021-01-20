@@ -2,7 +2,9 @@
 import matplotlib.colors as plt_col
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
+import matplotlib
 from matplotlib.ticker import FuncFormatter
+
 import numpy as np
 from math import log10
 import logging
@@ -70,6 +72,7 @@ def sashimi_plot(self,samples=None,short_read_samples=None,gene_track=True,long_
         x_range=(self.start-100, self.end+100)
 
     f,axes=plt.subplots(len(samples)+len(short_read_samples) +gene_track)
+    axes=np.atleast_1d(axes) # in case there was only one subplot
 
     if gene_track:
         self.gene_track(ax=axes[0],x_range=x_range)
@@ -225,16 +228,33 @@ def _sashimi_plot_long_reads(splice_graph,sidx, title, ax,junctions_of_interest,
     #ax.set_xscale(1e-6, 'linear')
     ax.set_title(title)
 
-def gene_track(self, ax=None,title=None, draw_exon_numbers=True, color='blue',x_range=None):
+def gene_track(self, ax=None,title=None, reference=True, remove_transcripts=None, label_exon_numbers=True,label_transcripts=True,label_fontsize=10, color='blue',x_range=None):
     contrast='white' if np.mean(plt_col.to_rgb(color))<.5 else 'black'
     if ax is None:
         _,ax = plt.subplots(1)    
-    i=0
     if x_range is None:
         x_range=(self.start-100, self.end+100)
-    for tr in self.ref_transcripts:
+    blocked=[]
+    if remove_transcripts is None:
+        remove_transcripts=[]
+    if reference:
+        transcript_list=sorted([(tr_nr,tr) for tr_nr,tr in enumerate(self.ref_transcripts) if tr_nr not in remove_transcripts],key=lambda x:x[1]['exons'][0][0]) #sort by start position
+    else:
+        transcript_list=sorted([(tr_nr,tr) for tr_nr,tr in enumerate(self.transcripts)     if tr_nr not in remove_transcripts],key=lambda x:x[1]['exons'][0][0]) 
+    for tr_nr,tr in transcript_list:
+        trid=tr['transcript_name'] if 'transcript_name' in tr else f'transcript {tr_nr}'
+        # find next line that is not blocked
+        try:
+            i=next(idx for idx,last in enumerate(blocked) if last<tr['exons'][0][0] )
+        except StopIteration:
+            i=len(blocked)
+            blocked.append(tr['exons'][-1][1])
+        else:
+            blocked[i]=tr['exons'][-1][1]
         #line from TSS to PAS at 0.25
         ax.plot((tr['exons'][0][0], tr['exons'][-1][1]), [i+.25]*2, color=color)
+        if label_transcripts:
+            ax.text((tr['exons'][0][0]+tr['exons'][-1][1])/2,i-.02,trid, ha='center', va='top',fontsize=label_fontsize)
         #idea: draw arrow to mark direction?
         for j,(st, end) in enumerate(tr['exons']):
             if 'CDS' in tr and tr['CDS'][0] <= end and tr['CDS'][1] >= st:#CODING exon
@@ -251,18 +271,16 @@ def gene_track(self, ax=None,title=None, draw_exon_numbers=True, color='blue',x_
             else: #non coding
                 rect = patches.Rectangle((st,i+.125),(end-st),.25,linewidth=1,edgecolor=color,facecolor=color)
                 ax.add_patch(rect)  
-            if draw_exon_numbers:
+            if label_exon_numbers:
                 enr=j+1 if self.strand=='+' else len(tr['exons'])-j
-                ax.text((st+end)/2,i+.25,enr,ha='center', va='center', color=contrast).set_clip_on(True)    #bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)
+                ax.text((st+end)/2,i+.25,enr,ha='center', va='center', color=contrast, fontsize=label_fontsize).set_clip_on(True)    #bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)
         i+=1
     if title is None:
         title=self.name
     ax.set_title(title)
     ax.set(frame_on=False)   
-    ax.set_yticks([i+.25 for i in range(self.n_ref_transcripts)])
-    ax.set_yticklabels(tr['transcript_name'] if 'transcript_name' in tr else f'transcript {i}' for i,tr in enumerate(self.ref_transcripts) ) 
-    ax.tick_params(left=False)
-    ax.set_ylim(-.5,self.n_ref_transcripts+1)
+    ax.get_yaxis().set_visible(False)
+    ax.set_ylim(-.5,len(blocked))
     ax.set_xlim(*x_range)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
     return ax

@@ -83,7 +83,7 @@ def iter_genes(self, region=None,include=None, remove=None):
             start, end=[int(v) for v in pos.split('-')]
         except:
             raise ValueError('incorrect region {} - specify as string "chr:start-end" or tuple ("chr",start,end)'.format(region))
-        else:
+        finally:
             genes=self.data[chrom][start:end]
     for g in genes:
         if not include or any(f in include for f in g.data['filter']):

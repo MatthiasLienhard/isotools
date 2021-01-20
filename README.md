@@ -1,19 +1,32 @@
 # isotools
 python module for isoseq postprocessing
 * import of bam files (aligned isoseq transcripts)
-* collapsing isoseq transcripts
-    * truncation
-    * fuzzy junctions (todo)
-* import of gff files (e.g. for reference annotation, but also isoseq in gtf format)
-* comparison to reference annotation (e.g. refseq)
-    * for gene names
-    * to detect alternative splicing wrt referernce
-
-## TODO:
-* class implementation:
-    * transcriptome.Transcriptome()
-* collapse isoforms:
+* import of reference annotation in gff3/gtf format
+* annotation and classification of isoseq transcripts
+    * biologically motivated classification scheme
     * fuzzy junctions
-    * thresholds for truncation
-    * consider misalignments???
 
+## installation:
+
+```
+git clone https://github.molgen.mpg.de/lienhard/isotools.git
+cd isotools
+pip install .
+```
+
+## usage:
+```python
+from  isotools.transcriptome import Transcriptome
+import logging
+logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
+isoseq=Transcriptome.from_reference('reference_file.gff3.gz')
+isoseq_bam_fn={'sample1':'isoseq_fn_s1.bam', 'sample2':'isoseq_fn_s2.bam'}
+groups={'sample1':'control', 'sample2':'treatment'}
+for sa,bam in isoseq_bam_fn.items():
+    isoseq.add_sample_from_bam(bam, sample_name=sa, group=groups[sa]) 
+isoseq.add_biases('genome.fa')
+isoseq.make_index()
+isoseq.add_filter()
+isoseq.save('example_isotools.pkl')
+
+```

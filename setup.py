@@ -23,6 +23,6 @@ setuptools.setup(
     ],
     python_requires='>=3.6',
     entry_points={
-        'console_scripts':['flowkey-dl = isotools.run_isotools:main']},
+        'console_scripts':['run_isotools = isotools.run_isotools:main']},
     install_requires=requirements
 )

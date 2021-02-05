@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import pandas as pd
 from intervaltree import IntervalTree, Interval
@@ -75,16 +74,19 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
         total_alignments = sum([s.mapped for s in stats if s.contig in chromosomes])
         total_reads=0
         chimeric=dict()
-        with tqdm(total=total_alignments, unit='transcripts') as pbar:
+        with tqdm(total=total_alignments, unit='reads') as pbar:
+            
             for chrom in chromosomes: #todo: potential issue here - secondary/chimeric alignments to non listed chromosomes are ignored
                 pbar.set_postfix(chr=chrom)
                 #transcripts=IntervalTree()
                 #novel=IntervalTree()
                 chr_len=align.get_reference_length(chrom)
-                transcripts=IntervalArray(chr_len) #intervaltree was pretty slow
+                transcripts=IntervalArray(chr_len) #intervaltree was pretty slow for this context 
                 novel=IntervalArray(chr_len)
+                n_reads=0
                 for read in align.fetch(chrom):
-                    pbar.update()
+                    n_reads+=1
+                    pbar.update(.5)
                     if read.flag & 0x100:
                         n_secondary+=1
                         continue # use only primary alignments
@@ -131,11 +133,15 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                     tr['exons'][0][0]=min(r[0] for r in tr_ranges) #todo - instead of extreams take the median?
                     tr['exons'][-1][1]=max(r[1] for r in tr_ranges)  
                     tr.setdefault('coverage',{}).setdefault(sample_name,0)
-                    tr['coverage'][sample_name]+=sum(tr_ranges.values())
+                    cov=sum(tr_ranges.values())
+                    tr['coverage'][sample_name]+=cov
                     gene=self._add_sample_transcript(tr,chrom, sample_name, fuzzy_junction) 
                     if gene is None:
-                        novel.add(tr_interval)    
+                        novel.add(tr_interval)  
+                    n_reads-=cov
+                    pbar.update(cov/2)
                 self._add_novel_genes(novel,chrom)
+                pbar.update(n_reads/2) #the chimeric reads are missing here...
     kwargs['total_reads']=total_reads
     self.infos['sample_table']=self.sample_table.append(kwargs, ignore_index=True)
     #merge chimeric reads and assign gene names
@@ -184,7 +190,7 @@ def _add_chimeric(self,new_chimeric, min_cov):
                     if part[0] in self.data:
                         genes_ol=[g for g in self.data[part[0]][part[2][0][0]: part[2][-1][1]] if g.strand==part[1]]
                         #g,_=_get_intersects(genes_ol, part[2])
-                        g,_,_=_find_splice_sites(genes_ol, part[2]) #take the best - ignore other hits here
+                        g,_,_,_=_find_splice_sites(genes_ol, part[2]) #take the best - ignore other hits here
                         if g is not None:
                             part[4]=g.name
                             g.data.setdefault('chimeric',{})[new_bp]=self.chimeric[new_bp]
@@ -238,10 +244,12 @@ def _check_chimeric(chimeric):
 def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
     'add transcript to gene in chrom - return gene on success and None if no Gene was found'
     if chrom not in self.data:
+        tr['annotation']  =(4,{'intergenic':[]})
         return None
-    genes_ol = [g for g in self.data[chrom][tr['exons'][0][0]: tr['exons'][-1][1]] if g.strand==tr['strand'] ] 
+    genes_ol =self.data[chrom][tr['exons'][0][0]: tr['exons'][-1][1]]
+    genes_ol_strand= [g for g in genes_ol if g.strand==tr['strand'] ] 
     #check if transcript is already there (e.g. from other sample):
-    for g in genes_ol:
+    for g in genes_ol_strand:
         for tr2 in g.transcripts:
             if splice_identical(tr2['exons'], tr['exons']):
                 tr2['coverage'][sample_name]=tr['coverage'][sample_name]
@@ -251,10 +259,8 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
                 return g
     #check if gene is already there (e.g. from same or other sample):
     #g,_=_get_intersects(genes_ol, tr['exons'])
-    g,additional,not_covered=_find_splice_sites(genes_ol, tr['exons'])
-    if g is not None:            
-        if additional:
-            tr['additional_ref_genes']=additional
+    g,ref_ol,additional,not_covered=_find_splice_sites(genes_ol_strand, tr['exons'])
+    if g is not None:
         if g.is_annotated: #check for fuzzy junctions (e.g. same small shift at 5' and 3' compared to reference annotation)
             shifts=g.correct_fuzzy_junctions(tr, fuzzy_junction, modify=True) #this modifies tr['exons']
             if shifts: 
@@ -264,23 +270,37 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
                         tr2.setdefault('fuzzy_junction', {}).setdefault(sample_name,[]).append(shifts) #keep the info, mainly for testing/statistics    
                         tr2['coverage'][sample_name]=tr2['coverage'].get(sample_name,0)+tr['coverage'][sample_name]
                         return g 
-            tr['annotation']=g.ref_splice_graph.get_alternative_splicing(tr['exons'], g.strand)
+            tr['annotation']=g.ref_splice_graph.get_alternative_splicing(tr['exons'], g.strand, additional)
             if not_covered:
                 tr['novel_splice_sites']=not_covered #todo: might be changed by fuzzy junction
             #{'sj_i': sj_i, 'base_i':base_i,'category':SPLICE_CATEGORY[altsplice[1]],'subcategory':altsplice[1]} #intersects might have changed due to fuzzy junctions
 
         else: #add to existing novel (e.g. not in reference) gene
             start, end=min(tr['exons'][0][0],g.start),max(tr['exons'][-1][1],g.end)
-            tr['annotation']=(5,{'intergenic':[]})
+            tr['annotation']=(4,_get_novel_type(genes_ol, genes_ol_strand, ref_ol))
             if start<g.start or end>g.end:# range of the novel gene might have changed 
                 new_gene=Gene(start, end,g.data,self)
                 self.data[chrom].add(new_gene)#todo: potential issue: in this case two genes may have grown together
                 self.data[chrom].remove(g)
                 g=new_gene
+        #if additional:
+        #    tr['annotation']=(4,tr['annotation'][1]) #fusion transcripts... todo: overrule tr['annotation']
         g.data.setdefault('transcripts',[]).append(tr) 
         g.data['splice_graph']=None #gets recomputed on next request      
-        g.data['coverage'] =None   
+        g.data['coverage'] =None 
+    else:
+        tr['annotation']  =(4,_get_novel_type(genes_ol, genes_ol_strand, ref_ol))
     return g
+
+def _get_novel_type(genes_ol, genes_ol_strand, ref_ol):
+    if len(ref_ol):
+        return {'genic genomic':list(ref_ol.keys())}
+    elif len(genes_ol_strand):
+        return {'intronic':[g.name for g in genes_ol_strand]}
+    elif len(genes_ol):
+        return {'antisense':[g.name for g in genes_ol]}
+    else:
+        return {'intergenic':[]} 
 
 def _add_novel_genes( self,novel,chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix='PB_novel_'):
     '"novel" is a tree of transcript intervals (not Gene objects) ,e.g. from one chromosome, that do not overlap any annotated or unanntoated gene'
@@ -288,7 +308,6 @@ def _add_novel_genes( self,novel,chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix
     idx={id(tr):i for i,tr in enumerate(novel)}
     merge=list()
     for i,tr in enumerate(novel):  
-        tr.data['annotation']  =(5,{'intergenic':[]})
         merge.append({tr})
         candidates=[c for c in novel.overlap(tr.begin, tr.end) if c.data['strand']==tr.data['strand'] and idx[id(c)]<i]
         for c in candidates:
@@ -316,24 +335,28 @@ def _add_novel_genes( self,novel,chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix
 
 def _find_splice_sites(genes_ol, exons):
     '''check the splice site intersect of all overlapping genes and return 
-        1) the best gene, 2) names of genes that cover additional splice sites, and 3) splice sites that are not covered. 
+        1) the best gene, 2) exonic reference gene overlap 3) names of genes that cover additional splice sites, and 4) splice sites that are not covered. 
         For mono-exon genes return the gene with largest exonic overlap'''
     if genes_ol:
+        ref_ol={g.name:g.ref_splice_graph.get_overlap(exons) for  g in genes_ol if g.is_annotated}
         if len(exons)==1: #no splice sites, but return gene with largest overlap
-            ol=np.array([g.ref_splice_graph.get_overlap(exons) if g.is_annotated else g.splice_graph.get_overlap(exons) for  g in genes_ol ])
+            ol=np.array([ref_ol[g.name] if g.is_annotated else g.splice_graph.get_overlap(exons) for  g in genes_ol ])
             best_idx=ol.argmax()
             if ol[best_idx]>0:
-                return genes_ol[best_idx],None,None
-        splice_sites=np.array([g.ref_splice_graph.find_splice_sites(exons) if g.is_annotated else g.splice_graph.find_splice_sites(exons) for  g in genes_ol ])
-        sum_ol=splice_sites.sum(1)
-        best_idx=sum_ol.argmax() #index of gene that covers the most splice sites
-        if sum_ol[best_idx]>0:
-            not_in_best=np.where(~splice_sites[best_idx])[0]
-            additional=splice_sites[:,not_in_best]# additional= sites not covered by top gene
-            elsefound=[(g.name,not_in_best[a]) for g,a in zip(genes_ol,additional) if a.sum()>0 ] # genes that cover additional splice sites
-            notfound=(splice_sites.sum(0)==0).nonzero() #not covered splice sites
-            return (genes_ol[best_idx], elsefound, notfound)
-    return None,None,np.zeros((len(exons)-1)*2, dtype=bool) 
+                return genes_ol[best_idx],ref_ol,None,None
+        else:
+            splice_sites=np.array([g.ref_splice_graph.find_splice_sites(exons) if g.is_annotated else g.splice_graph.find_splice_sites(exons) for  g in genes_ol ])
+            sum_ol=splice_sites.sum(1)
+            best_idx=sum_ol.argmax() #index of gene that covers the most splice sites
+            if sum_ol[best_idx]>0:
+                not_in_best=np.where(~splice_sites[best_idx])[0]
+                additional=splice_sites[:,not_in_best]# additional= sites not covered by top gene
+                elsefound=[(g.name,not_in_best[a]) for g,a in zip(genes_ol,additional) if a.sum()>0 ] # genes that cover additional splice sites
+                notfound=(splice_sites.sum(0)==0).nonzero() #not covered splice sites
+                return genes_ol[best_idx],ref_ol, elsefound, notfound
+    else:
+        ref_ol={}
+    return None,ref_ol,None,np.zeros((len(exons)-1)*2, dtype=bool) 
 
 
 def _get_intersects(genes_ol, exons):
@@ -425,7 +448,7 @@ def import_gtf_transcripts(fn,transcriptome, chromosomes=None):
 def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=['gene']):
     '''import transcripts from gff file (e.g. for a reference)
     returns a dict interval trees for the genes'''
-    file_size=os.path.getsize(fn)
+    #file_size=os.path.getsize(fn) # does not help for eat 
     gff = TabixFile(fn)        
     chrom_ids = get_gff_chrom_dict(gff, chromosomes)    
     exons = dict()  # transcript id -> exons
@@ -560,7 +583,6 @@ def get_mutations(cigartuples, seq, ref_start,qual):
 
 def aligned_part(cigartuples, is_reverse):
     "returns the interval of the trasncript that is aligned (e.g. not clipped) according to cigar. Positions are according to transcript strand"
-    parts=[]
     start=end=0
     for cigar in reversed(cigartuples) if is_reverse else cigartuples:
         if cigar[0] in (0, 1, 7, 8):  # MI=X -> move forward on read:
@@ -615,18 +637,18 @@ def gene_table(self, region=None ): #ideas: filter, extra_columns
     df = pd.DataFrame(rows, columns=colnames)
     return(df)
 
-def transcript_table(self, region=None, extra_columns=None,  include=None, remove=None): 
+def transcript_table(self, region=None, extra_columns=None,  include=None, remove=None, min_coverage=None, max_coverage=None): 
     'create a transcript table'
     if extra_columns is None:
         extra_columns=[]
     if not isinstance( extra_columns, list):
         raise ValueError('extra_columns should be provided as list')
-    extracolnames={'annotation':('splice_intersect', 'base_intersect','splicing_comparison'),'coverage':(f'coverage_{sn}' for sn in self.samples)}
+    extracolnames={'annotation':('novelty_class', 'novelty_subclasses'),'coverage':(f'coverage_{sn}' for sn in self.samples)}
 
-    colnames=['chr', 'gene_start', 'gene_end','strand', 'gene_id','gene_name' ,'transcript_nr']  + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
+    colnames=['chr', 'transcript_start', 'transcript_end','strand', 'gene_id','gene_name' ,'transcript_nr']  + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
     rows=[]
-    for g,trid, _ in self.iter_transcripts(region, include,remove):                
-        rows.append([g.chrom, g.start, g.end, g.strand,g.id, g.name, trid]+g.get_infos(trid,extra_columns))
+    for g,trid, tr in self.iter_transcripts(region, include,remove, min_coverage, max_coverage):                
+        rows.append([g.chrom, tr['exons'][0][0], tr['exons'][-1][1], g.strand,g.id, g.name, trid]+g.get_infos(trid,extra_columns))
     df = pd.DataFrame(rows, columns=colnames)
     return(df)
 

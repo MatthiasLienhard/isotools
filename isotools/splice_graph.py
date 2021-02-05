@@ -164,18 +164,25 @@ class SpliceGraph():
         return fragments
 
 
-    def get_alternative_splicing(self, exons,strand): 
+    def get_alternative_splicing(self, exons,strand, alternative=None): 
         'compares exons to splice graph and returns list of novel splicing events'
         #returns a tuple
         # the sqanti category: 0=FSM,1=ISM,2=NIC,3=NNC,4=Novel gene
         # subcategories: a list of novel splicing events or splice_identical
         #t='novel exon','intron retention', 'novel exonic', 'novel intronic','splice identical','combination', 'fragment', 'extention'
-        tr=self.search_transcript(exons)
-        if tr:
-            return 0,{'FSM':tr}
         
-        category=1
-        altsplice={}
+        if alternative is not None and len(alternative)>0: # a list of tuples with (1) gene names and (2) junction numbers covered by other genes (e.g. readthrough fusion)
+            category=4
+            fusion_exons={int((i+1)/2) for j in alternative for i in j[1]}
+            altsplice={'readthrough fusion':alternative}
+        else:
+            tr=self.search_transcript(exons)
+            if tr:
+                return 0,{'FSM':tr}        
+            category=1
+            altsplice={}
+            fusion_exons=set()
+
         is_reverse=strand=='-'
         j1=next(j for j,n in enumerate(self) if n.end > exons[0][0])
         #j1: index of first segment ending after exon start (i.e. first overlapping segment)        
@@ -185,39 +192,46 @@ class SpliceGraph():
             j2=len(self)-1
         #j2: index of last segment starting befor exon end (i.e. last overlapping segment)   
      
-        #check fragments at begining        
-        if len(exons)>1 and self[j1].pre and not any(j in self._tss for j in range(j1,j2+1)):
-            if self[j1].start>exons[0][0]:
-                site='PAS' if is_reverse else 'TSS'
-                altsplice.setdefault(f'novel {site}',[]).append((exons[0][0],self[j1].start))
-                category=3
-            else:
-                tr_nr, j0=max(((trid,self._tss[trid]) for trid in self[j1].pre), key=lambda x:x[1])#j0 is the closest start node
-                if not self.is_same_exon(tr_nr,j0,j1): #fragment at beginning: ISM
-                    end='3' if is_reverse else '5'
-                    altsplice.setdefault(f'{end}\' fragment',[]).append([self[j0].start, exons[0][0]]) #at start (lower position)
+        #check truncation at begining (e.g. low position)
+        if (    len(exons)>1 and #no mono exon
+                not any(j in self._tss for j in range(j1,j2+1)) and # no tss/pas within exon
+                self[j1].start<= exons[0][0]): # start of first exon is exonic in ref
+            j0=max(self._tss[trid] for trid in self[j1].pre)#j0 is the closest start node
+            if any(self[j].end < self[j+1].start for j in range(j0,j1)): #assure there is an intron between closest tss/pas and exon
+                end='3' if is_reverse else '5'
+                altsplice.setdefault(f'{end}\' fragment',[]).append([self[j0].start, exons[0][0]]) #at start (lower position)
 
 
         for i,ex1 in enumerate(exons):                               
             ex2=None if i+1==len(exons) else exons[i+1]            
-            j1, exon_altsplice,exon_cat=self._check_exon(j1,j2,i==0,is_reverse,ex1, ex2) #finds intron retention, exon skipping, novel junction (NIC) AND  novel exons, novel splice sites,  novel pas/tss  (NNC)
-            category=max(exon_cat,category)
-            for k,v in exon_altsplice.items(): #e and the next if any
-                altsplice.setdefault(k,[]).extend(v)
-            # find j2: index of last segment starting befor exon2 end (i.e. last overlapping  segment)
-            if ex2 is not None:
-                if j1<len(self)-1:
-                    try:
-                        j2=next(j-1 for j in range(j1,len(self)) if self[j].start >= ex2[1])
-                    except StopIteration:
-                        j2=len(self)-1
-                else:
-                    j2=len(self)-1
+            if i not in fusion_exons:
+                exon_altsplice,exon_cat=self._check_exon(j1,j2,i==0,is_reverse,ex1, ex2) #finds intron retention (NIC), novel exons, novel splice sites,  novel pas/tss  (NNC)
+                category=max(exon_cat,category)
+                for k,v in exon_altsplice.items(): 
+                    altsplice.setdefault(k,[]).extend(v)
+                # find j2: index of last segment starting befor exon2 end (i.e. last overlapping  segment)
+                if ex2 is not None:
+                    if j2+1<len(self):
+                        j1,j2, junction_altsplice=self._check_junction(j2,ex1,ex2) #finds exon skipping and novel junction (NIC)
+                        if junction_altsplice and i+1 not in fusion_exons:
+                            category=max(2,category)
+                            for k,v in junction_altsplice.items():
+                                altsplice.setdefault(k,[]).extend(v)
+                    else:
+                        j1=len(self)
+
         
-        #check fragments at end
-        if len(exons)>1 and self[j2].end >= exons[-1][1] and self[j2].suc and not any(j in self._pas for j in range(j1,j2+1)):
-            tr_nr, j3=min(((trid,self._pas[trid]) for trid in self[j2].suc), key=lambda x:x[1]) #j3 is the next end node (pas/tss on fwd/rev)
-            if not self.is_same_exon(tr_nr,j2,j3):
+        #check truncation at end (e.g. high position)
+        if ( len(exons)>1 and
+                j2>=j1 and
+                not any(j in self._pas for j in range(j1,j2+1)) and# no tss/pas within exon
+                self[j2].end >= exons[-1][1]):# end of last exon is exonic in ref
+            try:
+                j3=min(self._pas[trid] for trid in self[j2].suc) #j3 is the next end node (pas/tss on fwd/rev)
+            except ValueError:
+                logger.error('\n'.join([str(exons), str(self._pas),str((j1,j2)),str([(j,n) for j,n in enumerate(self)])]))
+                raise 
+            if any(self[j].end < self[j+1].start for j in range(j2,j3)): #assure there is an intron between closest tss/pas and exon
                 end='5' if is_reverse else '3'
                 altsplice.setdefault(f'{end}\' fragment',[]).append([exons[-1][1],self[j3].end])
         
@@ -237,7 +251,7 @@ class SpliceGraph():
         is_last=e2==None
         altsplice={}
         category=0
-        if j1>j2: #e is not contained at all  -> intronic 
+        if j1>j2: #e is not contained at all  -> novel exon (or TSS/PAS if first/last)
             category=3
             if is_first or is_last:
                 altsplice={'novel PAS' if is_first==is_reverse else 'novel TSS':[e]}
@@ -248,73 +262,74 @@ class SpliceGraph():
             altsplice['mono-exon']=[]
             category=1
         else: # check splice sites
-            if self[j1][0]!=e[0]:
+            if self[j1][0]!=e[0]: #first splice site missmatch
                 if not is_first:
                     pos="intronic" if self[j1][0]>e[0] else "exonic"
                     kind='donor' if is_reverse else 'acceptor'
                     dist=e[0]-self[j1][0] #the distance to next junction
                     altsplice[f'novel {pos} splice {kind}']=[(e[0],dist)] 
                     category=3
-                elif self[j2][0] > e[0] and not any(j in self._tss for j in range(j1,j2+1)): 
+                elif self[j1][0] > e[0] and not any(j in self._tss for j in range(j1,j2+1)): #exon start is intronic in ref
                     site='PAS' if is_reverse else 'TSS'
-                    altsplice.setdefault(f'novel {site}',[]).append((self[j2][1],e[1]))
+                    altsplice.setdefault(f'novel {site}',[]).append((e[0], self[j1][0]))
                     category=max(2,category)  
-            if self[j2][1]!=e[1]:
-                if e2 is not None:
+            if self[j2][1]!=e[1]:#second splice site missmatch
+                if not is_last:
                     pos="intronic" if self[j2][1]<e[1] else "exonic"
                     kind='acceptor' if is_reverse else 'donor'
                     dist= e[1]-self[j2][1]
                     altsplice.setdefault(f'novel {pos} splice {kind}',[]).append((e[1],dist))
                     category=3
-                elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1,j2+1)): 
+                elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1,j2+1)): #exon end is intronic in ref
                     site='TSS' if is_reverse else 'PAS'
                     altsplice.setdefault(f'novel {site}',[]).append((self[j2][1],e[1]))
                     category=max(2,category)    
 
-            #find intron retentions
-        ret_introns=[]
-        for j_a,j_b in pairwise(range(j1,j2+1)):
-            if self[j_a].end < self[j_b].start: #gap
-                ret_introns.extend([(self[j].end,self[j_b].start) for j in self[j_b].pre.values() if self[j].end> e[0]])
-                                    
-        #check for overlapping intron retentions, and keep only the smallest
-        if ret_introns:                
-            rm=[]
-            for idx,intron in enumerate(ret_introns):
-                if idx in rm:
-                    continue
-                ol=[idx]
-                for idx2 in range(idx+1,len(ret_introns)):
-                    if idx2 not in rm and overlap(intron ,ret_introns[idx2]):
-                        ol.append(idx2)
-                if len(ol)>1:  #several overlapping intron retentions: keep only the smallest
-                    keep=min(ol, key=lambda x: ret_introns[x][1]-ret_introns[x][0])
-                    rm.extend([x for x in ol if x != keep])
-            altsplice['intron retention']=[intron for idx,intron in enumerate(ret_introns) if idx not in rm]           
-            logger.debug(f'{[("OK",intr) if idx not in rm else ("rm",intr) for idx,intr in enumerate(ret_introns)]}')
-            category=max(2,category)
-        if e2 is not None: #check presence e1-e2 junction in ref (-> if not exon skipping or novel junction)
-            #find j3: first node overlapping e2
-            introns=[]
-            for j3 in range(j2,len(self)-1): 
-                if j3 in self[j3-1].suc.values() and self[j3-1][1]<self[j3][0]: #"real" junction 
-                    introns.append([self[j3-1][1],self[j3][0]])
-                if self[j3][1] > e2[0]:
-                    break
-            else:
-                j3=len(self) #e2 does not overlap splice graph
-            if j3<len(self) and j3 not in self[j2].suc.values(): #direkt e1-e2 junction not present
-                if set.intersection(set(self[j2].suc.keys()),set(self[j3].pre.keys())) and len(introns)>1: #path from e1 to e2 present
-                    #assert len(introns)>1,'logical issue - exon skipping should involve two introns'
+        #find intron retentions
+        if j1<j2:
+            ret_introns=[]
+            troi=set(self[j1].suc.keys()).intersection(self[j2].pre.keys())
+            if troi:
+                j=j1
+                while j<j2:
+                    nextj=min(js for trid,js in self[j].suc.items() if trid in troi)
+                    if self[nextj].start-self[j].end>0:
+                        ret_introns.append((self[nextj].start,self[j].end))
+                    j=nextj
+                if ret_introns:                
+                    altsplice['intron retention']=ret_introns
                     category=max(2,category)
-                    for i1,i2 in pairwise(introns):
-                        altsplice.setdefault('exon skipping',[]).append([i1[1], i2[0]])
-                elif e[1]==self[j2].end and e2[0]==self[j3].start: #e1-e2 path is not present, but splice sites are
-                    altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter
-        else:
-            j3=j1
         logger.debug(f'check exon {e} resulted in {altsplice}')
-        return j3, altsplice, category
+        return altsplice, category
+
+    def _check_junction(self, j2, e, e2):
+        #1) check presence e1-e2 junction in ref (-> if not exon skipping or novel junction)
+        #2) find j3: first node overlapping e2 and j4: last node overlapping e2
+        altsplice={}
+        introns=[]
+        for j3 in range(j2+1,len(self)-1): 
+            if j3 in self[j3-1].suc.values() and self[j3-1][1]<self[j3][0]: #"real" junction 
+                introns.append([self[j3-1][1],self[j3][0]])
+            if self[j3][1] > e2[0]:
+                break
+        else:
+            j3=len(self) #e2 does not overlap splice graph
+        if j3<len(self) and j3 not in self[j2].suc.values(): #direkt e1-e2 junction not present
+            if set.intersection(set(self[j2].suc.keys()),set(self[j3].pre.keys())) and len(introns)>1: #path from e1 to e2 present
+                #assert len(introns)>1,'logical issue - exon skipping should involve two introns'
+                for i1,i2 in pairwise(introns):
+                    altsplice.setdefault('exon skipping',[]).append([i1[1], i2[0]])
+            elif e[1]==self[j2].end and e2[0]==self[j3].start: #e1-e2 path is not present, but splice sites are
+                altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter
+        
+        logger.debug(f'check junction {e[1]} - {e2[0]} resulted in {altsplice}')
+        #find last node overlapping e2
+        try:
+            j4=next(j-1 for j in range(j3,len(self)) if self[j].start >= e2[1])
+        except StopIteration:
+            j4=len(self)-1
+        
+        return j3,j4, altsplice
             
     def fuzzy_junction(self,exons,size):
         #for each intron from "exons", look for introns in the splice graph shifted by less than "size".
@@ -466,11 +481,11 @@ class SpliceGraph():
             return False
         return True
 
-    def get_splice_coverage(self):
-        '''search for alternative paths in the splice graphs ("loops"), 
+    def find_splice_bubbles(self):
+        '''search for alternative paths in the splice graphs ("bubbles"), 
         e.g. combinations of nodes A and B with more than one path from A to B.
-        returns the coverage of most direkt path and alternative paths, positions and type of alternative'''
-        alt_types=['ES','ASL', 'ASR','IR','ME'] # alternative types: intron retention, alternative splice site at left and right, exon skipping, mutually exclusive
+        returns the transcript numbers and node ids of most direkt paths and alternative paths respectivly and type of alternative'''
+        #alt_types=['ES','ASL', 'ASR','IR','ME'] # alternative types: intron retention, alternative splice site at left and right, exon skipping, mutually exclusive
         inB_sets=[(set(),set())] #list of spliced and unspliced transcripts joining in B
         for i, nB in enumerate(self[1:]):
             inB_sets.append((set(),set()))
@@ -487,19 +502,19 @@ class SpliceGraph():
             unspliced=nA.end==self[junctions[0]].start
             alternative=([],outA_sets[junctions[0]]) if unspliced else (outA_sets[junctions[0]],[])
             logger.debug(f'checking node {i}: {nA} ({list(zip(junctions,[outA_sets[j] for j in junctions]))})')
-            for idx,joi in enumerate(junctions[1:]): # start from second, as first does not have an alternative
+            for joi in junctions[1:]: # start from second, as first does not have an alternative
                 nB=self[joi]
                 alternative=[{tr for tr in alternative[i] if self._pas[tr]>joi} for i in range(2)] #check that transcripts extend beyond nB
                 logger.debug(alternative)
-                weight=self.weights[:,list(outA_sets[joi])].sum(1)  
+                #weight=self.weights[:,list(outA_sets[joi])].sum(1)  
                 found=[trL1.intersection(trL2) for trL1 in alternative for trL2 in inB_sets[joi]] #alternative transcript sets for the 4 types
-                found.append(set.union(*alternative)-inB_sets[joi][0]-inB_sets[joi][1]) #5th type: mutually exclusive
+                found.append(set.union(*alternative)-inB_sets[joi][0]-inB_sets[joi][1]) #5th type: mutually exclusive                
                 logger.debug(f'checking junction {joi} (tr={outA_sets[joi]}) and found {found} at B={inB_sets[joi]}')                
                 for alt_type, alt in enumerate(found):
                     if alt:
-                        alt_weight=self.weights[:,list(alt)].sum(1)
+                        #alt_weight=self.weights[:,list(alt)].sum(1)
                         logger.debug(f'found loop {outA_sets[joi]} vs {alt} ({alt_type})')
-                        yield weight, weight+alt_weight,nA.end,nB.start,alt_type
+                        yield list(outA_sets[joi]),list(alt),i,joi,alt_type
                 alternative[0].update(outA_sets[joi]) #now transcripts supporting joi join the alternatives
                 
                 

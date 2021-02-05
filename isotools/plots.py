@@ -1,11 +1,9 @@
-import matplotlib.colors as plt_col
 import matplotlib.pyplot as plt
 from scipy.stats import beta,nbinom
 
 import seaborn as sns
 import pandas as pd
 import numpy as np
-from math import log10
 import logging
 logger=logging.getLogger('isotools')
 

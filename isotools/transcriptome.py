@@ -3,9 +3,8 @@ import pickle
 import logging
 from ._transcriptome_io import import_gtf_transcripts, import_gff_transcripts
 from .gene import Gene
-from intervaltree import IntervalTree, Interval
+from intervaltree import IntervalTree #, Interval
 import pandas as pd
-import logging
 logger=logging.getLogger('isotools')
 
 # as this class has diverse functionality, its split among:

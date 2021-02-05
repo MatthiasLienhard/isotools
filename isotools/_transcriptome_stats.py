@@ -1,7 +1,7 @@
-from umap import UMAP
+from umap import UMAP # pylint: disable-msg=E0611
 from sklearn.decomposition import PCA
-from scipy.stats import binom,norm, chi2, betabinom, beta, fisher_exact
-from scipy.special import gammaln, gamma, polygamma
+from scipy.stats import binom,norm, chi2, betabinom, fisher_exact,beta # pylint: disable-msg=E0611
+from scipy.special import gammaln, polygamma,gamma# pylint: disable-msg=E0611
 from scipy.optimize import minimize
 import statsmodels.stats.multitest as multi
 import logging
@@ -10,7 +10,6 @@ import pandas as pd
 import itertools
 from tqdm import tqdm
 
-import logging
 logger=logging.getLogger('isotools')
 
 # differential splicing
@@ -103,6 +102,9 @@ TESTS={ 'betabinom_lr':betabinom_lr_test,
 
 
 def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='auto',padj_method='fdr_bh'):
+    #min_cov both paths must have that many reads (combined)
+    #min_n: for each group min_sa % of the samples must have that many reads over both paths 
+    
     assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
     #multitest_default={}
     if isinstance(groups, dict):
@@ -138,7 +140,11 @@ def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='auto',pa
     res=[]
     for g in tqdm(self):
         splice_type=['ES','3AS','5AS','IR','ME'] if g.strand=='+' else ['ES','5AS','3AS','IR','ME']
-        for junction_cov,total_cov,start,end,sti in g.splice_graph.get_splice_coverage():
+        for setA,setB,nodeX,nodeY, type_idx in g.splice_graph.find_splice_bubbles():
+            start=g.splice_graph[nodeX].end
+            end=g.splice_graph[nodeY].start
+            junction_cov=g.coverage[:,setA].sum(1)
+            total_cov=g.coverage[:,setB].sum(1)+junction_cov
             try:
                 x=[junction_cov[grp] for grp in grp_idx]
             except IndexError:
@@ -152,7 +158,7 @@ def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='auto',pa
             if x_sum < min_cov or n_sum-x_sum < min_cov:
                 continue
             pval, params=test(x,n)
-            res.append(tuple(itertools.chain((g.name,g.id,g.chrom, start, end,splice_type[sti],pval),params ,
+            res.append(tuple(itertools.chain((g.name,g.id,g.chrom, start, end,splice_type[type_idx],pval),params ,
                 (val for lists in zip(x,n) for pair in zip(*lists) for val in pair ))))
     df=pd.DataFrame(res, columns= (['gene','gene_id','chrom', 'start', 'end','splice_type','pvalue']+ 
             [gn+part for gn in groupnames+['total'] for part in ['_fraction', '_disp'] ]+  
@@ -277,7 +283,7 @@ def altsplice_stats(self, groups=None , weight_by_coverage=True, min_coverage=2,
             if not weight_by_coverage:
                 w[w>0]=1
         if 'annotation' not in tr or tr['annotation'] is None:
-            weights['novel/unknown']=weights.get('novel/unknown',np.zeros(w.shape[0]))+w[:,trid]
+            weights['unknown']=weights.get('unknown',np.zeros(w.shape[0]))+w[:,trid]
         else:
             for stype in tr['annotation'][1]:
                 weights[stype]=weights.get(stype,np.zeros(w.shape[0]))+w[:,trid]
@@ -330,7 +336,7 @@ def filter_stats(self, groups=None, weight_by_coverage=True, min_coverage=2,cons
         title+=f' > {min_coverage} reads'
     return df, {'ylabel':ylab,'title':title}
 
-def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,x_range=(100,10000),weight_by_coverage=True,min_coverage=2,use_alignment=True, tr_filter={}, ref_filter={}):
+def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,x_range=(0,10000),weight_by_coverage=True,min_coverage=2,use_alignment=True, tr_filter={}, ref_filter={}):
     trlen=[]
     cov=[]
     current=None
@@ -344,7 +350,7 @@ def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(x_range[0],x_range[1],bins+1)
+        bins=np.linspace(x_range[0]-.5,x_range[1]-.5,bins+1)
     cov[cov<min_coverage]=0
     if not weight_by_coverage:    
         cov[cov>0]=1
@@ -356,7 +362,7 @@ def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,
     params=dict(yscale='linear', title='transcript length',xlabel='transcript length [bp]', density=True)
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(0.5,1000), tr_filter={}):
+def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(1,1001), tr_filter={}):
     # get the transcript coverage in bins for groups
     # return count dataframe and suggested default parameters for plot_distr
     cov=[]
@@ -370,7 +376,7 @@ def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(0.5,1000), tr_f
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(x_range[0],x_range[1],bins+1)
+        bins=np.linspace(x_range[0]-.5,x_range[1]-.5,bins+1)
     counts=pd.DataFrame({gn:np.histogram(g_cov, bins=bins)[0] for gn,g_cov in cov.items()})
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     params=dict(yscale='log', title='transcript coverage',xlabel='reads per transcript')
@@ -380,7 +386,7 @@ def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(0.5,1000), tr_f
     # ax=counts.plot.bar() 
     # ax.plot(x, counts)
    
-def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=50,x_range=(.5,49.5), min_coverage=2, tr_filter={}, ref_filter={}):
+def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=49,x_range=(1,50), min_coverage=2, tr_filter={}, ref_filter={}):
     ntr=[]
     current=None
     if groups is None:
@@ -399,7 +405,7 @@ def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=50,
         
     ntr=pd.DataFrame((n for n in ntr if n.sum()>0), columns=group_names)    
     if isinstance(bins,int):
-        bins=np.linspace(x_range[0],x_range[1],bins+1)
+        bins=np.linspace(x_range[0]-.5,x_range[1]-.5,bins+1)
     counts=pd.DataFrame({gn:np.histogram(n, bins=bins)[0] for gn,n in ntr.items()})   
     if add_reference:
         if ref_filter:
@@ -415,7 +421,7 @@ def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=50,
     params=dict(yscale='log',title='transcript per gene\n'+sub,xlabel='transcript per gene')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
     
-def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=35,x_range=(0.5,69.5),weight_by_coverage=True,  min_coverage=2, tr_filter={}, ref_filter={}):
+def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=34,x_range=(1,69),weight_by_coverage=True,  min_coverage=2, tr_filter={}, ref_filter={}):
 
     n_exons=[]
     cov=[]
@@ -430,7 +436,7 @@ def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=35,x
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins,int):
-        bins=np.linspace(x_range[0],x_range[1],bins)
+        bins=np.linspace(x_range[0]-.5,x_range[1]-.5,bins+1)
     cov[cov<min_coverage]=0
     if not weight_by_coverage:        
         cov[cov>0]=1
@@ -476,7 +482,7 @@ def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1
     params=dict( title='downstream genomic A content',xlabel='fraction of A downstream the transcript')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
-def direct_repeat_hist(self, groups=None, bins=10, x_range=(-.5,10.5), weight_by_coverage=True, min_coverage=2, tr_filter={}):
+def direct_repeat_hist(self, groups=None, bins=10, x_range=(0,10), weight_by_coverage=True, min_coverage=2, tr_filter={}):
     novel_rl=[]
     known_rl=[]
     for g,trid,tr in self.iter_transcripts():
@@ -507,7 +513,7 @@ def direct_repeat_hist(self, groups=None, bins=10, x_range=(-.5,10.5), weight_by
     rl={'novel noncanonical':novel_rl, 'known':known_rl}
     cov={'novel noncanonical':novel_rl_cov, 'known':known_rl_cov}
     if isinstance(bins,int):
-        bins=np.linspace(x_range[0],x_range[1],bins+1)
+        bins=np.linspace(x_range[0]-.5,x_range[1]-.5,bins+1)
     counts=pd.DataFrame({f'{sa} {k}':np.histogram([val[0] for val in v],weights=cov[k][sa], bins=bins)[0]  for k,v in rl.items() for sai,sa in enumerate(groups)}   )
 
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})

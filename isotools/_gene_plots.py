@@ -2,7 +2,6 @@
 import matplotlib.colors as plt_col
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
-import matplotlib
 from matplotlib.ticker import FuncFormatter
 
 import numpy as np
@@ -54,46 +53,46 @@ def get_index(samples,names):
 
 #sashimi plots
 
-def sashimi_plot(self,samples=None,short_read_samples=None,gene_track=True,long_read_params=None, short_read_params=None ,junctions_of_interest=None, x_range=None):
-    gene_track=bool(gene_track)
+def sashimi_figure(self,samples=None,short_read_samples=None,draw_gene_track=True,long_read_params=None, short_read_params=None ,junctions_of_interest=None, x_range=None):
+    draw_gene_track=bool(draw_gene_track)
     if samples is None and short_read_samples is None:
-        samples={'all':self._transcriptome.samples} #all samples grouped
+        samples={'all':self._transcriptome.samples} #all samples grouped # pylint: disable=W0212
     if samples is None:
         samples={}
     else:
-        samples=get_index(samples, self._transcriptome.samples)
+        samples=get_index(samples, self._transcriptome.samples)# pylint: disable=W0212
     if short_read_samples is None:
         short_read_samples={}
     else:
-        short_read_samples=get_index(short_read_samples, self._transcriptome.infos['short_reads']['name'])    
+        short_read_samples=get_index(short_read_samples, self._transcriptome.infos['short_reads']['name'])    # pylint: disable=W0212
     long_read_params=extend_params(long_read_params)
     short_read_params=extend_params(short_read_params)
     if x_range is None:
         x_range=(self.start-100, self.end+100)
 
-    f,axes=plt.subplots(len(samples)+len(short_read_samples) +gene_track)
+    f,axes=plt.subplots(len(samples)+len(short_read_samples) +draw_gene_track)
     axes=np.atleast_1d(axes) # in case there was only one subplot
 
-    if gene_track:
-        self.gene_track(ax=axes[0],x_range=x_range)
-        
+    if draw_gene_track:
+        self.gene_track(ax=axes[0],x_range=x_range)        
 
     for i,(sname,sidx) in enumerate(samples.items()):
-        _sashimi_plot_long_reads(self.splice_graph,sidx,sname,axes[i+gene_track],junctions_of_interest,x_range=x_range, **long_read_params)
+        self.sashimi_plot(sidx,sname,axes[i+draw_gene_track],junctions_of_interest,x_range=x_range, **long_read_params)
         
 
     for i,(sname,sidx) in enumerate(short_read_samples.items()):
-        _sashimi_plot_short_reads([self.short_reads(idx) for idx in sidx],sname,axes[i+len(samples)+gene_track],junctions_of_interest,x_range=x_range, **long_read_params)
+        self.sashimi_plot_short_reads(sidx,sname,axes[i+len(samples)+draw_gene_track],junctions_of_interest,x_range=x_range, **long_read_params)
         
     
     return f,axes
 
 
-def _sashimi_plot_short_reads(short_reads,      title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th,min_cov_th, text_width, arc_type,text_height):
+def sashimi_plot_short_reads(self,sidx, title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th,min_cov_th, text_width, arc_type,text_height):
+    short_reads=[self.short_reads(idx) for idx in sidx]
     #jparams=[low_cov_junctions,high_cov_junctions,interest_junctions]
     start=short_reads[0].reg[1]
     end=short_reads[0].reg[2]
-    delta=np.zeros(end-start)
+    #delta=np.zeros(end-start)
     cov=np.zeros(end-start)
     junctions={}
     for sr_cov in short_reads:
@@ -136,7 +135,7 @@ def _sashimi_plot_short_reads(short_reads,      title, ax,junctions_of_interest,
         ax.add_patch(bow1)
         ax.add_patch(bow2)
         if jparams[priority]['draw_label']:
-            txt=ax.text(center,log10(max(y1,y2))+min(bow_height)+text_height/3,w,horizontalalignment='center', verticalalignment='bottom',bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)).set_clip_on(True)
+            _=ax.text(center,log10(max(y1,y2))+min(bow_height)+text_height/3,w,horizontalalignment='center', verticalalignment='bottom',bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)).set_clip_on(True)
         #bbox_list.append(txt.get_tightbbox(renderer = fig.canvas.renderer))
 
     
@@ -152,7 +151,8 @@ def _sashimi_plot_short_reads(short_reads,      title, ax,junctions_of_interest,
     ax.set_title(title)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
 
-def _sashimi_plot_long_reads(splice_graph,sidx, title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th,min_cov_th, text_width, arc_type,text_height):   
+def sashimi_plot(self,sidx, title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th,min_cov_th, text_width, arc_type,text_height):   
+    splice_graph=self.splice_graph
     boxes=[(node[0], node[1], splice_graph.weights[np.ix_(sidx,[i for i in set(node[2]).union(node[3])])].sum()) for node in splice_graph]
     if text_width<1:
         text_width=(splice_graph[-1][1]-splice_graph[0][0])*text_width
@@ -163,7 +163,7 @@ def _sashimi_plot_long_reads(splice_graph,sidx, title, ax,junctions_of_interest,
         min_cov_th=min_cov_th*total_weight   
     #idx=list(range(len(splice_graph)))
     arcs=[]
-    for i,(_,ee, _, suc) in enumerate(splice_graph._graph):
+    for i,(_,ee, _, suc) in enumerate(splice_graph):
         weights={}
         for tr,next_i in suc.items():
             weights.setdefault(next_i,0)
@@ -172,7 +172,7 @@ def _sashimi_plot_long_reads(splice_graph,sidx, title, ax,junctions_of_interest,
         if arcs_new:
             arcs.extend(arcs_new)
     if ax is None:
-        fig,ax = plt.subplots(1)
+        _,ax = plt.subplots(1)
         
     for st, end, h in boxes:
         if h>0:
@@ -237,25 +237,30 @@ def gene_track(self, ax=None,title=None, reference=True, remove_transcripts=None
     blocked=[]
     if remove_transcripts is None:
         remove_transcripts=[]
-    if reference:
+    if reference: #select transcripts and sort by start
         transcript_list=sorted([(tr_nr,tr) for tr_nr,tr in enumerate(self.ref_transcripts) if tr_nr not in remove_transcripts],key=lambda x:x[1]['exons'][0][0]) #sort by start position
     else:
         transcript_list=sorted([(tr_nr,tr) for tr_nr,tr in enumerate(self.transcripts)     if tr_nr not in remove_transcripts],key=lambda x:x[1]['exons'][0][0]) 
     for tr_nr,tr in transcript_list:
-        trid=tr['transcript_name'] if 'transcript_name' in tr else f'transcript {tr_nr}'
+        tr_start, tr_end=tr['exons'][0][0],tr['exons'][-1][1]
+        if (tr_end < x_range[0] or tr_start > x_range[1]): #transcript does not overlap x_range
+            continue
+        trid='> ' if self.strand=='+' else '< ' # indicate the strand like in ensembl browser
+        trid+=tr['transcript_name'] if 'transcript_name' in tr else f'{self.id}_{tr_nr}'
+        
         # find next line that is not blocked
         try:
             i=next(idx for idx,last in enumerate(blocked) if last<tr['exons'][0][0] )
         except StopIteration:
             i=len(blocked)
-            blocked.append(tr['exons'][-1][1])
+            blocked.append(tr_end)
         else:
-            blocked[i]=tr['exons'][-1][1]
+            blocked[i]=tr_end
         #line from TSS to PAS at 0.25
-        ax.plot((tr['exons'][0][0], tr['exons'][-1][1]), [i+.25]*2, color=color)
+        ax.plot((tr_start, tr_end), [i+.25]*2, color=color)
         if label_transcripts:
-            ax.text((tr['exons'][0][0]+tr['exons'][-1][1])/2,i-.02,trid, ha='center', va='top',fontsize=label_fontsize)
-        #idea: draw arrow to mark direction?
+            pos=(max(tr_start, x_range[0])+min(tr_end, x_range[1]))/2
+            ax.text(pos,i-.02,trid, ha='center', va='top',fontsize=label_fontsize, clip_on=True)
         for j,(st, end) in enumerate(tr['exons']):
             if 'CDS' in tr and tr['CDS'][0] <= end and tr['CDS'][1] >= st:#CODING exon
                 c_st,c_end=max(st,tr['CDS'][0]), min(tr['CDS'][1],end) #coding start and coding end
@@ -271,9 +276,10 @@ def gene_track(self, ax=None,title=None, reference=True, remove_transcripts=None
             else: #non coding
                 rect = patches.Rectangle((st,i+.125),(end-st),.25,linewidth=1,edgecolor=color,facecolor=color)
                 ax.add_patch(rect)  
-            if label_exon_numbers:
+            if label_exon_numbers and (end>x_range[0] and st<x_range[1]):
                 enr=j+1 if self.strand=='+' else len(tr['exons'])-j
-                ax.text((st+end)/2,i+.25,enr,ha='center', va='center', color=contrast, fontsize=label_fontsize).set_clip_on(True)    #bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)
+                pos=(max(st, x_range[0])+min(end, x_range[1]))/2
+                ax.text(pos,i+.25,enr,ha='center', va='center', color=contrast, fontsize=label_fontsize, clip_on=True)    #bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)
         i+=1
     if title is None:
         title=self.name

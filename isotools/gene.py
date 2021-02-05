@@ -1,10 +1,8 @@
 from intervaltree import Interval
 from Bio.Seq import Seq
-from itertools import combinations
 import numpy as np
 import copy
 from .splice_graph import SpliceGraph
-from ._utils import splice_identical
 from .short_read import Coverage
 
 import logging
@@ -37,7 +35,7 @@ class Gene(Interval):
     def __repr__(self):
         return object.__repr__(self)
 
-    from ._gene_plots import sashimi_plot,gene_track
+    from ._gene_plots import sashimi_plot,gene_track,sashimi_plot_short_reads, sashimi_figure
 
     def short_reads(self,idx):
         try:
@@ -57,14 +55,20 @@ class Gene(Interval):
         for tr in self.ref_transcripts:
             tr['filter']=[name for name,fun in ref_transcript_filter.items() if _eval_filter_fun(fun,name,tr)]
 
-    def filter_transcripts(self, include, remove):
+    def filter_transcripts(self, include, remove, anno_include, anno_remove, mincoverage=None, maxcoverage=None):
         ''' iterator over the transcripts of the gene. Filtering implemented by passing lists of flags to the parameters:
         include: transcripts must have at least one of the flags
         remove: transcripts must not have one of the flags'''
         for i,tr in enumerate(self.transcripts):
+            if mincoverage and self.coverage[:,i].sum()< mincoverage:
+                continue
+            if maxcoverage and self.coverage[:,i].sum()> maxcoverage:
+                continue
             if not include or any(f in tr['filter'] for f in include):
-                if not remove or all(f not in tr['filter'] for f in remove):
-                    yield i,tr 
+                if not anno_include or any(f in tr['annotation'][1] for f in anno_include):
+                    if not remove or all(f not in tr['filter'] for f in remove):
+                        if not anno_remove or all(f not in tr['annotation'][1] for f in anno_remove):
+                            yield i,tr 
 
     def filter_ref_transcripts(self, include, remove):
         ''' iterator over the refernce transcripts of the gene. Filtering implemented by passing lists of flags to the parameters:
@@ -86,13 +90,14 @@ class Gene(Interval):
                 
         return shifts
  
-    def to_gtf(self, source='isoseq', use_gene_name=False, include=None, remove=None):
+    def _to_gtf(self,trids, source='isoseq', use_gene_name=False):
         'creates the gtf lines of the gene as strings'
         info={'gene_id':self.name if use_gene_name else self.id}
-        lines=list()
+        lines=[]
         starts=[]
         ends=[]
-        for i,tr in self.filter_transcripts(include, remove):
+        for i in trids:
+            tr=self.transcripts[i]
             info['transcript_id']='{}.{}'.format(info['gene_id'],i)
             #todo: print only relevant infos
             starts.append(tr['exons'][0][0]+1)
@@ -204,28 +209,22 @@ class Gene(Interval):
             return ','.join(str(e[1]) for e in self.transcripts[trid]['exons']),
         elif key=='annotation':
             #sel=['sj_i','base_i', 'as']
-            support=self.transcripts[trid]['annotation']
-            if support is None:
-                return ('NA',)*3
-            else:
-                stype=support['as']
-                if isinstance(stype, dict):
-                    type_string=';'.join(k if v is None else '{}:{}'.format(k,v) for k,v in stype.items())
-                else:
-                    type_string=';'.join(str(x) for x in stype)
-                vals=(support['sj_i'],support['base_i'],type_string)
-                return(vals)
+            if 'annotation' not in self.transcripts[trid]:
+                return ('NA',)*2
+            nov_class, subcat=self.transcripts[trid]['annotation']
+            subcat_string=';'.join(k if v is None else '{}:{}'.format(k,v) for k,v in subcat.items())
+            return nov_class,subcat_string
         elif key=='coverage':
             return self.coverage[:,trid]
         elif key in self.transcripts[trid]:
-            val=str(self.transcripts[trid][key])
+            val=self.transcripts[trid][key]
             try:
                 iter(val)
             except TypeError:
                 return val, #atomic (e.g. numeric)
             else:
                 return str(val), #iterables get converted to string
-        return '',
+        return 'NA',
 
     def _set_coverage(self, force=False):
         samples=self._transcriptome.samples
@@ -347,7 +346,6 @@ class Gene(Interval):
     @property
     def splice_graph(self):
         if 'splice_graph' not in self.data or self.data['splice_graph'] is None:        
-            samples=self._transcriptome.samples    
             self._set_coverage()        
             weights=self.coverage
             exons=[tr['exons'] for tr in self.transcripts]

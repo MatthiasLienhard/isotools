@@ -15,14 +15,15 @@ default_ref_transcript_filter={
 default_transcript_filter={
         #'CLIPPED_ALIGNMENT':'clipping',
         'INTERNAL_PRIMING':'len(exons)==1 and downstream_A_content and downstream_A_content>.5', #more than 50% a
-        'RTTS':'template_switching and any(ts[2]<=10 and ts[2]/(ts[2]+ts[3])<.2 for ts in template_switching)', #less than 10 reads and less then 20% of total reads for at least one junction
+        'RTTS':'noncanonical_splicing and novel_splice_sites and any(2*i in novel_splice_sites[0] and 2*i+1 in novel_splice_sites[0] for i,_ in noncanonical_splicing)',
         'NONCANONICAL_SPLICING':'noncanonical_splicing',
         'NOVEL_TRANSCRIPT':'annotation is None or annotation[0]>0',
         'FRAGMENT':'fragments',
-        'NOVEL':'not annotation',# and "splice_identical" in annotation',
+        'NOVEL':'not annotation or annotation[0]==4',
         'UNSPLICED':'len(exons)==1',
         'MULTIEXON':'len(exons)>1'}
 
+annotation_vocabulary=['antisense', 'intergenic', 'genic genomic', 'novel exonic splice donor', 'novel exonic splice acceptor', 'novel PAS', 'readthrough fusion', 'novel exon', 'novel intronic splice donor', 'intron retention', 'novel intronic splice acceptor', 'exon skipping', 'novel combination', 'novel TSS', 'mono-exon', 'novel junction', "5' fragment", "3' fragment", 'intronic']
 # filtering functions for the transcriptome class
 def add_biases(self, genome_fn):
     'populates transcript["biases"] information, which can be used do create filters'
@@ -90,19 +91,33 @@ def iter_genes(self, region=None,include=None, remove=None):
             if not remove or all(f not in remove for f in g.data['filter']):        
                 yield g
 
-def iter_transcripts(self,region=None,include=None, remove=None):
+def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=None, max_coverage=None):
     'iterate over the transcripts of a region, optionally applying filters'   
+    
     if include or remove:
-        assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
-        all_filter=self.infos['filter']        
+        valid_filters=annotation_vocabulary
+        if isinstance(include, str):
+            include=[include]
+        if isinstance(remove, str):
+            remove=[remove]
+        if 'filter' in self.infos:
+            all_filter=self.infos['filter']
+            valid_filters+=list(all_filter['transcript_filter'])+list(all_filter['gene_filter'] )
+        msg='did not find the following filter flags for {}: {}\nvalid filters are: {}'
+        assert not include or all(f in valid_filters for f in include), msg.format( 
+            'inclusion', ', '.join(f for f in include if f not in valid_filters), ', '.join(valid_filters) )
+        assert not remove or all(f in valid_filters for f in remove), msg.format(
+            'removal', ', '.join(f for f in remove if f not in valid_filters), ', '.join(valid_filters) )
+
+    anno_include=[f for f in include if f in annotation_vocabulary] if include else []
+    anno_remove=[f for f in remove if f in annotation_vocabulary] if remove else []
     g_include=[f for f in include if f in all_filter['gene_filter']] if include else []
     g_remove=[f for f in remove if f in all_filter['gene_filter']] if remove else []
-    t_include=[f for f in include if f not in all_filter['gene_filter']] if include else []
-    t_remove=[f for f in remove if f not in all_filter['gene_filter']] if remove else []
-    assert not t_include or all(f in all_filter['transcript_filter'] for f in t_include), 'not all filters to include found'
-    assert not t_remove or all(f in all_filter['transcript_filter'] for f in t_remove), 'not all filters to remove found'
+    t_include=[f for f in include if f in all_filter['transcript_filter']] if include else []
+    t_remove=[f for f in remove if f in all_filter['transcript_filter']] if remove else []
+    
     for g in self.iter_genes(region, g_include, g_remove):
-        for i,tr in g.filter_transcripts(t_include, t_remove):
+        for i,tr in g.filter_transcripts(t_include, t_remove, anno_include, anno_remove, min_coverage, max_coverage):
             yield g,i,tr
 
 def iter_ref_transcripts(self,region=None,include=None, remove=None):

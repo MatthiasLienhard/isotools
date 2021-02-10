@@ -78,7 +78,7 @@ def betabinom_lr_test(x,n):
                 logger.debug(f'no convergence in betabinomial fit: k={xi}\nn={ni}\nparams={params}\nmessage={mle.message}') #should not happen to often, mainly with mu close to boundaries
                 success=False #prevent calculation of p-values based on non optimal parameters
     # calculate the log likelihoods
-    params_alt=[(a/(a+b),  a*b/((a+b)**2*(a+b+1))) if b is not None else (a,0) for a,b in params ] #get alternative parametrization (mu and disp)
+    params_alt=[(a/(a+b),  a*b/((a+b)**2*(a+b+1))) if b is not None else (a,None) for a,b in params ] #get alternative parametrization (mu and disp)
     if not success:
         return np.nan, [v for p in params_alt for v in p]
     try:
@@ -483,21 +483,24 @@ def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
 def direct_repeat_hist(self, groups=None, bins=10, x_range=(0,10), weight_by_coverage=True, min_coverage=2, tr_filter={}):
+    # find the direct repeat length distribution in FSM transcripts and putative RTTS
+    # putative RTTS are identified by introns where both splice sites are novel but within annotated exons
     novel_rl=[]
     known_rl=[]
     for g,trid,tr in self.iter_transcripts():
         if 'annotation' in tr and 'novel exonic splice donor' in tr['annotation'][1] and 'novel exonic splice acceptor' in tr['annotation'][1]:
             novel1, novel2=(tr['annotation'][1][k] for k in ('novel exonic splice donor','novel exonic splice acceptor'))
             if g.strand=='-':
-                novel1, novel2=novel2,novel1
-            e1=[next(i for i,e in enumerate(tr['exons']) if e[1]==alt[0]) for alt in novel1]    
+                novel1, novel2=novel2,novel1 # sort according to genomic position
+            #find the exon numbers
+            e1=[next(i for i,e in enumerate(tr['exons']) if e[1]==alt[0]) for alt in novel1]    #alt[0] is the genomic position
             e2=[next(i for i,e in enumerate(tr['exons']) if e[0]==alt[0]) for alt in novel2]    
             candidates=[e for e in e1 if e+1 in e2]
             nc={v[0] for v in tr['noncanonical_splicing']} if 'noncanonical_splicing' in tr else {}
             #splicesite=dict(tr.get('noncanonical_splicing',[]))
             #novel_rl.extend((tr['direct_repeat_len'][c],g.coverage[:,trid],splicesite.get(c,'GTAG')) for c in candidates)
             novel_rl.extend((tr['direct_repeat_len'][c],g.coverage[:,trid]) for c in candidates if c in nc)
-        if 'annotation' in tr and tr['annotation'][0]==0:
+        if 'annotation' in tr and tr['annotation'][0]==0: #e.g. FSM
             known_rl.extend((l,g.coverage[:,trid]) for l in tr['direct_repeat_len'])
 
     known_rl_cov=pd.DataFrame((v[1] for v in known_rl), columns=self.samples)

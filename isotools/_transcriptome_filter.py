@@ -102,7 +102,7 @@ def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=No
             remove=[remove]
         if 'filter' in self.infos:
             all_filter=self.infos['filter']
-            valid_filters+=list(all_filter['transcript_filter'])+list(all_filter['gene_filter'] )
+            valid_filters=valid_filters+list(all_filter['transcript_filter'])+list(all_filter['gene_filter'] )
         msg='did not find the following filter flags for {}: {}\nvalid filters are: {}'
         assert not include or all(f in valid_filters for f in include), msg.format( 
             'inclusion', ', '.join(f for f in include if f not in valid_filters), ', '.join(valid_filters) )

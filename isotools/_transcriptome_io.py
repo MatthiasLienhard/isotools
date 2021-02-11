@@ -141,7 +141,7 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                     n_reads-=cov
                     pbar.update(cov/2)
                 self._add_novel_genes(novel,chrom)
-                pbar.update(n_reads/2) #the chimeric reads are missing here...
+                pbar.update(n_reads/2) #the chimeric reads not processed here, add them to the progress
     kwargs['total_reads']=total_reads
     self.infos['sample_table']=self.sample_table.append(kwargs, ignore_index=True)
     #merge chimeric reads and assign gene names
@@ -445,6 +445,41 @@ def import_gtf_transcripts(fn,transcriptome, chromosomes=None):
                     gene.data['reference']['transcripts'] =  [{'transcript_id': t_id,'exons':[tuple(gene[:2])]}]
     return genes
 
+
+def collapse_immune_genes(self, maxgap=300000):
+    assert not self.samples, 'immune gene collapsing has to be called before adding long read samples'
+    num={'IG':0, 'TR':0}
+    for chrom in self.data:
+        for strand in ('+','-'):
+            immune={'IG':[], 'TR':[]}            
+            for g in self.data[chrom]:
+                if g.strand!=strand:
+                    continue
+                gtype=g.data['reference']['gene_type']
+                if gtype[:2] in immune and gtype[-5:]=='_gene':
+                    immune[gtype[:2]].append(g)
+            for itype in immune:
+                immune[itype].sort(key=lambda x: (x.start, x.end))            
+                offset=0
+                for i,g in enumerate(immune[itype]):
+                    self.data[chrom].remove(g)
+                    if i+1==len(immune[itype]) or g.end - immune[itype][i+1].start>maxgap:
+                        ref_info={'gene_type':f'{itype}_gene', 'transcripts':[t for g in immune[itype][offset:i+1] for t in g.ref_transcripts]}
+                        info={'ID':f'{itype}_locus_{num[itype]}', 'strand':strand,'chr':chrom, 'reference':ref_info}
+                        start=immune[itype][offset].start
+                        end=immune[itype][i].end
+                        new_gene=Gene(start,end,info, self)
+                        self.data[chrom].add(new_gene)
+                        num[itype]+=1
+                        offset=i+1
+    logger.info(f'collapsed {num["IG"]} immunoglobulin loci and  {num["TR"]} T-cell receptor loci')
+                        
+
+        
+
+
+
+
 def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=['gene']):
     '''import transcripts from gff file (e.g. for a reference)
     returns a dict interval trees for the genes'''
@@ -466,9 +501,9 @@ def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=
         chrom = chrom_ids[ls[0]]
         genes.setdefault(chrom, IntervalTree())
         try:
-            info = dict([pair.split('=', 1) for pair in ls[8].split(";")])
+            info = dict([pair.split('=', 1) for pair in ls[8].rstrip(';').split(";")]) # some gff lines end with ';' in gencode 36 
         except ValueError:
-            logger.warning("GFF format error in infos (should be ; seperated key=value pairs). Skipping line: "+line)
+            logger.warning("GFF format error in infos (should be ; seperated key=value pairs). Skipping line:\n"+line)
         start, end = [int(i) for i in ls[3:5]]
         start -= 1  # to make 0 based
         if ls[2] == "exon":

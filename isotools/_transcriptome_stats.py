@@ -57,14 +57,17 @@ def betabinom_lr_test(x,n):
      '''    
     params=list()
     success=True
+    if any(ni.sum()==0 for ni in n):
+        return (np.nan,[None, None]) #one group is not covered at all - no test possible. Checking this to avoid RuntimeWarnings (Mean of empty slice)
     x_all, n_all=(np.concatenate(x),np.concatenate(n))
     for xi,ni in itertools.chain(zip(x,n),((x_all,n_all),)):
         xi, ni=xi[ni>0], ni[ni>0] #avoid div by 0
         #x and n must be np arrays
+        
         prob=xi/ni    
         m=prob.mean() #estimate initial parameters
         d=prob.var()
-        if d==0: #just one sample?
+        if d==0: #just one sample? or all exactly the same proportion
             params.append((m,None)) # in this case the betabinomial reduces to the binomial
         else:
             d=max(d,1e-6)# to avoid division by 0
@@ -123,7 +126,7 @@ def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='auto',pa
 
     if isinstance(test,str):
         if test=='auto':
-            test='betabinom_lr' if min(len(g) for g in groups)>2 else 'proportions'
+            test='betabinom_lr' if min(len(g) for g in groups)>1 else 'proportions'
         test_name=test
         try:
             test=TESTS[test]

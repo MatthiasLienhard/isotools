@@ -1,9 +1,10 @@
 import matplotlib.pyplot as plt
 from scipy.stats import beta,nbinom
-
 import seaborn as sns
 import pandas as pd
 import numpy as np
+from umap import UMAP # pylint: disable-msg=E0611
+from sklearn.decomposition import PCA
 import logging
 logger=logging.getLogger('isotools')
 
@@ -58,20 +59,77 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
     f.tight_layout()
     return f,axs,plotted
 
-def plot_embedding(embedding, col=None, groups=None, labels=True, ax=None, comp=[0,1]):    
+def plot_embedding(splice_bubbles, method='PCA',prior_count=3, top_var=500,min_total=100,min_alt_fraction=.1,plot_components=[1,2], splice_types='all', labels=True,groups=None,colors=None, ax=None):
+    assert method in ['PCA', 'UMAP'], 'method must be PCA or UMAP'
+    plot_components=np.array(plot_components)
+    if isinstance(splice_types, str):
+        splice_types=[splice_types]
+    if 'all' not in splice_types:        
+        splice_bubbles=splice_bubbles.loc[splice_bubbles['splice_type'].isin( splice_types)]
+    n=splice_bubbles[[c for c in splice_bubbles.columns if c[-2:]=='_n']]
+    k=splice_bubbles[[c for c in splice_bubbles.columns if c[-2:]=='_k']]
+    n.columns=[c[:-2] for c in n.columns]
+    k.columns=[c[:-2] for c in k.columns]
+    samples=list(n.columns)
+    assert all(c1==c2 for c1,c2 in zip (n.columns, k.columns)), 'issue with sample naming of splice bubble table'
+    # select samples and assing colors
     if groups is not None:
-        if col is None:
+        sa_group={sa:gn for gn,salist in groups.items() for sa in salist if sa in samples}
+        if len(samples)>len(sa_group):
+            samples=[sa for sa in samples if sa in sa_group]
+            logger.info('restricting embedding on samples '+', '.join(samples))
+            #remove rows with less than n_count
+            n=n[samples]
+            k=k[samples]
+        if colors is None:
             cm = plt.get_cmap('gist_rainbow')
-            col=[cm(i/len(groups)) for i in range(len(groups))]
+            colors={gn:cm(i/len(groups)) for i,gn in enumerate(groups)}
+        elif isinstance(colors,dict):
+            assert all( gn in colors for gn in groups), 'not all groups have colors'
+        elif len(colors)>= len(groups):
+            colors={gn:colors[i] for i,gn in enumerate(groups)}
+        colors=[colors[sa_group[sa]] for sa in samples]
+    elif colors is None:
+        colors=['black']*len(samples)
+    elif len(colors)== 1:
+        colors=[colors]*len(samples)
+    elif len(colors)!= len(samples):
+        raise ValueError(f'number of colors ({len(colors)}) does not match number of samples ({len(samples)})')
+    nsum=n.sum(1)
+    ksum=k.sum(1)
+    covered=(nsum>=min_total) & (min_alt_fraction < ksum/nsum) & (ksum/nsum < 1-min_alt_fraction)
+    n=n.loc[covered]
+    k=k.loc[covered]
+    #compute the proportions
+    scaled_mean=k.sum(1)/n.sum(1)*prior_count
+    p=((k.values+scaled_mean[:,np.newaxis])/(n.values+prior_count)).T
+    topvar=p[:,p.var(0).argsort()[-top_var:]] # sort from low to high var
+
+    #compute embedding
+    if method=='PCA':
+        # Linear dimensionality reduction using Singular Value Decomposition of the data to project it to a lower dimensional space. 
+        # The input data is centered but not scaled for each feature before applying the SVD.
+        embedding=PCA(n_components=max(plot_components)).fit(topvar)
+        axparams=dict(title= f'PCA ({",".join(splice_types)})', 
+            xlabel =f'PC{plot_components[0]} ({embedding.explained_variance_ratio_[plot_components[0]-1]*100:.2f} %)', 
+            ylabel =f'PC{plot_components[1]} ({embedding.explained_variance_ratio_[plot_components[1]-1]*100:.2f} %)', )
+    elif method=='UMAP':
+        embedding=UMAP().fit(topvar)
+        axparams={'title': f'UMAP ({",".join(splice_types)})'}
+    transformed=pd.DataFrame(embedding.transform(topvar), index=samples)
+
+
     if ax is None:
         _,ax=plt.subplots()
     ax.scatter(
-        embedding[comp[0]],
-        embedding[comp[1]],
-        c=col)
+        transformed[plot_components[0]-1],
+        transformed[plot_components[1]-1],
+        c=colors)
+    ax.set(**axparams)
     if labels:
-        for idx,(x,y) in embedding[comp].iterrows():
+        for idx,(x,y) in transformed[plot_components-1].iterrows():
             ax.text(x,y,s=idx)
+    return pd.DataFrame(p.T,columns=samples, index=k.index ),transformed, embedding
   
 #plots
 def plot_bar(df,ax=None, drop_categories=None, legend=True, annotate=True,**axparams):    

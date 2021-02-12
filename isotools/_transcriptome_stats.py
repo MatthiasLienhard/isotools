@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 import itertools
 from tqdm import tqdm
-
+import warnings
 logger=logging.getLogger('isotools')
 
 # differential splicing
@@ -199,13 +199,40 @@ def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',re
         logger.error('unexpected error during calculation of adjusted p-values: {e}' ,e=e)
     return df            
         
+def find_splice_bubbles(self, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
+    bubbles=[]
+    if samples is None:
+        samples=self.samples
+    assert all(s in self.samples for s in samples), 'not all specified samples found'
+    sa_dict={sa:i for i,sa in enumerate(self.samples)}
+    sidx=np.array([sa_dict[sa] for sa in samples])
+
+    assert 0<min_alt_fraction<.5, 'min_alt_fraction must be > 0 and < 0.5'
+    for g in self.iter_genes(region, include, remove):
+        if g.coverage[sidx,:].sum()<min_total:
+            continue
+        splice_type=['ES','3AS','5AS','IR','ME'] if g.strand=='+' else ['ES','5AS','3AS','IR','ME']
+        for setA,setB,nodeX,nodeY, type_idx in g.splice_graph.find_splice_bubbles():
+            junction_cov=g.coverage[np.ix_(sidx,setA)].sum(1)
+            total_cov=g.coverage[np.ix_(sidx,setB)].sum(1)+junction_cov
+            if total_cov.sum()>=min_total and min_alt_fraction < junction_cov.sum()/total_cov.sum() < 1-min_alt_fraction:
+                start=g.splice_graph[nodeX].end
+                end=g.splice_graph[nodeY].start
+                #scaled_mean=junction_cov.sum()/total_cov.sum()*prior_count
+                #cov_tab[splice_type[type_idx]][f'{g.name}_{start}_{end}']=(junction_cov+scaled_mean)/(total_cov + prior_count)
+                bubbles.append([g.id, g.chrom, start, end, splice_type[type_idx]]+list(junction_cov)+list(total_cov))
+    return pd.DataFrame(bubbles,columns=['gene', 'chr', 'start', 'end', 'splice_type']+[f'{sa}_{what}' for what in ['k','n'] for sa in samples ] )
 
 # PCA and UMAP
-def embedding(self, genes=None, reducer='PCA',n_top_var=500, n_subsample=1000,samples=None, min_cov=20):
+def embedding(self, genes=None, reducer='PCA',n_top_var=500, n_subsample=1000,samples=None, min_cov=20): # ol
     ''' Compute embedding of most variable junction for each gene if genes are provided as a list (e.g. genes=[gene_name1, gene_name2 ...]). 
         Alternatively, if genes is a dict, junctions can be provided as a list (e.g. genes[gene_name]=[(jstart,jend)]).
         If genes is None, all genes with coverage > min_cov are considered. 
     '''
+    warnings.warn(
+            "embedding is deprecated, use find_splce_bubbles() and isotools.plots.plot_embedding() instead",
+            DeprecationWarning
+        )
     joi=dict()
     if samples is not None:
         s_filter=[True if sn in samples else False for sn in self.samples]

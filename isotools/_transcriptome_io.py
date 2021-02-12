@@ -347,7 +347,10 @@ def _find_splice_sites(genes_ol, exons):
         else:
             splice_sites=np.array([g.ref_splice_graph.find_splice_sites(exons) if g.is_annotated else g.splice_graph.find_splice_sites(exons) for  g in genes_ol ])
             sum_ol=splice_sites.sum(1)
-            best_idx=sum_ol.argmax() #index of gene that covers the most splice sites
+            try: #find index of reference gene that covers the most splice sites
+                best_idx=next(idx for idx in np.argsort(-sum_ol) if genes_ol[idx].is_annotated and sum_ol[idx]>0)
+            except StopIteration: #no reference gene
+                best_idx=sum_ol.argmax() #include non reference genes
             if sum_ol[best_idx]>0:
                 not_in_best=np.where(~splice_sites[best_idx])[0]
                 additional=splice_sites[:,not_in_best]# additional= sites not covered by top gene

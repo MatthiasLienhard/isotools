@@ -113,9 +113,9 @@ def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='auto',pa
     if isinstance(groups, dict):
         groupnames=list(groups)
         groups=list(groups.values())
-    elif all (isinstance(gn,str) and gn in self.groups for gn in groups):
+    elif all (isinstance(gn,str) and gn in self.groups() for gn in groups):
         groupnames=list(groups)
-        groups=[self.groups[gn] for gn in groupnames]
+        groups=[self.groups()[gn] for gn in groupnames]
     elif all( isinstance(grp,list) for grp in groups):
         groupnames=['group1','group2']
     else:

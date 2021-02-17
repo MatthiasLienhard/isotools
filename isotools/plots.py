@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+from matplotlib.colors import is_color_like, to_hex
 from scipy.stats import beta,nbinom
 import seaborn as sns
 import pandas as pd
@@ -59,7 +60,7 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
     f.tight_layout()
     return f,axs,plotted
 
-def plot_embedding(splice_bubbles, method='PCA',prior_count=3, top_var=500,min_total=100,min_alt_fraction=.1,plot_components=[1,2], splice_types='all', labels=True,groups=None,colors=None, ax=None):
+def plot_embedding(splice_bubbles, method='PCA',prior_count=3, top_var=500,min_total=100,min_alt_fraction=.1,plot_components=[1,2], splice_types='all', labels=True,groups=None,colors=None, ax=None,**kwargs):
     assert method in ['PCA', 'UMAP'], 'method must be PCA or UMAP'
     plot_components=np.array(plot_components)
     if isinstance(splice_types, str):
@@ -72,29 +73,28 @@ def plot_embedding(splice_bubbles, method='PCA',prior_count=3, top_var=500,min_t
     k.columns=[c[:-2] for c in k.columns]
     samples=list(n.columns)
     assert all(c1==c2 for c1,c2 in zip (n.columns, k.columns)), 'issue with sample naming of splice bubble table'
+
     # select samples and assing colors
-    if groups is not None:
+    if groups is None:
+        groups={'all samples':samples}
+    else:
         sa_group={sa:gn for gn,salist in groups.items() for sa in salist if sa in samples}
         if len(samples)>len(sa_group):
             samples=[sa for sa in samples if sa in sa_group]
             logger.info('restricting embedding on samples '+', '.join(samples))
-            #remove rows with less than n_count
             n=n[samples]
             k=k[samples]
-        if colors is None:
-            cm = plt.get_cmap('gist_rainbow')
-            colors={gn:cm(i/len(groups)) for i,gn in enumerate(groups)}
-        elif isinstance(colors,dict):
-            assert all( gn in colors for gn in groups), 'not all groups have colors'
-        elif len(colors)>= len(groups):
-            colors={gn:colors[i] for i,gn in enumerate(groups)}
-        colors=[colors[sa_group[sa]] for sa in samples]
-    elif colors is None:
-        colors=['black']*len(samples)
-    elif len(colors)== 1:
-        colors=[colors]*len(samples)
-    elif len(colors)!= len(samples):
-        raise ValueError(f'number of colors ({len(colors)}) does not match number of samples ({len(samples)})')
+    if colors is None:
+        cm = plt.get_cmap('gist_rainbow')
+        colors={gn:to_hex(cm(i/len(groups))) for i,gn in enumerate(groups)}
+    elif isinstance(colors,dict):
+        assert all( gn in colors for gn in groups), 'not all groups have colors'
+        assert all(is_color_like(c) for c in colors.values()), 'invalid colors'
+    elif len(colors)>= len(groups):
+        assert all(is_color_like(c) for c in colors), 'invalid colors'
+        colors={gn:colors[i] for i,gn in enumerate(groups)}
+    else:
+        raise ValueError(f'number of colors ({len(colors)}) does not match number of groups ({len(groups)})')
     nsum=n.sum(1)
     ksum=k.sum(1)
     covered=(nsum>=min_total) & (min_alt_fraction < ksum/nsum) & (ksum/nsum < 1-min_alt_fraction)
@@ -106,25 +106,29 @@ def plot_embedding(splice_bubbles, method='PCA',prior_count=3, top_var=500,min_t
     topvar=p[:,p.var(0).argsort()[-top_var:]] # sort from low to high var
 
     #compute embedding
+    kwargs.setdefault('n_components',max(plot_components))
+    assert kwargs['n_components']>=max(plot_components), 'n_components is smaller than the largest selected component'
     if method=='PCA':
         # Linear dimensionality reduction using Singular Value Decomposition of the data to project it to a lower dimensional space. 
         # The input data is centered but not scaled for each feature before applying the SVD.
-        embedding=PCA(n_components=max(plot_components)).fit(topvar)
+        embedding=PCA(**kwargs).fit(topvar)
         axparams=dict(title= f'PCA ({",".join(splice_types)})', 
             xlabel =f'PC{plot_components[0]} ({embedding.explained_variance_ratio_[plot_components[0]-1]*100:.2f} %)', 
-            ylabel =f'PC{plot_components[1]} ({embedding.explained_variance_ratio_[plot_components[1]-1]*100:.2f} %)', )
+            ylabel =f'PC{plot_components[1]} ({embedding.explained_variance_ratio_[plot_components[1]-1]*100:.2f} %)' )
     elif method=='UMAP':
-        embedding=UMAP().fit(topvar)
+        #major parameters for UMAP with defaults n_neighbors=15, min_dist=0.1, n_components=2, metric='euclidean'
+        embedding=UMAP(**kwargs).fit(topvar)
         axparams={'title': f'UMAP ({",".join(splice_types)})'}
     transformed=pd.DataFrame(embedding.transform(topvar), index=samples)
 
 
     if ax is None:
         _,ax=plt.subplots()
-    ax.scatter(
-        transformed[plot_components[0]-1],
-        transformed[plot_components[1]-1],
-        c=colors)
+    for gr,sa in groups.items():
+        ax.scatter(
+            transformed.loc[sa,plot_components[0]-1],
+            transformed.loc[sa,plot_components[1]-1],
+            c=colors[gr], label=gr)
     ax.set(**axparams)
     if labels:
         for idx,(x,y) in transformed[plot_components-1].iterrows():
@@ -132,7 +136,7 @@ def plot_embedding(splice_bubbles, method='PCA',prior_count=3, top_var=500,min_t
     return pd.DataFrame(p.T,columns=samples, index=k.index ),transformed, embedding
   
 #plots
-def plot_bar(df,ax=None, drop_categories=None, legend=True, annotate=True,**axparams):    
+def plot_bar(df,ax=None, drop_categories=None, legend=True, annotate=True,rot=90, bar_width=.5,**axparams):    
     if ax is None:
         _, ax=  plt.subplots()
     if 'total' in df.index:
@@ -145,7 +149,7 @@ def plot_bar(df,ax=None, drop_categories=None, legend=True, annotate=True,**axpa
         dcat=[]
     else:
         dcat=[d for d in drop_categories if d in df.index]
-    fractions.drop(dcat).plot.bar( ax=ax, legend=legend)   
+    fractions.drop(dcat).plot.bar( ax=ax, legend=legend, width=bar_width, rot=rot)   
     #add numbers 
     if annotate:
         numbers=[int(v) for c in df.drop(dcat).T.values for v in c]
@@ -182,7 +186,7 @@ def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,
         ax.legend()
     return ax
 
-def plot_saturation(isoseq=None,ax=None,cov_th=2,expr_th=[.5,1,2,5,10],x_range=(1e4,1e7,1e4),legend=True,**axparams):
+def plot_saturation(isoseq=None,ax=None,cov_th=2,expr_th=[.5,1,2,5,10],x_range=(1e4,1e7,1e4),legend=True,label=True, **axparams):
     if ax is None:
         _, ax=  plt.subplots()
     k=np.arange(*x_range)
@@ -196,7 +200,8 @@ def plot_saturation(isoseq=None,ax=None,cov_th=2,expr_th=[.5,1,2,5,10],x_range=(
         ax.plot(k/1e6, chance, label=f'{tpm_th} TPM')
     for sa,cov in n_reads.items():
         ax.axvline(cov/1e6, color='grey', linestyle='--')
-        ax.text((cov+(k[-1]-k[0])/200)/1e6,0.1,f'{sa} ({cov/1e6:.2f} M)',rotation=-90)
+        if label:
+            ax.text((cov+(k[-1]-k[0])/200)/1e6,0.1,f'{sa} ({cov/1e6:.2f} M)',rotation=-90)
     ax.set(**axparams)
     
     if legend:

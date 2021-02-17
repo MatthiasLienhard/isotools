@@ -127,9 +127,9 @@ class Transcriptome:
     def samples(self):
         return list(self.sample_table.name)
 
-    @property
-    def groups(self):
-        return dict(self.sample_table.groupby('group')['name'].apply(list))
+    
+    def groups(self, by='group'):
+        return dict(self.sample_table.groupby(by)['name'].apply(list))
 
     @property
     def n_transcripts(self):

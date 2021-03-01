@@ -3,6 +3,7 @@ import pandas as pd
 from intervaltree import IntervalTree, Interval
 from pysam import TabixFile, AlignmentFile, FastaFile
 from tqdm import tqdm
+from contextlib import ExitStack
 from .short_read import Coverage
 from ._utils import junctions_from_cigar,splice_identical,is_same_gene, overlap, pairwise
 from .gene import Gene
@@ -21,6 +22,7 @@ def add_short_read_coverage(self, bam_files,names=None, load=False):
     if isinstance(bam_files,list) and isinstance(names, list):
         assert len(bam_files) ==len(names), 'lists of sample names and bam files must have same length'
     elif isinstance(bam_files, dict):
+        assert names is None, 'bams are provided as dict, names should not be specified'
         names=list(bam_files)
         bam_files=list(bam_files.values())
     else:
@@ -528,7 +530,7 @@ def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=
             genes[chrom].add(Gene(start,end,info, transcriptome))
         elif all([v in info for v in ['Parent', "ID"]]) and (ls[2] == 'transcript' or info['Parent'].startswith('gene')):# those denote transcripts
             tr_info={k:v for k,v in info.items() if k.startswith('transcript_')}
-            transcripts.setdefault(info["Parent"], {})[info["ID"]]=tr_info
+            transcripts.setdefault(info["Parent"], {})[info]=tr_info
         elif ls[2]  == 'start_codon' and 'Parent' in info:
             cds_start[info['Parent']]=end if ls[6]=='-' else start
         elif ls[2]  == 'stop_codon' and 'Parent' in info:
@@ -734,6 +736,115 @@ def write_gtf(self, fn, source='isotools',use_gene_name=False,  include=None, re
             lines=gene.to_gtf(source=source,use_gene_name=use_gene_name, include=include, remove=remove)
             if lines:
                 _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
+
+def export_alternative_splicing(self,out_dir,out_format='miso', reference=False, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
+    if out_format=='miso':
+        fn='isotools_miso_{}.gff'
+        alt_splice_export=_miso_alt_splice_export
+    elif out_format=='mats':
+        fn='fromGTF.{}.txt'
+        alt_splice_export=_mats_alt_splice_export        
+    else:
+        raise ValueError('out_format must be "miso" or "mats"')
+
+    types={'ES':'SE','3AS':'A3SS','5AS':'A5SS','IR':'RI','ME':'MXE'} #it looks like these are the "official" identifiers?
+    out_file={st:out_dir+'/'+fn.format(st) for st in types.values()}
+    if samples is None:
+        samples=self.samples
+    assert all(s in self.samples for s in samples), 'not all specified samples found'
+    sa_dict={sa:i for i,sa in enumerate(self.samples)}
+    sidx=np.array([sa_dict[sa] for sa in samples])
+    
+    assert 0<min_alt_fraction<.5, 'min_alt_fraction must be > 0 and < 0.5'
+    count={st:0 for st in types.values()}
+    with ExitStack() as stack:
+        fh = {st:stack.enter_context(open(out_file[st], 'w')) for st in out_file}
+        if out_format=='mats': #prepare mats header 
+            base_header=['ID','GeneID','geneSymbol','chr','strand']
+            add_header={'SE'  :['exonStart_0base','exonEnd','upstreamES','upstreamEE','downstreamES','downstreamEE'], 
+                        'RI'  :['riExonStart_0base','riExonEnd','upstreamES','upstreamEE','downstreamES','downstreamEE'],
+                        'MXE' :['1stExonStart_0base','1stExonEnd','2ndExonStart_0base','2ndExonEnd','upstreamES','upstreamEE','downstreamES','downstreamEE'],
+                        'A3SS':['longExonStart_0base','longExonEnd','shortES','shortEE','flankingES','flankingEE'],
+                        'A5SS':['longExonStart_0base','longExonEnd','shortES','shortEE','flankingES','flankingEE']}
+            for st in fh:
+                fh[st].write('\t'.join(base_header+add_header[st])+'\n')
+        for g in self.iter_genes(region, include, remove):
+            if reference and not g.is_annotated:
+                continue
+            elif not reference and g.coverage[sidx,:].sum()<min_total:
+                continue
+            splice_type=['ES','3AS','5AS','IR','ME'] if g.strand=='+' else ['ES','5AS','3AS','IR','ME']
+            sg=g.ref_splice_graph if reference else g.splice_graph
+            for setA,setB,nodeX,nodeY, type_idx in sg.find_splice_bubbles():
+                if not reference:
+                    junction_cov=g.coverage[np.ix_(sidx,setA)].sum(1)
+                    total_cov=g.coverage[np.ix_(sidx,setB)].sum(1)+junction_cov
+                    if total_cov.sum()<min_total or (not min_alt_fraction < junction_cov.sum()/total_cov.sum() < 1-min_alt_fraction):
+                        continue
+                st=types[splice_type[type_idx]]
+                lines=alt_splice_export(setA,setB,nodeX,nodeY, st, sg, g, count[st])
+                if lines:
+                    count[st]+=len(lines)
+                    fh[st].write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
+                
+def _miso_alt_splice_export(setA,setB,nodeX,nodeY, st,sg,g,offset):
+    event_id=f'{g.chrom}:{sg[nodeX].end}-{sg[nodeY].start}'
+    # TODO: Mutually exclusives extend beyond nodeY - and have potentially multiple A "mRNAs"
+    # TODO: is it possible to extend exons at nodeX and Y - if all/"most" tr from setA and B agree?
+    #if st=='ME':
+    #    nodeY=min(sg._pas[setA])
+    lines=[]
+    lines.append([g.chrom, st, 'gene', sg[nodeX].start, sg[nodeY].end, '.',g.strand, '.', f'ID={event_id};gene_name={g.name};gene_id={g.id}'])
+    lines.append((g.chrom, st, 'mRNA', sg[nodeX].start, sg[nodeY].end, '.',g.strand, '.', f'Parent={event_id};ID={event_id}.A'))
+    lines.append((g.chrom, st, 'exon', sg[nodeX].start, sg[nodeX].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.up'))
+    lines.append((g.chrom, st, 'exon', sg[nodeY].start, sg[nodeY].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.down'))
+    for i,exons in enumerate({tuple(sg._get_all_exons(nodeX, nodeY, b_tr)) for b_tr in setB}):
+        lines.append((g.chrom, st, 'mRNA', sg[nodeX].start, exons[-1][1], '.',g.strand, '.', f'Parent={event_id};ID={event_id}.B{i}'))
+        lines[0][4]=max(lines[0][4], lines[-1][4])
+        for j,e in enumerate(exons):
+            lines.append((g.chrom, st, 'exon', e[0], e[1], '.',g.strand, '.', f'Parent={event_id}.B{i};ID={event_id}.B{i}.{j}'))
+    return lines
+                
+def _mats_alt_splice_export(setA,setB,nodeX,nodeY, st,sg,g,offset):
+    #'ID','GeneID','geneSymbol','chr','strand'
+    # and ES/EE for the relevant exons
+    # in case of 'SE':['skipped', 'upstream', 'downstream'], 
+    # in case of 'RI':['retained', 'upstream', 'downstream'],
+    # in case of 'MXE':['1st','2nd', 'upstream', 'downstream'],
+    # in case of 'A3SS':['long','short', 'flanking'],
+    # in case of 'A5SS':['long','short', 'flanking']}
+    lines=[]
+    if g.chrom[:3]!='chr':
+        chrom='chr'+g.chrom
+    else:
+        chrom=g.chrom
+    exonsA=((sg[nodeX].start, sg[nodeX].end),(sg[nodeY].start, sg[nodeY].end))
+    for exonsB in {tuple(sg._get_all_exons(nodeX, nodeY, b_tr)) for b_tr in setB}:
+        exons_sel=None
+        if st in ['A3SS', 'A5SS'] and len(exonsB)==2:
+            if exonsA[0][1]==exonsB[0][1]:
+                exons_sel=[exonsB[1], exonsA[1], exonsA[0]] #long short flanking
+            else:
+                exons_sel=[exonsB[0], exonsA[0], exonsA[1]] #long short flanking
+        elif st =='SE' and len(exonsB)==3:
+            assert exonsA[0]==exonsB[0] and exonsA[1]==exonsB[2], f'invalid exon skipping {exonsA} vs {exonsB}' #just to be sure everything is consistent
+            #e_order=(1,0,2) if g.strand=='+' else (1,2,0)
+            e_order=(1,0,2)
+            exons_sel=[exonsB[i] for i in e_order]
+        elif st=='RI' and len(exonsB)==1:
+            exons_sel=[exonsB[0], exonsA[0], exonsA[1]] #if g.strand=='+' else [exonsB[0], exonsA[1], exonsA[0]]
+        elif st=='MXE' and len(exonsB)==3:
+            nodeZ=next(idx for idx,n in enumerate(sg) if n.start==exonsB[-1][0])
+            for exonsA in {tuple(sg._get_all_exons(nodeX, nodeZ, a_tr)) for a_tr in setA}:
+                if len(exonsA)==3 and exonsA[0]==exonsB[0] and exonsA[2]==exonsB[2]:
+                    lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand, exonsB[1][0], exonsB[1][1], exonsA[1][0], exonsA[1][1], exonsA[0][0], exonsA[0][1], exonsA[2][0], exonsA[2][1]])      
+        if exons_sel is not None:      
+            lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand]+[pos for e in exons_sel for pos in e])
+    return [[offset+count]+l for count, l in enumerate(lines)]
+
+
+
+    
 
 
 def get_gff_chrom_dict(gff, chromosomes):

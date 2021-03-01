@@ -161,9 +161,9 @@ def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='auto',pa
             if x_sum < min_cov or n_sum-x_sum < min_cov:
                 continue
             pval, params=test(x,n)
-            res.append(tuple(itertools.chain((g.name,g.id,g.chrom, start, end,splice_type[type_idx],pval),params ,
+            res.append(tuple(itertools.chain((g.name,g.id,g.chrom,g.strand, start, end,splice_type[type_idx],pval),params ,
                 (val for lists in zip(x,n) for pair in zip(*lists) for val in pair ))))
-    df=pd.DataFrame(res, columns= (['gene','gene_id','chrom', 'start', 'end','splice_type','pvalue']+ 
+    df=pd.DataFrame(res, columns= (['gene','gene_id','chrom','strand', 'start', 'end','splice_type','pvalue']+ 
             [gn+part for gn in groupnames+['total'] for part in ['_fraction', '_disp'] ]+  
             [f'{w}_{sa}_{gn}' for gn,grp in zip(groupnames, groups) for sa in grp for w in ['cov', 'span_cov'] ]))
     try:

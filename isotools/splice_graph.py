@@ -437,6 +437,7 @@ class SpliceGraph():
                     yield gnode.end, self[target].start,w, longer_weight,  idx
         
     def splice_dependence(self, sidx,min_cov, ignore_unspliced=True):
+        'experimental'
         tr_cov=self.weights[sidx,:].sum(0)
         if tr_cov.sum()<2* min_cov:
             return #no chance of getting above the coverage
@@ -519,7 +520,32 @@ class SpliceGraph():
                 
                 
 
-                    
+    def _get_all_exons(self, nodeX, nodeY, tr):    
+        'get all exons from nodeX to nodeY for transcripts tr'
+        n=max(nodeX, self._tss[tr]) # if tss>nodeX start there
+        if tr not in self[n].pre and self._tss[tr]!=n: #nodeX is not part of tr
+            for i in range(n,nodeY+1):
+                if tr in self[n].suc:
+                    n=i
+                    break
+            else: 
+                return []
+        if n>nodeY:
+            return []
+        exons=[[self[n].start, self[n].end]]
+        while n<nodeY:
+            try:
+                n=self[n].suc[tr]
+            except KeyError: #end of transcript before nodeY was reached
+                break
+            if self[n].start==exons[-1][1]:
+                exons[-1][1]=self[n].end
+            else:
+                exons.append([self[n].start, self[n].end])
+        return [tuple(e) for e in exons]
+            
+
+                
                 
 
 

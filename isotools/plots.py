@@ -17,8 +17,8 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
     f,axs=plt.subplots(*grid_shape)
     axs=axs.flatten()
     x=[i/100 for i in range(101)]
-    group_names=[c[:-9] for c in result_table.columns if c[-9:]=='_fraction'][:2]
-    groups={gn:[c[4:] for c in  result_table.columns if c[:4]=='cov_' and c.endswith(gn)] for gn in group_names}
+    group_names=[c[:-4] for c in result_table.columns if c.endswith('_PSI')][:2]
+    groups={gn:[c[:-10] for c in  result_table.columns if c.endswith(gn+'_total_cov')] for gn in group_names}
     logger.debug('groups: %s',str(groups))
     for idx,row in result_table.iterrows():
         logger.debug(f'plotting {idx}: {row.gene}')
@@ -26,8 +26,8 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
             continue
         if row.gene in set(plotted.gene):
             continue
-        params_alt={gn:(row[f'{gn}_fraction'],row[f'{gn}_disp']) for gn in group_names}
-        psi_gr={gn:[row[f'cov_{sa}']/row[f'span_cov_{sa}'] for sa in gr if row[f'span_cov_{sa}']>0] for gn,gr in groups.items()}
+        params_alt={gn:(row[f'{gn}_PSI'],row[f'{gn}_disp']) for gn in group_names}
+        psi_gr={gn:[row[f'{sa}_in_cov']/row[f'{sa}_total_cov'] for sa in gr if row[f'{sa}_total_cov']>0] for gn,gr in groups.items()}
         support={s: sum(abs(i-params_alt[s][0]) < abs(i-params_alt[o][0]) for i in psi_gr[s]) for s,o in zip(group_names, reversed(group_names))}
         if any(sup<min_support for sup in support.values()):
             logger.debug(f'skipping {row.gene} with {support} supporters')
@@ -67,10 +67,10 @@ def plot_embedding(splice_bubbles, method='PCA',prior_count=3, top_var=500,min_t
         splice_types=[splice_types]
     if 'all' not in splice_types:        
         splice_bubbles=splice_bubbles.loc[splice_bubbles['splice_type'].isin( splice_types)]
-    n=splice_bubbles[[c for c in splice_bubbles.columns if c[-2:]=='_n']]
-    k=splice_bubbles[[c for c in splice_bubbles.columns if c[-2:]=='_k']]
-    n.columns=[c[:-2] for c in n.columns]
-    k.columns=[c[:-2] for c in k.columns]
+    k=splice_bubbles[[c for c in splice_bubbles.columns if c.endswith('_in_cov')]]
+    n=splice_bubbles[[c for c in splice_bubbles.columns if c.endswith('_total_cov')]]
+    n.columns=[c[:-10] for c in n.columns]
+    k.columns=[c[:-7] for c in k.columns]
     samples=list(n.columns)
     assert all(c1==c2 for c1,c2 in zip (n.columns, k.columns)), 'issue with sample naming of splice bubble table'
 

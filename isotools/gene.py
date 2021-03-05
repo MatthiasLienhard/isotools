@@ -9,7 +9,7 @@ import logging
 logger=logging.getLogger('isotools')
 
 def _eval_filter_fun(fun,name,args):
-    #print a more specific error message if something went wrong with the filter
+    '''decorator for the filter functions''' #which are lambdas and thus cannot have normal decorators
     try:
         return fun(**args)
     except Exception as e:
@@ -170,7 +170,7 @@ class Gene(Interval):
 
     def add_fragments(self): 
         'check for transcripts that are fully contained in other transcripts and save indices of these fragments'
-        for trid, containers in self.splice_graph.find_fragments(strand=self.strand).items():
+        for trid, containers in self.splice_graph.find_fragments().items():
             self.transcripts[trid]['fragments']=containers # list of (containing transcript id, first 5' exons, first 3'exons)
        
         
@@ -229,18 +229,16 @@ class Gene(Interval):
     def _set_coverage(self, force=False):
         samples=self._transcriptome.samples
         cov=np.zeros((len(samples), self.n_transcripts), dtype=int)
-        if not force: #save the splice graph if present
+        if not force: #keep the splice graph if no new transcripts
             known=self.data.get('coverage', None)            
-            if known is not None and known.shape[1]==self.n_transcripts: #in this case we can save the splice graph
-                if known.shape==cov.shape:
+            if known is not None and known.shape[1]==self.n_transcripts:
+                if known.shape==cov.shape: 
                     return
                 cov[:known.shape[0],:]=known
                 for i in range(known.shape[0],len(samples)):
                     for j,tr in enumerate(self.transcripts):
                         cov[i,j]=tr['coverage'].get(samples[i],0)
                 self.data['coverage']=cov
-                if 'splice_graph' in self.data and self.data['splice_graph']:
-                    self.data['splice_graph'].weights=cov
                 return
         for i,sa in enumerate(samples):
             for j,tr in enumerate(self.transcripts):
@@ -263,11 +261,8 @@ class Gene(Interval):
 
     @property
     def chrom(self):
-        try:
-            return self.data['chr']
-        except KeyError: 
-            raise
- 
+        return self.data['chr']
+        
     @property
     def start(self): #alias for begin
         return self.begin
@@ -284,7 +279,7 @@ class Gene(Interval):
         try:
             return self.data['illumina']
         except KeyError:
-            raise ValueError(f'no illumina coverage for gene {self.name} add illumina bam files first')
+            raise ValueError(f'no illumina coverage for gene {self.name} - add illumina bam files first')
 
     @property
     def id(self):
@@ -340,16 +335,14 @@ class Gene(Interval):
         assert self.is_annotated, "reference splice graph requested on novel gene"
         if 'splice_graph' not in self.data['reference'] or self.data['reference']['splice_graph'] is None:
             exons=[tr['exons'] for tr in self.ref_transcripts]
-            self.data['reference']['splice_graph']=SpliceGraph(exons)
+            self.data['reference']['splice_graph']=SpliceGraph(exons, self.strand)
         return self.data['reference']['splice_graph']
         
     @property
     def splice_graph(self):
         if 'splice_graph' not in self.data or self.data['splice_graph'] is None:        
-            self._set_coverage()        
-            weights=self.coverage
             exons=[tr['exons'] for tr in self.transcripts]
-            self.data['splice_graph']=SpliceGraph(exons, weights)
+            self.data['splice_graph']=SpliceGraph(exons, self.strand)
         return self.data['splice_graph']
 
     def __copy__(self):

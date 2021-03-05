@@ -34,10 +34,6 @@ def add_biases(self, genome_fn):
             logger.warning(f'{len(missing_chr)} contigs are not contained in genome, affecting {missing_genes} genes. Some metrics cannot be computed: {missing_chr}')
 
         for g in tqdm(self):                
-            #ts_candidates=g.splice_graph.find_ts_candidates()
-            #for start, end, js, ls, idx in ts_candidates:
-            #    for tr in (g.transcripts[i] for i in idx):
-            #        tr.setdefault('template_switching',[]).append((start, end, js, ls)) 
             g.add_fragments()
             if g.chrom in genome_fh.references:
                 g.add_direct_repeat_len(genome_fh) 

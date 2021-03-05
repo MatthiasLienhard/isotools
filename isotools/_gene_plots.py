@@ -153,10 +153,10 @@ def sashimi_plot_short_reads(self,sidx, title, ax,junctions_of_interest, x_range
 
 def sashimi_plot(self,sidx, title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th,min_cov_th, text_width, arc_type,text_height):   
     splice_graph=self.splice_graph
-    boxes=[(node[0], node[1], splice_graph.weights[np.ix_(sidx,[i for i in set(node[2]).union(node[3])])].sum()) for node in splice_graph]
+    boxes=[(node[0], node[1], self.coverage[np.ix_(sidx,[i for i in set(node[2]).union(node[3])])].sum()) for node in splice_graph]
     if text_width<1:
         text_width=(splice_graph[-1][1]-splice_graph[0][0])*text_width
-    total_weight=splice_graph.weights[sidx,:].sum()
+    total_weight=self.coverage[sidx,:].sum()
     if high_cov_th<1:
         high_cov_th=high_cov_th*total_weight   
     if min_cov_th<1:
@@ -167,7 +167,7 @@ def sashimi_plot(self,sidx, title, ax,junctions_of_interest, x_range,jparams, ex
         weights={}
         for tr,next_i in suc.items():
             weights.setdefault(next_i,0)
-            weights[next_i]+=splice_graph.weights[np.ix_(sidx,[tr])].sum()
+            weights[next_i]+=self.coverage[np.ix_(sidx,[tr])].sum()
         arcs_new=[(ee,boxes[i][2],splice_graph[next_i][0],boxes[next_i][2],w) for next_i, w in weights.items() if splice_graph[next_i][0]>ee and w>0]
         if arcs_new:
             arcs.extend(arcs_new)

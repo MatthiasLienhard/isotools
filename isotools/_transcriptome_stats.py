@@ -10,6 +10,7 @@ import pandas as pd
 import itertools
 from tqdm import tqdm
 import warnings
+from ._utils import overlap
 logger=logging.getLogger('isotools')
 
 # differential splicing
@@ -104,12 +105,13 @@ TESTS={ 'betabinom_lr':betabinom_lr_test,
         'proportions': proportion_test}
 
 
-def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='auto',padj_method='fdr_bh'):
-    #min_cov both paths must have that many reads (combined)
-    #min_n: for each group min_sa % of the samples must have that many reads over both paths 
+def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto',padj_method='fdr_bh'):
+    #min_total: minimum total coverage over splice bubble for both groups combined
+    #min_alt_fraction: each alternative must contribute at least this fraction in both groups combined
+    #min_n: for each group min_sa % of the samples must have coverage> min_n over splice_bubble
     
     assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
-    #multitest_default={}
+    #find groups and sample indices
     if isinstance(groups, dict):
         groupnames=list(groups)
         groups=list(groups.values())
@@ -138,45 +140,66 @@ def altsplice_test(self,groups, min_cov=20, min_n=10, min_sa=.51, test='auto',pa
     logger.info('testing differential splicing for %s using %s test',' vs '.join(f'{groupnames[i]} ({len(groups[i])})' for i in range(2)) ,test_name)
     sa_idx={sa:idx[0] for sa,idx in self._get_sample_idx().items()}
     grp_idx=[[sa_idx[sa] for sa in grp] for grp in groups]
+    sidx=grp_idx[0]+grp_idx[1]
     if min_sa<1:
         min_sa*=sum(len(gr) for gr in groups)
     res=[]
     for g in tqdm(self):
-        splice_type=['ES','3AS','5AS','IR','ME'] if g.strand=='+' else ['ES','5AS','3AS','IR','ME']
-        for setA,setB,nodeX,nodeY, type_idx in g.splice_graph.find_splice_bubbles():
-            start=g.splice_graph[nodeX].end
-            end=g.splice_graph[nodeY].start
-            junction_cov=g.coverage[:,setA].sum(1)
-            total_cov=g.coverage[:,setB].sum(1)+junction_cov
-            try:
-                x=[junction_cov[grp] for grp in grp_idx]
-            except IndexError:
-                logger.error(f'error at {g.name}:{start}-{end}')
-                raise
+        if g.coverage[sidx,:].sum()<min_total:
+            continue
+        known={} #check for known events
+        if g.is_annotated and g.n_transcripts: 
+            sg=g.ref_splice_graph
+            for _,_,nX,nY, splice_type in sg.find_splice_bubbles():#find annotated alternatives (known)
+                if splice_type in ("TSS","PAS"):
+                    if (splice_type=="TSS")==(g.strand=="+"):
+                        known.setdefault(splice_type,set()).add((sg[nY].end))
+                    else:
+                        known.setdefault(splice_type,set()).add((sg[nX].start))
+                else:
+                    known.setdefault(splice_type,set()).add((sg[nX].end,sg[nY].start))
+        sg=g.splice_graph
+        for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles():
+            
+            junction_cov=g.coverage[:,setB].sum(1)
+            total_cov=g.coverage[:,setA].sum(1)+junction_cov
+            if total_cov[sidx].sum() < min_total:
+                continue
+            alt_fraction=junction_cov[sidx].sum()/total_cov[sidx].sum() 
+            if alt_fraction<min_alt_fraction or alt_fraction > 1-min_alt_fraction:
+                continue
+            x=[junction_cov[grp] for grp in grp_idx]
             n=[total_cov[grp] for grp in grp_idx]
             if sum((ni>=min_n).sum() for ni in n)<min_sa:
                 continue
-            x_sum=sum(xi.sum() for xi in x)     
-            n_sum=sum(ni.sum() for ni in n)       
-            if x_sum < min_cov or n_sum-x_sum < min_cov:
-                continue
             pval, params=test(x,n)
-            res.append(tuple(itertools.chain((g.name,g.id,g.chrom,g.strand, start, end,splice_type[type_idx],pval),params ,
+            if splice_type in ['TSS', 'PAS']:
+                start, end=sg[nX].start, sg[nY].end
+                if (splice_type=="TSS")==(g.strand=="+"):
+                    novel=end not in known.get(splice_type,set())
+                else:
+                    novel=start not in known.get(splice_type,set())
+            else:
+                start, end=sg[nX].end, sg[nY].start
+                novel=(start, end) not in known.get(splice_type,set())
+            res.append(tuple(itertools.chain((g.name,g.id,g.chrom,g.strand, start, end,splice_type,novel,pval),params ,
                 (val for lists in zip(x,n) for pair in zip(*lists) for val in pair ))))
-    df=pd.DataFrame(res, columns= (['gene','gene_id','chrom','strand', 'start', 'end','splice_type','pvalue']+ 
-            [gn+part for gn in groupnames+['total'] for part in ['_fraction', '_disp'] ]+  
-            [f'{w}_{sa}_{gn}' for gn,grp in zip(groupnames, groups) for sa in grp for w in ['cov', 'span_cov'] ]))
+        
+    df=pd.DataFrame(res, columns= (['gene','gene_id','chrom','strand', 'start', 'end','splice_type','novel','pvalue']+ 
+            [gn+part for gn in groupnames+['total'] for part in ['_PSI', '_disp'] ]+  
+            [f'{sa}_{gn}_{w}' for gn,grp in zip(groupnames, groups) for sa in grp for w in ['in_cov', 'total_cov'] ]))
     try:
         mask = np.isfinite(df['pvalue'])
         padj = np.empty(mask.shape)
         padj.fill(np.nan) 
         padj[mask] = multi.multipletests(df.loc[mask,'pvalue'],method=padj_method)[1]
-        df.insert(7,'padj',padj)
+        df.insert(8,'padj',padj)
     except TypeError as e: #apparently this happens if df is empty...
         logger.error('unexpected error during calculation of adjusted p-values: {e}' ,e=e)
     return df
 
 def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',region=None):
+    logger.warning('splice_dependence_test is depreciated - revise based on splice bubbles')
     if isinstance(samples, str):
         samples=[samples]
     elif samples is None:
@@ -211,88 +234,33 @@ def find_splice_bubbles(self, min_total=100, min_alt_fraction=.1,samples=None, r
     for g in self.iter_genes(region, include, remove):
         if g.coverage[sidx,:].sum()<min_total:
             continue
-        splice_type=['ES','3AS','5AS','IR','ME'] if g.strand=='+' else ['ES','5AS','3AS','IR','ME']
-        for setA,setB,nodeX,nodeY, type_idx in g.splice_graph.find_splice_bubbles():
+        known={} #check for known events
+        if g.is_annotated and g.n_transcripts: 
+            sg=g.ref_splice_graph
+            for _,_,nX,nY, splice_type in sg.find_splice_bubbles():#find annotated alternatives (known)
+                if splice_type in ("TSS","PAS"):
+                    if (splice_type=="TSS")==(g.strand=="+"):
+                        known.setdefault(splice_type,set()).add((sg[nY].end))
+                    else:
+                        known.setdefault(splice_type,set()).add((sg[nX].start))
+                else:
+                    known.setdefault(splice_type,set()).add((sg[nX].end,sg[nY].start))
+        sg=g.splice_graph
+        for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles():
             junction_cov=g.coverage[np.ix_(sidx,setA)].sum(1)
             total_cov=g.coverage[np.ix_(sidx,setB)].sum(1)+junction_cov
             if total_cov.sum()>=min_total and min_alt_fraction < junction_cov.sum()/total_cov.sum() < 1-min_alt_fraction:
-                start=g.splice_graph[nodeX].end
-                end=g.splice_graph[nodeY].start
-                #scaled_mean=junction_cov.sum()/total_cov.sum()*prior_count
-                #cov_tab[splice_type[type_idx]][f'{g.name}_{start}_{end}']=(junction_cov+scaled_mean)/(total_cov + prior_count)
-                bubbles.append([g.id, g.chrom, start, end, splice_type[type_idx]]+list(junction_cov)+list(total_cov))
-    return pd.DataFrame(bubbles,columns=['gene', 'chr', 'start', 'end', 'splice_type']+[f'{sa}_{what}' for what in ['k','n'] for sa in samples ] )
-
-# PCA and UMAP
-def embedding(self, genes=None, reducer='PCA',n_top_var=500, n_subsample=1000,samples=None, min_cov=20): # ol
-    ''' Compute embedding of most variable junction for each gene if genes are provided as a list (e.g. genes=[gene_name1, gene_name2 ...]). 
-        Alternatively, if genes is a dict, junctions can be provided as a list (e.g. genes[gene_name]=[(jstart,jend)]).
-        If genes is None, all genes with coverage > min_cov are considered. 
-    '''
-    warnings.warn(
-            "embedding is deprecated, use find_splce_bubbles() and isotools.plots.plot_embedding() instead",
-            DeprecationWarning
-        )
-    joi=dict()
-    if samples is not None:
-        s_filter=[True if sn in samples else False for sn in self.samples]
-    else:
-        s_filter=[True]*len(self.samples)
-    if genes is None:        
-        genes=[g for g in self if all(g.coverage[s_filter].sum(1)>=min_cov)] #all covered genes
-        logger.info(f'found {len(genes)} genes > {min_cov} reads in all {sum(s_filter)} selected samples.')
-    else:
-        n_in=len(genes)
-        if isinstance(genes, dict):
-            joi=genes
-        genes=[self[g] for g in genes if g in self and all(self[g].splice_graph.weights[s_filter].sum(1)>=min_cov)] #all covered genes
-        logger.info(f'{len(genes)} of {n_in} genes have > {min_cov} reads in all {sum(s_filter)} selected samples.')
-    if n_subsample is not None and n_subsample<len(genes):
-        genes=[genes[i] for i in np.random.choice(range(len(genes)), n_subsample)]
-        logger.info(f'sampled {n_subsample} random genes')        
-    data={}
-    # since junctions of a single gene are often correlated, I select one top variable junction per gene
-    for g in tqdm(genes):   
-        sg=g.splice_graph
-        gene_coverage=sg.weights[s_filter].sum(1)
-        if any(cov<min_cov for cov in gene_coverage):
-            continue
-        if g.name in joi and joi[g.name]:#
-            for j in joi[g.name]:
-                start=next(n for n in sg if n.end==j[0])            
-                jcov=sum(sg.weights[s_filter,trid] for trid,suc in start.suc.items() if sg[suc].start==j[1])/gene_coverage
-                data[f'{g.name}_{j[0]}_{j[1]}']=jcov
-        else:
-            jcov={}                 
-            for n in sg:
-                #print(n)
-                for trid,suc in n[3].items():
-                    #if all(sg.weights[s_filter,trid] < min_cov):
-                    #    continue
-                    j_name=f'{g.name}_{n[1]}_{sg[suc][0]}'
-                    jcov.setdefault(j_name,np.zeros(len(gene_coverage)))
-                    jcov[j_name]+=(sg.weights[s_filter,trid]) /gene_coverage
-            if jcov:
-                top_idx=pd.DataFrame(jcov).var(0).idxmax()
-                data[top_idx]=jcov[top_idx]
-    data=pd.DataFrame(data,index=self.infos['sample_table'].loc[s_filter,'name'])
-    #filter for highest variance
-    if n_top_var<data.shape[1]:
-        logger.info(f'selecting the {n_top_var} genes with the most variable junction')
-        topvar=data[data.var(0).nlargest(n_top_var).index]
-    else:
-        topvar=data
-
-    #compute embedding
-    if reducer=='PCA':
-        # Linear dimensionality reduction using Singular Value Decomposition of the data to project it to a lower dimensional space. 
-        # The input data is centered but not scaled for each feature before applying the SVD.
-        reducer=PCA()
-    elif reducer=='UMAP':
-        reducer==UMAP()
-    elif reducer is None:
-        return topvar    
-    return pd.DataFrame(reducer.fit_transform(topvar), index=topvar.index)
+                if splice_type in ['TSS', 'PAS']:
+                    start, end=sg[nX].start, sg[nY].end
+                    if (splice_type=="TSS")==(g.strand=="+"):
+                        novel=end not in known.get(splice_type,set())
+                    else:
+                        novel=start not in known.get(splice_type,set())
+                else:
+                    start, end=sg[nX].end, sg[nY].start
+                    novel=(start, end) not in known.get(splice_type,set())
+                bubbles.append([g.id, g.chrom, start, end, splice_type, novel]+list(junction_cov)+list(total_cov))
+    return pd.DataFrame(bubbles,columns=['gene', 'chr', 'start', 'end', 'splice_type', 'novel']+[f'{sa}_{what}' for what in ['in_cov','total_cov'] for sa in samples ] )
 
 # summary tables (can be used as input to plot_bar / plot_dist)
 def altsplice_stats(self, groups=None , weight_by_coverage=True, min_coverage=2, tr_filter={}):    

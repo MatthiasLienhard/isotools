@@ -5,6 +5,11 @@ from random import sample, randint
 #from importlib import reload
 #reload(isotools.splice_graph)
 
+me_exons=[[[10,20],[30,40],[70,80]],
+          [[10,20],[50,60],[70,80]]]
+
+
+
 class TestSpliceGraph(unittest.TestCase):
     def test_simple(self):
         exons=[[[21,30], [41,50], [61,70]],[[25,30], [41,70], [81,90]],[[25,30], [41,70], [81,90]]]
@@ -28,7 +33,7 @@ class TestSpliceGraph(unittest.TestCase):
 
 
     def generic_test(self, exons):        
-        sg=isotools.splice_graph.SpliceGraph(exons)
+        sg=isotools.splice_graph.SpliceGraph(exons, '+')
         for i,tr in enumerate(exons):
             self.assertEqual(tr, sg.restore(i))
             self.assertEqual(tr, sg.restore_reverse(i))

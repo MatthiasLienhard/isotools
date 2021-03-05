@@ -7,12 +7,14 @@ from contextlib import ExitStack
 from .short_read import Coverage
 from ._utils import junctions_from_cigar,splice_identical,is_same_gene, overlap, pairwise
 from .gene import Gene
+from .decorators import deprecated, debug,experimental
 import copy
 import logging
 logger=logging.getLogger('isotools')
 
 #### io functions for the transcriptome class
 SPLICE_CATEGORY=['FSM','ISM','NIC','NNC','NOVEL']
+
 def add_short_read_coverage(self, bam_files,names=None, load=False):
     'Add short read coverage to the genes.\n This does, by default (e.g. if load==False), not actually read the bams, but reading is done at first access'
     self.infos.setdefault('short_reads', pd.DataFrame(columns=['name', 'file']))
@@ -27,7 +29,10 @@ def add_short_read_coverage(self, bam_files,names=None, load=False):
         bam_files=list(bam_files.values())
     else:
         raise ValueError('either provide a bam file and names as strings, lists of strings or as a dict')
-    self.infos['short_reads']=pd.concat([self.infos['short_reads'], pd.DataFrame({'name':names, 'file':bam_files})])
+    assert len(names)==len(set(names)), 'trying to add duplicate short read tracks'
+    assert all(~self.infos['short_reads'].isin(names)), 'trying to add existing short read track'
+    
+    self.infos['short_reads']=pd.concat([self.infos['short_reads'], pd.DataFrame({'name':names, 'file':bam_files})], ignore_index=True)
     if load: # when loading coverage for all genes keep the filehandle open, hopefully a bit faster
         for i,bamfile in enumerate(self.infos['short_reads'].file):            
             logger.info('Adding short read coverag from %s',bamfile)
@@ -38,7 +43,7 @@ def add_short_read_coverage(self, bam_files,names=None, load=False):
                         g.data['short_reads'].append(Coverage.from_alignment(align,g))
                 
  
-
+@experimental
 def remove_samples(self, sample_names):
     ''' removes samples from the dataset'''
     if isinstance(sample_names, str):
@@ -159,7 +164,7 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
         self._add_novel_genes(IntervalTree(Interval(tr['exons'][0][0],tr['exons'][-1][1], tr) for tr in novel[chrom]),chrom)
     #self.infos.setdefault('chimeric',{})[sample_name]=chimeric #save all chimeric reads (for debugging)
     for g in self:
-        if 'coverage' in g.data and g.data['coverage'] is not None: # still valid splice graphs no new transcripts - add a row of zeros to weights
+        if 'coverage' in g.data and g.data['coverage'] is not None: # still valid splice graphs no new transcripts - add a row of zeros to coveage
             g._set_coverage()
 
 def _add_chimeric(self,new_chimeric, min_cov):
@@ -272,7 +277,7 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
                         tr2.setdefault('fuzzy_junction', {}).setdefault(sample_name,[]).append(shifts) #keep the info, mainly for testing/statistics    
                         tr2['coverage'][sample_name]=tr2['coverage'].get(sample_name,0)+tr['coverage'][sample_name]
                         return g 
-            tr['annotation']=g.ref_splice_graph.get_alternative_splicing(tr['exons'], g.strand, additional)
+            tr['annotation']=g.ref_splice_graph.get_alternative_splicing(tr['exons'],  additional)
             if not_covered:
                 tr['novel_splice_sites']=not_covered #todo: might be changed by fuzzy junction
             #{'sj_i': sj_i, 'base_i':base_i,'category':SPLICE_CATEGORY[altsplice[1]],'subcategory':altsplice[1]} #intersects might have changed due to fuzzy junctions
@@ -364,9 +369,9 @@ def _find_splice_sites(genes_ol, exons):
     return None,ref_ol,None,np.zeros((len(exons)-1)*2, dtype=bool) 
 
 
+@deprecated
 def _get_intersects(genes_ol, exons):
     'calculate the intersects of all overlapping genes and return the best'  
-    logger.warning('_get_intersects is depreciated')
     ## todo: in order to detect readthrough fusion genes, report all overlapping reference genes? or exon/junction wise?
     # prefer annotated genes
     intersect=[(i,g.ref_splice_graph.get_intersects(exons)) for i,g in enumerate(genes_ol) if g.is_annotated]
@@ -383,6 +388,7 @@ def _get_intersects(genes_ol, exons):
     #todo: potentially antisense could be considered as well here
     return None, (0,0)
 
+@experimental
 def import_gtf_transcripts(fn,transcriptome, chromosomes=None):
     '''import transcripts from gtf file (e.g. for a reference)
     returns a dict interval trees for the genes, each containing the splice graph'''
@@ -570,6 +576,7 @@ def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=
     return genes
 
 ## io utility functions
+@experimental
 def get_mutations_from_bam(bam_file,genome_file,region, min_cov=.05):
     '''not very efficient function to fetch mutations within a region from a bam file'''
     mut=dict()
@@ -773,33 +780,40 @@ def export_alternative_splicing(self,out_dir,out_format='miso', reference=False,
                 continue
             elif not reference and g.coverage[sidx,:].sum()<min_total:
                 continue
-            splice_type=['ES','3AS','5AS','IR','ME'] if g.strand=='+' else ['ES','5AS','3AS','IR','ME']
+            
             sg=g.ref_splice_graph if reference else g.splice_graph
-            for setA,setB,nodeX,nodeY, type_idx in sg.find_splice_bubbles():
+            for setA,setB,nodeX,nodeY, splice_type in sg.find_splice_bubbles(include_starts=False):
                 if not reference:
                     junction_cov=g.coverage[np.ix_(sidx,setA)].sum(1)
                     total_cov=g.coverage[np.ix_(sidx,setB)].sum(1)+junction_cov
                     if total_cov.sum()<min_total or (not min_alt_fraction < junction_cov.sum()/total_cov.sum() < 1-min_alt_fraction):
                         continue
-                st=types[splice_type[type_idx]]
+                st=types[splice_type]
                 lines=alt_splice_export(setA,setB,nodeX,nodeY, st, sg, g, count[st])
                 if lines:
                     count[st]+=len(lines)
                     fh[st].write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
                 
 def _miso_alt_splice_export(setA,setB,nodeX,nodeY, st,sg,g,offset):
-    event_id=f'{g.chrom}:{sg[nodeX].end}-{sg[nodeY].start}'
+    event_id=f'{g.chrom}:{sg[nodeX].end}-{sg[nodeY].start}_st'
     # TODO: Mutually exclusives extend beyond nodeY - and have potentially multiple A "mRNAs"
     # TODO: is it possible to extend exons at nodeX and Y - if all/"most" tr from setA and B agree?
     #if st=='ME':
     #    nodeY=min(sg._pas[setA])
     lines=[]
     lines.append([g.chrom, st, 'gene', sg[nodeX].start, sg[nodeY].end, '.',g.strand, '.', f'ID={event_id};gene_name={g.name};gene_id={g.id}'])
-    lines.append((g.chrom, st, 'mRNA', sg[nodeX].start, sg[nodeY].end, '.',g.strand, '.', f'Parent={event_id};ID={event_id}.A'))
-    lines.append((g.chrom, st, 'exon', sg[nodeX].start, sg[nodeX].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.up'))
-    lines.append((g.chrom, st, 'exon', sg[nodeY].start, sg[nodeY].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.down'))
-    for i,exons in enumerate({tuple(sg._get_all_exons(nodeX, nodeY, b_tr)) for b_tr in setB}):
-        lines.append((g.chrom, st, 'mRNA', sg[nodeX].start, exons[-1][1], '.',g.strand, '.', f'Parent={event_id};ID={event_id}.B{i}'))
+    #lines.append((g.chrom, st, 'mRNA', sg[nodeX].start, sg[nodeY].end, '.',g.strand, '.', f'Parent={event_id};ID={event_id}.A'))
+    #lines.append((g.chrom, st, 'exon', sg[nodeX].start, sg[nodeX].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.up'))
+    #lines.append((g.chrom, st, 'exon', sg[nodeY].start, sg[nodeY].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.down'))
+    for i,exons in enumerate({tuple(sg._get_all_exons(nodeX, nodeY, tr)) for tr in setA}):
+        lines.append((g.chrom, st, 'mRNA', exons[0][0], exons[-1][1], '.',g.strand, '.', f'Parent={event_id};ID={event_id}.A{i}'))
+        lines[0][3]=min(lines[0][3], lines[-1][3])
+        lines[0][4]=max(lines[0][4], lines[-1][4])
+        for j,e in enumerate(exons):
+            lines.append((g.chrom, st, 'exon', e[0], e[1], '.',g.strand, '.', f'Parent={event_id}.A{i};ID={event_id}.A{i}.{j}'))
+    for i,exons in enumerate({tuple(sg._get_all_exons(nodeX, nodeY, tr)) for tr in setB}):
+        lines.append((g.chrom, st, 'mRNA', exons[0][0], exons[-1][1], '.',g.strand, '.', f'Parent={event_id};ID={event_id}.B{i}'))
+        lines[0][3]=min(lines[0][3], lines[-1][3])
         lines[0][4]=max(lines[0][4], lines[-1][4])
         for j,e in enumerate(exons):
             lines.append((g.chrom, st, 'exon', e[0], e[1], '.',g.strand, '.', f'Parent={event_id}.B{i};ID={event_id}.B{i}.{j}'))
@@ -834,10 +848,10 @@ def _mats_alt_splice_export(setA,setB,nodeX,nodeY, st,sg,g,offset):
         elif st=='RI' and len(exonsB)==1:
             exons_sel=[exonsB[0], exonsA[0], exonsA[1]] #if g.strand=='+' else [exonsB[0], exonsA[1], exonsA[0]]
         elif st=='MXE' and len(exonsB)==3:
-            nodeZ=next(idx for idx,n in enumerate(sg) if n.start==exonsB[-1][0])
-            for exonsA in {tuple(sg._get_all_exons(nodeX, nodeZ, a_tr)) for a_tr in setA}:
-                if len(exonsA)==3 and exonsA[0]==exonsB[0] and exonsA[2]==exonsB[2]:
-                    lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand, exonsB[1][0], exonsB[1][1], exonsA[1][0], exonsA[1][1], exonsA[0][0], exonsA[0][1], exonsA[2][0], exonsA[2][1]])      
+            #nodeZ=next(idx for idx,n in enumerate(sg) if n.start==exonsB[-1][0])
+            for exonsA in {tuple(sg._get_all_exons(nodeX, nodeY, a_tr)) for a_tr in setA}:
+                assert len(exonsA)==3 and exonsA[0]==exonsB[0] and exonsA[2]==exonsB[2] #should always be true
+                lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand, exonsB[1][0], exonsB[1][1], exonsA[1][0], exonsA[1][1], exonsA[0][0], exonsA[0][1], exonsA[2][0], exonsA[2][1]])      
         if exons_sel is not None:      
             lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand]+[pos for e in exons_sel for pos in e])
     return [[offset+count]+l for count, l in enumerate(lines)]
@@ -871,7 +885,7 @@ def get_gff_chrom_dict(gff, chromosomes):
            
 
 class IntervalArray:
-    #drop in replacement for the interval tree during construction, with faster lookup
+    '''drop in replacement for the interval tree during construction, with faster lookup'''
     def __init__(self, total_size, bin_size=1e4):
         self.obj={}
         self.data=[set() for _ in range(int((total_size)//bin_size)+1)]

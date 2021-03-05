@@ -177,7 +177,7 @@ class Transcriptome:
     from ._transcriptome_filter import add_biases, add_filter,iter_genes,iter_transcripts,iter_ref_transcripts
 
     ### statistic: differential splicing, embedding
-    from ._transcriptome_stats import altsplice_test,splice_dependence_test, embedding, find_splice_bubbles
+    from ._transcriptome_stats import altsplice_test,splice_dependence_test, find_splice_bubbles
 
     # statistic: summary tables (can be used as input to plot_bar / plot_dist)
     from ._transcriptome_stats import altsplice_stats,filter_stats,transcript_length_hist,transcript_coverage_hist,transcripts_per_gene_hist,exons_per_transcript_hist,downstream_a_hist, direct_repeat_hist

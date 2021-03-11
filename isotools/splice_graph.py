@@ -6,6 +6,7 @@ import logging
 import scipy.stats as stats
 import logging
 from ._utils import pairwise, overlap
+from decorators import deprecated
 logger=logging.getLogger('isotools')
 
 class SpliceGraph():
@@ -436,7 +437,8 @@ class SpliceGraph():
                         print(long_idx)
                         raise
                     yield gnode.end, self[target].start,w, longer_weight,  idx
-        
+
+    @deprecated    
     def splice_dependence(self, sidx,min_cov,coverage, ignore_unspliced=True):
         'experimental'
         # TODO - outdated - remove when replaced by splice bubbles'

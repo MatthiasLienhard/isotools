@@ -8,6 +8,17 @@
     * find_splice_bubbles(weights=g.coverage) ...
     * implement "novel" also add for PCA / find_splice_bubbles
     * implement filter for functions calling find_splice_bubbles by setting weights=0
+* consider revising splice graph to common nomenclauture:
+    * nodes/vertices are donor/acceptor sites
+    * edges are exons/introns
+    * pro:
+        * standard
+        * trivial to reconstruct transcripts
+        * most functions should work (faster?)
+        * can be extended easily
+    * contra:
+        * not trivial to find overlapping transcripts (not needed?)
+        * breaks: is_same_exon,_check_exon,_check_junction, get_overlap
 
 
 

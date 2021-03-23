@@ -152,7 +152,7 @@ def sashimi_plot_short_reads(self,sidx, title, ax,junctions_of_interest, x_range
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
 
 def sashimi_plot(self,sidx, title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th,min_cov_th, text_width, arc_type,text_height):   
-    ebg=self.eb_graph
+    ebg=self.segment_graph
     boxes=[(node[0], node[1], self.coverage[np.ix_(sidx,[i for i in set(node[2]).union(node[3])])].sum()) for node in ebg]
     if text_width<1:
         text_width=(ebg[-1][1]-ebg[0][0])*text_width

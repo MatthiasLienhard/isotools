@@ -209,7 +209,7 @@ def plot_altsplice_examples(isoseq,reference,groups,illu_groups,examples, out):
                 _=isotools.stats.sashimi_plot_bam(g, ax=ax[offset], title='illumina '+sn, group=[illu_sample_idx[r] for r in illu_groups[sn]],text_width=150, exon_color=exon_color, junctions_of_interest=joi, **jparams)
                 offset+=1
             # Temporary hack: for novel genes, g.start and end is not correct!!!
-            start, end=g.eb_graph[0][0],g.eb_graph[-1][1]           
+            start, end=g.segment_graph[0][0],g.segment_graph[-1][1]           
             for a in ax:
                 a.set_xlim((start -100, end +100))
             f.tight_layout()
@@ -278,7 +278,7 @@ def plot_diffsplice(isoseq, reference, de_tab,gr,illu_gr,out):
             _=isotools.stats.sashimi_plot_bam(g, ax=ax[offset], title='illumina '+ sn, group=[illu_sample_idx[r] for r in illu_gr[sn]], text_width=150, exon_color=exon_color,junctions_of_interest=joi, **jparams)
             offset+=1
         # Temporary hack: for novel genes, g.start and end is not correct!!!
-        start, end=g.eb_graph[0][0],g.eb_graph[-1][1]           
+        start, end=g.segment_graph[0][0],g.segment_graph[-1][1]           
         for a in ax:
             a.set_xlim((start -100, end +100))
         f.tight_layout()

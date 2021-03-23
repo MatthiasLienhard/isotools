@@ -7,7 +7,7 @@ import scipy.stats as stats
 from sortedcontainers import SortedDict # for SpliceGraph
 import logging
 from ._utils import pairwise, overlap
-from decorators import deprecated, experimental
+from .decorators import deprecated, experimental
 
 logger=logging.getLogger('isotools')
 

@@ -2,7 +2,7 @@ from intervaltree import Interval
 from Bio.Seq import Seq
 import numpy as np
 import copy
-from .splice_graph import SpliceGraph
+from .splice_graph import SegmentGraph
 from .short_read import Coverage
 
 import logging
@@ -82,7 +82,7 @@ class Gene(Interval):
     def correct_fuzzy_junctions(self,tr, size, modify=True):
         'this corrects for splicing shifts (e.g. same difference compared to reference annotaiton at both donor and acceptor) presumably caused by ambigous alignments'
         exons=tr['exons']
-        shifts=self.ref_splice_graph.fuzzy_junction(exons,size)
+        shifts=self.ref_segment_graph.fuzzy_junction(exons,size)
         if shifts and modify:
             for i,sh in shifts.items():
                 exons[i][1]+=sh
@@ -115,7 +115,7 @@ class Gene(Interval):
         '''for all transcripts, add the the index and sequence of noncanonical (i.e. not GT-AG) splice sites
         i.e. save the dinucleotides of donor and aceptor as XX-YY string in the transcript biases dicts
         noncanonical splicing might indicate technical artifacts (template switching, missalignment, ...)'''
-        #todo: this is highly redundant - should be done on splice graph
+        # TODO: this is highly redundant - should be done on graph
         for tr in self.transcripts:
             pos=((tr['exons'][i][1], tr['exons'][i+1][0]-2) for i in range(len(tr['exons'])-1))
             sj_seq=((genome_fh.fetch(self.chrom, p, p+2).upper() for p in i) for i in pos)
@@ -170,7 +170,7 @@ class Gene(Interval):
 
     def add_fragments(self): 
         'check for transcripts that are fully contained in other transcripts and save indices of these fragments'
-        for trid, containers in self.splice_graph.find_fragments().items():
+        for trid, containers in self.segment_graph.find_fragments().items():
             self.transcripts[trid]['fragments']=containers # list of (containing transcript id, first 5' exons, first 3'exons)
        
         
@@ -229,7 +229,7 @@ class Gene(Interval):
     def _set_coverage(self, force=False):
         samples=self._transcriptome.samples
         cov=np.zeros((len(samples), self.n_transcripts), dtype=int)
-        if not force: #keep the splice graph if no new transcripts
+        if not force: #keep the segment graph if no new transcripts
             known=self.data.get('coverage', None)            
             if known is not None and known.shape[1]==self.n_transcripts:
                 if known.shape==cov.shape: 
@@ -244,7 +244,7 @@ class Gene(Interval):
             for j,tr in enumerate(self.transcripts):
                     cov[i,j]=tr['coverage'].get(sa,0)
         self.data['coverage']=cov
-        self.data['splice_graph']=None
+        self.data['segment_graph']=None
 
 
     @property
@@ -331,19 +331,19 @@ class Gene(Interval):
         return len(self.ref_transcripts)
 
     @property
-    def ref_splice_graph(self): #raises key error if not self.is_annotated
-        assert self.is_annotated, "reference splice graph requested on novel gene"
-        if 'splice_graph' not in self.data['reference'] or self.data['reference']['splice_graph'] is None:
+    def ref_segment_graph(self): #raises key error if not self.is_annotated
+        assert self.is_annotated, "reference segment graph requested on novel gene"
+        if 'segment_graph' not in self.data['reference'] or self.data['reference']['segment_graph'] is None:
             exons=[tr['exons'] for tr in self.ref_transcripts]
-            self.data['reference']['splice_graph']=SpliceGraph(exons, self.strand)
-        return self.data['reference']['splice_graph']
+            self.data['reference']['segment_graph']=SegmentGraph(exons, self.strand)
+        return self.data['reference']['segment_graph']
         
     @property
-    def splice_graph(self):
-        if 'splice_graph' not in self.data or self.data['splice_graph'] is None:        
+    def segment_graph(self):
+        if 'segment_graph' not in self.data or self.data['segment_graph'] is None:        
             exons=[tr['exons'] for tr in self.transcripts]
-            self.data['splice_graph']=SpliceGraph(exons, self.strand)
-        return self.data['splice_graph']
+            self.data['segment_graph']=SegmentGraph(exons, self.strand)
+        return self.data['segment_graph']
 
     def __copy__(self):
         return Gene(self.start, self.end, self.data, self._transcriptome)        

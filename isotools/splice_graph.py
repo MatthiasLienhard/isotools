@@ -4,12 +4,88 @@ import numpy as np
 from tqdm import tqdm
 import logging
 import scipy.stats as stats
+from sortedcontainers import SortedDict # for SpliceGraph
 import logging
 from ._utils import pairwise, overlap
-from decorators import deprecated
+from decorators import deprecated, experimental
+
 logger=logging.getLogger('isotools')
 
+
 class SpliceGraph():
+    '''
+    (Experimental) Splice Graph Implementation
+    Nodes represent splice sites and are tuples of genomic positions and a "lower" flag.
+    The "lower flag" is true, if the splice site is a genomic 5' end of an exon
+    Nodes are kept sorted, so iteration over splicegraph returns all nodes in genomic order
+    Edges are assessed with SpliceGraph.pre(node, [tr_nr]) and SpliceGraph.suc(node, [tr_nr]) functions.
+    If no tr_nr is provided, a dict with all incoming/outgoing edges is returned
+    '''
+    @experimental
+    @classmethod
+    def from_transcript_list(cls, transcripts, strand):
+        '''
+        Compute the splice graph from a list of transcripts
+        '''
+        assert strand in '+-', 'strand must be either "+" or "-"'
+        sg=cls()
+        sg.is_reverse=strand=='-'
+        sg._graph=SortedDict()
+        
+        sg._fwd_starts=[(tr[0][0], True) for tr in transcripts] #genomic 5'
+        sg._rev_starts=[(tr[-1][1], False) for tr in transcripts] #genomic 3'
+
+        for tr_nr, tr in enumerate(transcripts):
+            sg._graph.setdefault((tr[0][0], True) ,({},{}) )
+            
+            for i,(b1, b2) in enumerate(pairwise(pos for e in tr for pos in e)):
+                sg._graph.setdefault((b2,bool(i%2)),({},{}) )
+                sg._graph[b2,    bool(i%2)][1][tr_nr]=b1,not bool((i)%2) #successor
+                sg._graph[b1,not bool(i%2)][0][tr_nr]=b2,    bool((1)%2) #predesessor
+        return sg
+    
+    def __iter__(self):
+       return self._graph.__iter__()
+    def __len__(self):
+        return self._graph.__len__()
+
+    @experimental
+    def add(self,tr):
+        '''
+        Add one transcript to the existing graph.
+        '''
+        tr_nr=len(self._fwd_starts)
+        self._fwd_starts.append((tr[0][0], True)) #genomic 5'
+        self._rev_starts.append((tr[-1][1], False)) #genomic 3'
+        self._graph.setdefault((tr[0][0], True) ,({},{}) )            
+        for i,(b1, b2) in enumerate(pairwise(pos for e in tr for pos in e)):
+            self._graph.setdefault((b2,bool(i%2)),({},{}) )
+            self._graph[b2,    bool(i%2)][1][tr_nr]=b1,not bool((i)%2) #successor
+            self._graph[b1,not bool(i%2)][0][tr_nr]=b2,    bool((1)%2)
+
+    def suc(self, node, tr_nr=None):
+        "returns the successor (next genomic upstream node) of transcript, or a dict with successors for all transcripts"
+        edges=self._graph[node][0]
+        if tr_nr is None:
+            return edges
+        return edges[tr_nr]
+
+    def pre(self, node, tr_nr=None):
+        "returns the predesessor (next genomic downstream node) of transcript, or a dict with predesessor for all transcripts"
+        edges=self._graph[node][1]
+        if tr_nr is None:
+            return edges
+        return edges[tr_nr]
+
+
+class SegmentGraph():
+    '''
+    Segment Graph Implementation
+    Nodes represent disjoint exonic bins (aka segments) and have start (genomic 5'), end (genomic 3'), 
+    and a dict of successors and predesessors (edges)
+    Edges link two exonic bins x and y that follow sucessivly in a transcript. 
+    They represent either introns (if x.end<y.start) or connect exonic bins of the same exon(x.end==y.start)
+    '''
     def __init__(self, transcripts, strand):      
         self.strand=strand
         assert strand in '+-', 'strand must be either "+" or "-"'
@@ -25,7 +101,7 @@ class SpliceGraph():
         for i,start in enumerate(boundaries[:-1]):
             open_count+=open_exons[start]
             if open_count>0:
-                self._graph.append(SpliceGraphNode(start, boundaries[i+1]))
+                self._graph.append(SegGraphNode(start, boundaries[i+1]))
 
         #get the links
         start_idx={node.start:i for i,node in enumerate(self._graph)}
@@ -80,7 +156,7 @@ class SpliceGraph():
 
     def search_transcript(self, exons):
         #test if a transcript is contained in sg and returns the id(s)
-        #fst special case: exons extends splice graph 
+        #fst special case: exons extends segment graph 
         if exons[0][1]<=self[0].start or exons[-1][0]>=self[-1].end:
             return [] 
         #snd special case: single exon transcript: return all overlapping single exon transcripts form sg
@@ -167,7 +243,7 @@ class SpliceGraph():
 
 
     def get_alternative_splicing(self, exons, alternative=None): 
-        'compares exons to splice graph and returns list of novel splicing events'
+        'compares exons to segment graph and returns list of novel splicing events'
         #returns a tuple
         # the sqanti category: 0=FSM,1=ISM,2=NIC,3=NNC,4=Novel gene
         # subcategories: a list of novel splicing events or splice_identical
@@ -440,7 +516,7 @@ class SpliceGraph():
 
     @deprecated    
     def splice_dependence(self, sidx,min_cov,coverage, ignore_unspliced=True):
-        'experimental'
+        
         # TODO - outdated - remove when replaced by splice bubbles'
         tr_cov=coverage[sidx,:].sum(0)
         if tr_cov.sum()<2* min_cov:
@@ -514,7 +590,7 @@ class SpliceGraph():
     
 
     def find_splice_bubbles(self, include_starts=True):
-        '''search for alternative paths in the splice graphs ("bubbles"), 
+        '''search for alternative paths in the segment graphs ("bubbles"), 
         e.g. combinations of nodes A and B with more than one path from A to B.
         returns the transcript numbers and node ids of most direkt paths and alternative paths respectivly and type of alternative'''
          # alternative types: intron retention, alternative splice site at left and right, exon skipping, mutually exclusive
@@ -637,13 +713,13 @@ class SpliceGraph():
 
       
 
-class SpliceGraphNode(tuple):
+class SegGraphNode(tuple):
     def __new__(cls,start, end, pre=None, suc=None):
         if pre is None:
             pre=dict()
         if suc is None:
             suc=dict()
-        return super(SpliceGraphNode,cls).__new__(cls,(start,end,pre, suc))
+        return super(SegGraphNode,cls).__new__(cls,(start,end,pre, suc))
     def __getnewargs__(self):
         return tuple(self)
     @property

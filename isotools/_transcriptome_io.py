@@ -60,7 +60,7 @@ def remove_samples(self, sample_names):
                     remove_tr.append(i)
         if remove_tr: #remove the transcripts that is not expressed by remaining samples
             g.data['transcripts']=[tr for i,tr in enumerate(g.transcripts) if i not in remove_tr]
-        g.data['splice_graph']=None # gets recomputed on next request
+        g.data['segment_graph']=None # gets recomputed on next request
         g.data['coverage']=None            
         
 def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=True,chimeric_mincov=2,  **kwargs):
@@ -277,7 +277,7 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
                         tr2.setdefault('fuzzy_junction', {}).setdefault(sample_name,[]).append(shifts) #keep the info, mainly for testing/statistics    
                         tr2['coverage'][sample_name]=tr2['coverage'].get(sample_name,0)+tr['coverage'][sample_name]
                         return g 
-            tr['annotation']=g.ref_splice_graph.get_alternative_splicing(tr['exons'],  additional)
+            tr['annotation']=g.ref_segment_graph.get_alternative_splicing(tr['exons'],  additional)
             if not_covered:
                 tr['novel_splice_sites']=not_covered #todo: might be changed by fuzzy junction
             #{'sj_i': sj_i, 'base_i':base_i,'category':SPLICE_CATEGORY[altsplice[1]],'subcategory':altsplice[1]} #intersects might have changed due to fuzzy junctions
@@ -293,7 +293,7 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
         #if additional:
         #    tr['annotation']=(4,tr['annotation'][1]) #fusion transcripts... todo: overrule tr['annotation']
         g.data.setdefault('transcripts',[]).append(tr) 
-        g.data['splice_graph']=None #gets recomputed on next request      
+        g.data['segment_graph']=None #gets recomputed on next request      
         g.data['coverage'] =None 
     else:
         tr['annotation']  =(4,_get_novel_type(genes_ol, genes_ol_strand, ref_ol))
@@ -345,14 +345,14 @@ def _find_splice_sites(genes_ol, exons):
         1) the best gene, 2) exonic reference gene overlap 3) names of genes that cover additional splice sites, and 4) splice sites that are not covered. 
         For mono-exon genes return the gene with largest exonic overlap'''
     if genes_ol:
-        ref_ol={g.name:g.ref_splice_graph.get_overlap(exons) for  g in genes_ol if g.is_annotated}
+        ref_ol={g.name:g.ref_segment_graph.get_overlap(exons) for  g in genes_ol if g.is_annotated}
         if len(exons)==1: #no splice sites, but return gene with largest overlap
-            ol=np.array([ref_ol[g.name] if g.is_annotated else g.splice_graph.get_overlap(exons) for  g in genes_ol ])
+            ol=np.array([ref_ol[g.name] if g.is_annotated else g.segment_graph.get_overlap(exons) for  g in genes_ol ])
             best_idx=ol.argmax()
             if ol[best_idx]>0:
                 return genes_ol[best_idx],ref_ol,None,None
         else:
-            splice_sites=np.array([g.ref_splice_graph.find_splice_sites(exons) if g.is_annotated else g.splice_graph.find_splice_sites(exons) for  g in genes_ol ])
+            splice_sites=np.array([g.ref_segment_graph.find_splice_sites(exons) if g.is_annotated else g.segment_graph.find_splice_sites(exons) for  g in genes_ol ])
             sum_ol=splice_sites.sum(1)
             try: #find index of reference gene that covers the most splice sites
                 best_idx=next(idx for idx in np.argsort(-sum_ol) if genes_ol[idx].is_annotated and sum_ol[idx]>0)
@@ -374,13 +374,13 @@ def _get_intersects(genes_ol, exons):
     'calculate the intersects of all overlapping genes and return the best'  
     ## todo: in order to detect readthrough fusion genes, report all overlapping reference genes? or exon/junction wise?
     # prefer annotated genes
-    intersect=[(i,g.ref_splice_graph.get_intersects(exons)) for i,g in enumerate(genes_ol) if g.is_annotated]
+    intersect=[(i,g.ref_segment_graph.get_intersects(exons)) for i,g in enumerate(genes_ol) if g.is_annotated]
     if intersect:
         best_idx ,intersects= max(intersect, key=lambda x:x[1])
         if intersects[0] > 0 or (len(exons)==1 and intersects[1] > 0) :    # at least one splice overlap for multiexon genes
             return genes_ol[best_idx],intersects
     #no annotated overlap, look for novel genes
-    intersect=[(i,g.splice_graph.get_intersects(exons)) for i,g in enumerate(genes_ol) if not g.is_annotated]
+    intersect=[(i,g.segment_graph.get_intersects(exons)) for i,g in enumerate(genes_ol) if not g.is_annotated]
     if intersect:
         best_idx ,intersects= max(intersect, key=lambda x:x[1])
         if intersects[0] > 0 or (len(exons)==1 and intersects[1] > 0) :    # at least one splice overlap for multiexon genes
@@ -781,37 +781,37 @@ def export_alternative_splicing(self,out_dir,out_format='miso', reference=False,
             elif not reference and g.coverage[sidx,:].sum()<min_total:
                 continue
             
-            sg=g.ref_splice_graph if reference else g.splice_graph
-            for setA,setB,nodeX,nodeY, splice_type in sg.find_splice_bubbles(include_starts=False):
+            seg_graph=g.ref_segment_graph if reference else g.segment_graph
+            for setA,setB,nodeX,nodeY, splice_type in seg_graph.find_splice_bubbles(include_starts=False):
                 if not reference:
                     junction_cov=g.coverage[np.ix_(sidx,setA)].sum(1)
                     total_cov=g.coverage[np.ix_(sidx,setB)].sum(1)+junction_cov
                     if total_cov.sum()<min_total or (not min_alt_fraction < junction_cov.sum()/total_cov.sum() < 1-min_alt_fraction):
                         continue
                 st=types[splice_type]
-                lines=alt_splice_export(setA,setB,nodeX,nodeY, st, sg, g, count[st])
+                lines=alt_splice_export(setA,setB,nodeX,nodeY, st, seg_graph, g, count[st])
                 if lines:
                     count[st]+=len(lines)
                     fh[st].write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
                 
-def _miso_alt_splice_export(setA,setB,nodeX,nodeY, st,sg,g,offset):
-    event_id=f'{g.chrom}:{sg[nodeX].end}-{sg[nodeY].start}_st'
+def _miso_alt_splice_export(setA,setB,nodeX,nodeY, st,seg_graph,g,offset):
+    event_id=f'{g.chrom}:{seg_graph[nodeX].end}-{seg_graph[nodeY].start}_st'
     # TODO: Mutually exclusives extend beyond nodeY - and have potentially multiple A "mRNAs"
     # TODO: is it possible to extend exons at nodeX and Y - if all/"most" tr from setA and B agree?
     #if st=='ME':
-    #    nodeY=min(sg._pas[setA])
+    #    nodeY=min(seg_graph._pas[setA])
     lines=[]
-    lines.append([g.chrom, st, 'gene', sg[nodeX].start, sg[nodeY].end, '.',g.strand, '.', f'ID={event_id};gene_name={g.name};gene_id={g.id}'])
-    #lines.append((g.chrom, st, 'mRNA', sg[nodeX].start, sg[nodeY].end, '.',g.strand, '.', f'Parent={event_id};ID={event_id}.A'))
-    #lines.append((g.chrom, st, 'exon', sg[nodeX].start, sg[nodeX].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.up'))
-    #lines.append((g.chrom, st, 'exon', sg[nodeY].start, sg[nodeY].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.down'))
-    for i,exons in enumerate({tuple(sg._get_all_exons(nodeX, nodeY, tr)) for tr in setA}):
+    lines.append([g.chrom, st, 'gene', seg_graph[nodeX].start, seg_graph[nodeY].end, '.',g.strand, '.', f'ID={event_id};gene_name={g.name};gene_id={g.id}'])
+    #lines.append((g.chrom, st, 'mRNA', seg_graph[nodeX].start, seg_graph[nodeY].end, '.',g.strand, '.', f'Parent={event_id};ID={event_id}.A'))
+    #lines.append((g.chrom, st, 'exon', seg_graph[nodeX].start, seg_graph[nodeX].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.up'))
+    #lines.append((g.chrom, st, 'exon', seg_graph[nodeY].start, seg_graph[nodeY].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.down'))
+    for i,exons in enumerate({tuple(seg_graph._get_all_exons(nodeX, nodeY, tr)) for tr in setA}):
         lines.append((g.chrom, st, 'mRNA', exons[0][0], exons[-1][1], '.',g.strand, '.', f'Parent={event_id};ID={event_id}.A{i}'))
         lines[0][3]=min(lines[0][3], lines[-1][3])
         lines[0][4]=max(lines[0][4], lines[-1][4])
         for j,e in enumerate(exons):
             lines.append((g.chrom, st, 'exon', e[0], e[1], '.',g.strand, '.', f'Parent={event_id}.A{i};ID={event_id}.A{i}.{j}'))
-    for i,exons in enumerate({tuple(sg._get_all_exons(nodeX, nodeY, tr)) for tr in setB}):
+    for i,exons in enumerate({tuple(seg_graph._get_all_exons(nodeX, nodeY, tr)) for tr in setB}):
         lines.append((g.chrom, st, 'mRNA', exons[0][0], exons[-1][1], '.',g.strand, '.', f'Parent={event_id};ID={event_id}.B{i}'))
         lines[0][3]=min(lines[0][3], lines[-1][3])
         lines[0][4]=max(lines[0][4], lines[-1][4])
@@ -819,7 +819,7 @@ def _miso_alt_splice_export(setA,setB,nodeX,nodeY, st,sg,g,offset):
             lines.append((g.chrom, st, 'exon', e[0], e[1], '.',g.strand, '.', f'Parent={event_id}.B{i};ID={event_id}.B{i}.{j}'))
     return lines
                 
-def _mats_alt_splice_export(setA,setB,nodeX,nodeY, st,sg,g,offset):
+def _mats_alt_splice_export(setA,setB,nodeX,nodeY, st,seg_graph,g,offset):
     #'ID','GeneID','geneSymbol','chr','strand'
     # and ES/EE for the relevant exons
     # in case of 'SE':['skipped', 'upstream', 'downstream'], 
@@ -832,8 +832,8 @@ def _mats_alt_splice_export(setA,setB,nodeX,nodeY, st,sg,g,offset):
         chrom='chr'+g.chrom
     else:
         chrom=g.chrom
-    exonsA=((sg[nodeX].start, sg[nodeX].end),(sg[nodeY].start, sg[nodeY].end))
-    for exonsB in {tuple(sg._get_all_exons(nodeX, nodeY, b_tr)) for b_tr in setB}:
+    exonsA=((seg_graph[nodeX].start, seg_graph[nodeX].end),(seg_graph[nodeY].start, seg_graph[nodeY].end))
+    for exonsB in {tuple(seg_graph._get_all_exons(nodeX, nodeY, b_tr)) for b_tr in setB}:
         exons_sel=None
         if st in ['A3SS', 'A5SS'] and len(exonsB)==2:
             if exonsA[0][1]==exonsB[0][1]:
@@ -848,8 +848,8 @@ def _mats_alt_splice_export(setA,setB,nodeX,nodeY, st,sg,g,offset):
         elif st=='RI' and len(exonsB)==1:
             exons_sel=[exonsB[0], exonsA[0], exonsA[1]] #if g.strand=='+' else [exonsB[0], exonsA[1], exonsA[0]]
         elif st=='MXE' and len(exonsB)==3:
-            #nodeZ=next(idx for idx,n in enumerate(sg) if n.start==exonsB[-1][0])
-            for exonsA in {tuple(sg._get_all_exons(nodeX, nodeY, a_tr)) for a_tr in setA}:
+            #nodeZ=next(idx for idx,n in enumerate(seg_graph) if n.start==exonsB[-1][0])
+            for exonsA in {tuple(seg_graph._get_all_exons(nodeX, nodeY, a_tr)) for a_tr in setA}:
                 assert len(exonsA)==3 and exonsA[0]==exonsB[0] and exonsA[2]==exonsB[2] #should always be true
                 lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand, exonsB[1][0], exonsB[1][1], exonsA[1][0], exonsA[1][1], exonsA[0][0], exonsA[0][1], exonsA[2][0], exonsA[2][1]])      
         if exons_sel is not None:      

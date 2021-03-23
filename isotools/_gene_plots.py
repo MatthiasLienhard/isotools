@@ -152,23 +152,23 @@ def sashimi_plot_short_reads(self,sidx, title, ax,junctions_of_interest, x_range
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
 
 def sashimi_plot(self,sidx, title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th,min_cov_th, text_width, arc_type,text_height):   
-    ebg=self.segment_graph
-    boxes=[(node[0], node[1], self.coverage[np.ix_(sidx,[i for i in set(node[2]).union(node[3])])].sum()) for node in ebg]
+    sg=self.segment_graph
+    boxes=[(node[0], node[1], self.coverage[np.ix_(sidx,[i for i in set(node[2]).union(node[3])])].sum()) for node in sg]
     if text_width<1:
-        text_width=(ebg[-1][1]-ebg[0][0])*text_width
+        text_width=(sg[-1][1]-sg[0][0])*text_width
     total_weight=self.coverage[sidx,:].sum()
     if high_cov_th<1:
         high_cov_th=high_cov_th*total_weight   
     if min_cov_th<1:
         min_cov_th=min_cov_th*total_weight   
-    #idx=list(range(len(ebg)))
+    #idx=list(range(len(sg)))
     arcs=[]
-    for i,(_,ee, _, suc) in enumerate(ebg):
+    for i,(_,ee, _, suc) in enumerate(sg):
         weights={}
         for tr,next_i in suc.items():
             weights.setdefault(next_i,0)
             weights[next_i]+=self.coverage[np.ix_(sidx,[tr])].sum()
-        arcs_new=[(ee,boxes[i][2],ebg[next_i][0],boxes[next_i][2],w) for next_i, w in weights.items() if ebg[next_i][0]>ee and w>0]
+        arcs_new=[(ee,boxes[i][2],sg[next_i][0],boxes[next_i][2],w) for next_i, w in weights.items() if sg[next_i][0]>ee and w>0]
         if arcs_new:
             arcs.extend(arcs_new)
     if ax is None:

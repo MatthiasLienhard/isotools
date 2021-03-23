@@ -149,7 +149,7 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
             continue
         known={} #check for known events
         if g.is_annotated and g.n_transcripts: 
-            ebg=g.ref_segment_graph
+            sg=g.ref_segment_graph
             for _,_,nX,nY, splice_type in sg.find_splice_bubbles():#find annotated alternatives (known)
                 if splice_type in ("TSS","PAS"):
                     if (splice_type=="TSS")==(g.strand=="+"):
@@ -158,7 +158,7 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
                         known.setdefault(splice_type,set()).add((sg[nX].start))
                 else:
                     known.setdefault(splice_type,set()).add((sg[nX].end,sg[nY].start))
-        ebg=g.segment_graph
+        sg=g.segment_graph
         for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles():
             
             junction_cov=g.coverage[:,setB].sum(1)
@@ -236,7 +236,7 @@ def find_splice_bubbles(self, min_total=100, min_alt_fraction=.1,samples=None, r
             continue
         known={} #check for known events
         if g.is_annotated and g.n_transcripts: 
-            ebg=g.ref_segment_graph
+            sg=g.ref_segment_graph
             for _,_,nX,nY, splice_type in sg.find_splice_bubbles():#find annotated alternatives (known)
                 if splice_type in ("TSS","PAS"):
                     if (splice_type=="TSS")==(g.strand=="+"):
@@ -245,7 +245,7 @@ def find_splice_bubbles(self, min_total=100, min_alt_fraction=.1,samples=None, r
                         known.setdefault(splice_type,set()).add((sg[nX].start))
                 else:
                     known.setdefault(splice_type,set()).add((sg[nX].end,sg[nY].start))
-        ebg=g.segment_graph
+        sg=g.segment_graph
         for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles():
             junction_cov=g.coverage[np.ix_(sidx,setA)].sum(1)
             total_cov=g.coverage[np.ix_(sidx,setB)].sum(1)+junction_cov

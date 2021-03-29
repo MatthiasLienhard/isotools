@@ -1,10 +1,10 @@
 # isotools
 python module for isoseq postprocessing
-* import of bam files (aligned isoseq transcripts)
-* import of reference annotation in gff3/gtf format
-* annotation and classification of isoseq transcripts
-    * biologically motivated classification scheme
-    * fuzzy junctions
+
+
+## documentation:
+http://medips.molgen.mpg.de/isoseq/
+
 
 ## installation:
 

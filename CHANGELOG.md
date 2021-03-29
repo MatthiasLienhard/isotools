@@ -20,6 +20,10 @@
     * con:
         * segment graph still needed for bubble definition - two graphs stored 
 
+## [0.1.0] - 2020-03-24
+
+* added documentation
+* moved examples in documentation
 
 ## [0.0.2] - 2020-03-22
 * Change: refactored SpliceGraph to SegmentGraph to better comply with common terms in literature

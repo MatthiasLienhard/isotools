@@ -16,21 +16,19 @@ logger=logging.getLogger('isotools')
 SPLICE_CATEGORY=['FSM','ISM','NIC','NNC','NOVEL']
 
 def add_short_read_coverage(self, bam_files,names=None, load=False):
-    'Add short read coverage to the genes.\n This does, by default (e.g. if load==False), not actually read the bams, but reading is done at first access'
+    '''Add short read coverage to the genes.
+    
+    This does, by default (e.g. if load==False), this method does not actually read the bams, 
+    but import for each gene is done at first access.
+
+    :param bam_files: A dict with the sample names as keys, and the path to aligned short reads in bam format as values. 
+    :param load: If True, the coveage of all genes is imported. WARNING: this may take a long time.'''
     self.infos.setdefault('short_reads', pd.DataFrame(columns=['name', 'file']))
-    if isinstance(bam_files,str) and isinstance(names,str):
-        bam_files=[bam_files]
-        names=[names]
-    if isinstance(bam_files,list) and isinstance(names, list):
-        assert len(bam_files) ==len(names), 'lists of sample names and bam files must have same length'
-    elif isinstance(bam_files, dict):
-        assert names is None, 'bams are provided as dict, names should not be specified'
-        names=list(bam_files)
-        bam_files=list(bam_files.values())
-    else:
-        raise ValueError('either provide a bam file and names as strings, lists of strings or as a dict')
-    assert len(names)==len(set(names)), 'trying to add duplicate short read tracks'
-    assert all(~self.infos['short_reads'].isin(names)), 'trying to add existing short read track'
+
+    assert isinstance(bam_files, dict), 'either provide a bam file and names as strings, lists of strings or as a dict'
+    names=list(bam_files)
+    bam_files=list(bam_files.values())
+    assert all(~self.infos['short_reads'].isin(names)), 'Trying to add short read track that is present already.'
     
     self.infos['short_reads']=pd.concat([self.infos['short_reads'], pd.DataFrame({'name':names, 'file':bam_files})], ignore_index=True)
     if load: # when loading coverage for all genes keep the filehandle open, hopefully a bit faster
@@ -45,7 +43,9 @@ def add_short_read_coverage(self, bam_files,names=None, load=False):
  
 @experimental
 def remove_samples(self, sample_names):
-    ''' removes samples from the dataset'''
+    ''' Removes samples from the dataset.
+    
+    :params sample_names: A list of sample names to remove.'''
     if isinstance(sample_names, str):
         sample_names=[sample_names]
     assert all(s in self.samples for s in sample_names), 'Did not find all samples to remvoe in dataset'
@@ -64,7 +64,14 @@ def remove_samples(self, sample_names):
         g.data['coverage']=None            
         
 def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=True,chimeric_mincov=2,  **kwargs):
-    '''import expressed transcripts from bam and add it to existing transcriptome'''
+    '''Import expressed transcripts from bam and add it to the 'Transcriptome' object
+    
+    :param fn: The bam filename of the new sample
+    :param sample_name: Name of the new sample
+    :param fuzzy_junction: maximum size for fuzzy junction correction
+    :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added. 
+    :param chimeric_mincov: Minimum number of reads for a chimeric transcript to be considered
+    :param kwargs: Additional keyword arugments are added to the sample table.'''
     #todo: one alignment may contain several samples - this is not supported at the moment
     assert sample_name not in self.samples, 'sample %s is already in the data set.' % sample_name
     logger.info(f'adding sample {sample_name}')
@@ -390,8 +397,7 @@ def _get_intersects(genes_ol, exons):
 
 @experimental
 def import_gtf_transcripts(fn,transcriptome, chromosomes=None):
-    '''import transcripts from gtf file (e.g. for a reference)
-    returns a dict interval trees for the genes, each containing the splice graph'''
+
     gtf = TabixFile(fn)   
     exons = dict()  # transcript id -> exons
     transcripts = dict()  # gene_id -> transcripts
@@ -485,10 +491,7 @@ def collapse_immune_genes(self, maxgap=300000):
                         offset=i+1
     logger.info(f'collapsed {num["IG"]} immunoglobulin loci and  {num["TR"]} T-cell receptor loci')
                         
-
-        
-
-
+    
 
 
 def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=['gene']):
@@ -578,7 +581,8 @@ def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=
 ## io utility functions
 @experimental
 def get_mutations_from_bam(bam_file,genome_file,region, min_cov=.05):
-    '''not very efficient function to fetch mutations within a region from a bam file'''
+    '''not very efficient function to fetch mutations within a region from a bam file
+    not exported so far'''
     mut=dict()
     exons=[]
     n=0
@@ -678,14 +682,29 @@ def _prepare_gene_info(info,chrom, strand, modify=True):
 
 #human readable output
 def gene_table(self, region=None ): #ideas: filter, extra_columns
-    'create a gene summary table'
+    '''Create a gene summary table.
+
+    Export all genes within region to a table.
+
+    :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. If omitted specify the complete genome.'''
+
     colnames=['chr', 'start', 'end', 'strand', 'gene_name', 'n_transcripts']        
     rows=[(g.chrom, g.start, g.end, g.strand, g.id, g.n_transcripts) for g in  self.iter_genes(region)]
     df = pd.DataFrame(rows, columns=colnames)
     return(df)
 
 def transcript_table(self, region=None, extra_columns=None,  include=None, remove=None, min_coverage=None, max_coverage=None): 
-    'create a transcript table'
+    '''Create a transcript table.
+    
+    Export all transcript isoforms within region to a table.
+
+    :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. If omitted specify the complete genome.
+    :param extra_columns: Specify the additional information added to the table. Valid examples are "annotation", "coverage", or any other transcrit property as defined by the key in the transcript dict. 
+    :param include: Specify required flags to include transcripts. 
+    :param remove: Specify flags to ignore transcripts.
+    :param min_coverage: minimum required total coverage.
+    :params max_coverage: maximal allowed total coverage.'''
+
     if extra_columns is None:
         extra_columns=[]
     if not isinstance( extra_columns, list):
@@ -699,14 +718,21 @@ def transcript_table(self, region=None, extra_columns=None,  include=None, remov
     df = pd.DataFrame(rows, columns=colnames)
     return(df)
 
-def chimeric_table(self, region=None,  include=None, remove=None, star_chimeric=None, illu_len=200):
-    'find chimeric genes and compile a table with relevant infos (breakpoints, coverage, ...)'
+def chimeric_table(self, region=None,  include=None, remove=None):#, star_chimeric=None, illu_len=200):
+    '''Create a cimeric table
+    
+    This table contains relevant infos about breakpoints and coverage for chimeric genes.
+
+    :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. If omitted specify the complete genome.
+    :param include: Specify required flags to include transcripts. 
+    :param remove: Specify flags to ignore transcripts.
+    '''
     #todo: correct handeling of three part fusion events not yet implemented
     #todo: ambiguous alignment handling not yet implemented
     
-    if star_chimeric is None:
-        star_chimeric=dict()
-    assert isinstance(star_chimeric, dict)
+    #if star_chimeric is None:
+    #    star_chimeric=dict()
+    #assert isinstance(star_chimeric, dict)
     
     chim_tab=list()
     for bp,chimeric in self.chimeric.items():
@@ -735,7 +761,13 @@ def chimeric_table(self, region=None,  include=None, remove=None, star_chimeric=
     return chim_tab        
 
 def write_gtf(self, fn, source='isotools',use_gene_name=False,  include=None, remove=None):     
-    'writes the transcripts in gtf format to a file'
+    '''Exports the transcripts in gtf format to a file.
+    
+    :param fn: The filename to write the gtf.
+    :param source: String for the source column of the gtf file.
+    :param use_gene_name: Use the gene name instead of the gene id in the for the gene_id descriptor
+    :param include: Specify required flags to include transcripts. 
+    :param remove: Specify flags to ignore transcripts.'''
     
     with open(fn, 'w') as f:     
         logger.info(f'writing gtf file to {fn}')
@@ -744,7 +776,29 @@ def write_gtf(self, fn, source='isotools',use_gene_name=False,  include=None, re
             if lines:
                 _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
 
-def export_alternative_splicing(self,out_dir,out_format='miso', reference=False, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
+def export_alternative_splicing(self,out_dir,out_format='mats', reference=False, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
+    '''Export alternative splicing events defined by the transcriptome.
+    
+    This is intendet to integrate spliceing event analysis from short read data. 
+    Tools for short read data implement different formats for the import of events. 
+    These formats include several files and depend on specific file naming.
+    Currently only MISO (out_format="miso") and rMATS (out_format='mats') are supported. 
+    I reccoment rMATS. 
+
+    :param out_dir: Path to the directory where the event files are written to.
+    :param out_format: Specify the output format. Must be either "miso" or "mats".
+    :param min_total: Minimum total coverage over all selected samples.
+    :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. 
+        If omitted specify the complete genome.
+    :param include: Specify required flags to include genes. 
+    :param remove: Specify flags to ignore genes.
+    :param reference: If set to True, the LRTS data is ignored and the events are called from the reference. 
+        In this case the following parameters are ignored
+    :param samples: Specify the samples to consider
+    :param min_total: Minimum total coverage over all selected samples.
+    :param min_alt_fraction: Minimum fraction of reads supporting the alternative. 
+    
+    '''
     if out_format=='miso':
         fn='isotools_miso_{}.gff'
         alt_splice_export=_miso_alt_splice_export

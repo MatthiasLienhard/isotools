@@ -1,3 +1,5 @@
+'''This module is supposed to as command line script. Its outdated and needs to be adapted to the current api'''
+
 import isotools
 import argparse
 import itertools
@@ -8,7 +10,7 @@ import argparse
 import numpy as np
 import pandas as pd
 from  isotools.transcriptome import Transcriptome, Gene
-import isotools.stats
+import isotools.plots
 import logging
 log=logging.getLogger('run_isotools')
 log.setLevel(logging.DEBUG)
@@ -18,6 +20,8 @@ log_stream=logging.StreamHandler()
 log_stream.setFormatter(log_format)
 log.handlers=[]
 log.addHandler(log_stream)
+
+
 
 def load_reference(args):
     if args.anno is None:
@@ -70,27 +74,27 @@ def load_isoseq(args, reference):
 def filter_plots(isoseq, groups, out_stem):
     log.info('filter statistics plots')
     f_stats=[]
-    f_stats.append(isotools.stats.filter_stats(isoseq, groups=groups))
-    f_stats.append(isotools.stats.filter_stats(isoseq, groups=groups, coverage=False))
-    f_stats.append(isotools.stats.filter_stats(isoseq, groups=groups, coverage=False,min_coverage=50))
-    f_stats.append(isotools.stats.filter_stats(isoseq, groups=groups, coverage=False,min_coverage=100))
+    f_stats.append(isoseq.filter_stats(isoseq, groups=groups))
+    f_stats.append(isoseq.filter_stats(isoseq, groups=groups, coverage=False))
+    f_stats.append(isoseq.filter_stats(isoseq, groups=groups, coverage=False,min_coverage=50))
+    f_stats.append(isoseq.filter_stats(isoseq, groups=groups, coverage=False,min_coverage=100))
     plt.rcParams["figure.figsize"] = (12+len(groups),15)
     f, ax = plt.subplots(2, 2)
     ax=ax.flatten()
     for i,fs in enumerate(f_stats):
-        isotools.stats.plot_bar(fs[0],ax=ax[i],**fs[1])  
+        isotools.plots.plot_bar(fs[0],ax=ax[i],**fs[1])  
     plt.tight_layout(rect=[0, 0, 1, .95])
     plt.savefig(out_stem+'_filter_stats.png') 
 
 def transcript_plots(isoseq,reference, groups, out_stem ):
     log.info('transcript statistics plots')
     tr_stats=[
-        isotools.stats.transcript_coverage_hist(isoseq,  groups=groups),
-        isotools.stats.transcript_length_hist(isoseq, reference=reference, groups=groups,reference_filter=dict(include=['HIGH_SUPPORT'])),
-        isotools.stats.transcripts_per_gene_hist(isoseq, reference=reference, groups=groups),
-        isotools.stats.exons_per_transcript_hist(isoseq, reference=reference, groups=groups),
-        isotools.stats.downstream_a_hist(isoseq, reference=reference, groups=groups, isoseq_filter=dict(remove=['REFERENCE', 'MULTIEXON'])),
-        isotools.stats.downstream_a_hist(isoseq, reference=reference, groups=groups, isoseq_filter=dict( remove=['NOVEL_GENE', 'UNSPLICED']))]
+        isoseq.transcript_coverage_hist(isoseq,  groups=groups),
+        isoseq.transcript_length_hist(isoseq, reference=reference, groups=groups,reference_filter=dict(include=['HIGH_SUPPORT'])),
+        isoseq.transcripts_per_gene_hist(isoseq, reference=reference, groups=groups),
+        isoseq.exons_per_transcript_hist(isoseq, reference=reference, groups=groups),
+        isoseq.downstream_a_hist(isoseq, reference=reference, groups=groups, isoseq_filter=dict(remove=['REFERENCE', 'MULTIEXON'])),
+        isoseq.downstream_a_hist(isoseq, reference=reference, groups=groups, isoseq_filter=dict( remove=['NOVEL_GENE', 'UNSPLICED']))]
     tr_stats[4][1]['title']+='\nnovel single exon genes'
     tr_stats[5][1]['title']+='\nmultiexon reference genes'
     plt.rcParams["figure.figsize"] = (20,15)
@@ -98,21 +102,21 @@ def transcript_plots(isoseq,reference, groups, out_stem ):
     f, ax = plt.subplots(3, 2)
     ax=ax.flatten()
     for i,ts in enumerate(tr_stats):
-        isotools.stats.plot_distr(ts[0],smooth=3,ax=ax[i],**ts[1])  
+        isotools.plots.plot_distr(ts[0],smooth=3,ax=ax[i],**ts[1])  
     plt.tight_layout(rect=[0, 0, 1, .95])
     plt.savefig(out_stem+'_transcript_stats.png') 
 
 def altsplice_plots(isoseq, groups, out_stem):
     log.info('alternative splicing statistics plots')
     altsplice = [
-        isotools.stats.altsplice_stats(isoseq, groups=groups),
-        isotools.stats.altsplice_stats(isoseq, groups=groups,coverage=False),
-        isotools.stats.altsplice_stats(isoseq, groups=groups, coverage=False,min_coverage=100)]
+        isoseq.altsplice_stats(isoseq, groups=groups),
+        isoseq.altsplice_stats(isoseq, groups=groups,coverage=False),
+        isoseq.altsplice_stats(isoseq, groups=groups, coverage=False,min_coverage=100)]
     plt.rcParams["figure.figsize"] = (15+2*len(groups),15)
 
     f, ax = plt.subplots(3,1)
     for i,(as_counts, as_params) in enumerate(altsplice):
-        isotools.stats.plot_bar(as_counts,ax=ax[i],drop_categories=['splice_identical'], **as_params)
+        isotools.plots.plot_bar(as_counts,ax=ax[i],drop_categories=['splice_identical'], **as_params)
     plt.tight_layout(rect=[0, 0, 1, .95])
     plt.savefig(out_stem+'_altsplice.png' )
 
@@ -140,7 +144,7 @@ def altsplice_examples(isoseq, n, ignore=['splice_identical']):#return the top n
     examples={k:sorted(v,key=lambda x:-x[0] ) for k,v in examples.items()}
     return{k:v[:n] for k,v in examples.items() if k not in ignore}
 
-def plot_altsplice_examples(isoseq,reference,groups,illu_groups,examples, out):
+def plot_altsplice_examples(isoseq,groups,illu_groups,examples, out):
     nplots=len(groups)+1
     sample_idx={r:i for i,r in enumerate(isoseq.infos['sample_table'].name)}
     if illu_groups:

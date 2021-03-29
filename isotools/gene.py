@@ -355,6 +355,7 @@ class Gene(Interval):
         return Gene, (self.start, self.end, self.data, self._transcriptome)  
 
     def copy(self):
+        'Returns a shallow copy of self.'
         return self.__copy__()
 
 

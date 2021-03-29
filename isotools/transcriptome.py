@@ -15,8 +15,9 @@ logger=logging.getLogger('isotools')
 # _transcriptome_filter.py (gene/transcript iteration and filtering)
 
 class Transcriptome:
-    '''Container class for genes
-    '' contains a dict of interval trees for the genes, each containing the splice graph'''
+    '''Contains sequencing data and annotation for Long Read Transcriptome Sequencing (LRTS) Experiments.
+    
+    :param pickle_file: Filename to restore previous data'''
     #####initialization and save/restore data
     def __new__(cls, pickle_file=None,**kwargs):
         if pickle_file is not None:
@@ -25,7 +26,8 @@ class Transcriptome:
             obj=super().__new__(cls)
         return obj
 
-    def __init__(self, pickle_file=None,**kwargs ):     
+    def __init__(self, pickle_file=None,**kwargs ):   
+        '''Constructor method'''  
         if 'data' in kwargs:
             self.data,self.infos, self.chimeric=kwargs['data'],kwargs.get('infos',dict()),kwargs.get('chimeric',{})
             assert 'reference_file' in self.infos 
@@ -34,7 +36,13 @@ class Transcriptome:
             
     
     @classmethod
-    def from_reference(cls, reference_file, file_format='auto',**kwargs):
+    def from_reference(cls, reference_file, file_format='auto',**kwargs) -> 'Transcriptome':
+        '''Creats a Transcriptome object by importing reference annotation.
+        
+        :param reference_file: Reference file in gff3 format or pickle file to restore previously imported annotation
+        :type reference_file: str
+        :param file_format: Specify the file format of the provided reference_file. 
+            If set to "auto" the file type is infrered from the extension. '''
         tr=cls.__new__(cls)
         tr.infos={'reference_file':reference_file}
         tr.chimeric={}
@@ -55,20 +63,34 @@ class Transcriptome:
         else: logger.error('unknown file format %s',file_format)
         return tr
 
+    def save(self, pickle_file=None):
+        '''Saves transcriptome information (including reference) in a pickle file.
+        
+        :param pickle_file: Filename to save data'''
+        if pickle_file is None:
+            pickle_file=self.infos['out_file_name']+'.isotools.pkl' #key error if not set
+        logger.info('saving transcriptome to '+pickle_file)
+        pickle.dump(self, open(pickle_file, 'wb'))
+
     @classmethod
-    def load(cls, pickle_file):
-        'restores the information of a transcriptome from a pickle file'
+    def load(cls, pickle_file)-> 'Transcriptome':
+        '''Restores transcriptome information from a pickle file.
+
+        :param pickle_file: Filename to restore data'''
+
         logger.info('loading transcriptome from '+pickle_file)
         return pickle.load(open(pickle_file, 'rb'))
         
 
-    def save_reference(self, fn=None):    
-        'saves the reference information of a transcriptome in a pickle file'
-        if fn is None:
-            fn=self.infos['reference_file']+'.isotools.pkl'
-        logger.info('saving reference to '+fn)       
+    def save_reference(self, pickle_file=None):    
+        '''Saves the reference information of a transcriptome in a pickle file.
+
+        :param pickle_file: Filename to save data'''
+        if pickle_file is None:
+            pickle_file=self.infos['reference_file']+'.isotools.pkl'
+        logger.info('saving reference to '+pickle_file)       
         ref_tr=self._extract_reference() 
-        pickle.dump(ref_tr, open(fn, 'wb'))
+        pickle.dump(ref_tr, open(pickle_file, 'wb'))
 
     def _extract_reference(self):
         if not [k for k in self.infos if k!='reference_file']:
@@ -80,15 +102,9 @@ class Transcriptome:
             ref_tr.data[chrom]=IntervalTree(Gene(g.start,g.end,{k:g.data[k] for k in Gene.required_infos+['reference']}, ref_tr) for g in tree if g.is_annotated)
         return ref_tr
 
-    def save(self, fn=None):
-        'saves the information of a transcriptome (including reference) in a pickle file'
-        if fn is None:
-            fn=self.infos['out_file_name']+'.isotools.pkl' #key error if not set
-        logger.info('saving transcriptome to '+fn)
-        pickle.dump(self, open(fn, 'wb'))
     
     def make_index(self):
-        'updates the index used for __getitem__, e.g. the [] operator'
+        '''Updates the index of gene names and ids (e.g. used by the the [] operator).'''
         idx=dict()
         for g in self:
             if g.id in idx: # at least id should be unique - maybe raise exception?
@@ -99,52 +115,78 @@ class Transcriptome:
  
     ##### basic user level functionality
     def __getitem__(self, key):
+        '''
+        Syntax: self[key]
+
+        :param key: May either be the gene name or the gene id
+        :return: The gene specified by key. 
+        '''
         return self._idx[key]
 
     def __len__(self):
+        '''Syntax: len(self)
+        
+        :return: the number of genes'''
         return self.n_genes
     
     def __contains__(self, key):
+        ''' Syntax: key in self
+        
+        Checks whether key is in self.
+        
+        :param key: May either be the gene name or the gene id'''
         return key in self._idx
     
     def remove_chromosome(self, chromosome):
-        'deletes the chromosome from the transcriptome'
+        '''Deletes the chromosome from the transcriptome
+
+        :param chromosome: Name of the chromosome to remove'''
         del self.data[chromosome]
         self.make_index()
 
     def _get_sample_idx(self, group_column='name'):
-        'returns a dict with group names as keys and index lists as values'
+        'a dict with group names as keys and index lists as values'
         return self.infos['sample_table'].groupby(group_column).groups
 
     @property
     def sample_table(self):
+        '''The sample table contains sample names, group information, long read coverage, as well as all other potentially relevant information on the samples.'''
         try:
            return self.infos['sample_table']
         except KeyError:
             return pd.DataFrame(columns=['name','file','group'])
     
     @property
-    def samples(self):
+    def samples(self) -> list:
+        '''An ordered list of sample names.'''
         return list(self.sample_table.name)
 
     
-    def groups(self, by='group'):
+    def groups(self, by='group') -> dict:
+        '''Get sample groups as defined in columns of the sample table.
+        
+        :param by: A column name of the sample table that defines the grouping.
+        :return: Dict with groupnames as keys and list of sample names as values.
+        '''
         return dict(self.sample_table.groupby(by)['name'].apply(list))
 
     @property
-    def n_transcripts(self):
+    def n_transcripts(self) -> int:
+        '''The total number of transcripts isoforms.'''
         if self.data==None:
             return 0
         return sum(g.n_transcripts for g in self)
 
     @property
-    def n_genes(self):
+    def n_genes(self) -> int:
+        '''The total number of genes.'''
         if self.data==None:
             return 0
         return sum((len(t) for t in self.data.values()))
     
     @property
-    def novel_genes(self): #this is used for id assignment
+    def novel_genes(self)-> int: #this is used for id assignment
+        '''The total number of novel (not reference) genes'''
         try:
             return self.infos['novel_counter']
         except KeyError:
@@ -152,7 +194,8 @@ class Transcriptome:
             return 0
 
     @property
-    def chromosomes(self):
+    def chromosomes(self) -> list:
+        '''The list of chromosome names'''
         return list(self.data)            
 
     def __str__(self):

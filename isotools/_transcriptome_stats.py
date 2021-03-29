@@ -50,12 +50,15 @@ def loglike_betabinom(params, k,n):
     return -np.sum(logpdf), np.array((-np.sum(da),-np.sum(db)))
 
 def betabinom_lr_test(x,n):
-    ''' likelihood ratio test with random-effects betabinomial model
-     x,n should be 2 sets (the two groups)
-     x is betabinomial(n,a,b), eg a binomial distribution, where p follows beta ditribution with parameters a,b>0
-     mean m=a/(a+b) overdispersion d=ab/((a+b+1)(a+b)^2) --> a=-m(m^2-m+d)/d b=(m-1)(m^2-m+d)/d
-     principle: log likelihood ratio of M0/M1 is chi2 distributed
-     '''    
+    ''' Likelihood ratio test with random-effects betabinomial model.
+
+    This test modles x as betabinomial(n,a,b), eg a binomial distribution, where p follows beta ditribution with parameters a,b>0
+    mean m=a/(a+b) overdispersion d=ab/((a+b+1)(a+b)^2) --> a=-m(m^2-m+d)/d b=(m-1)(m^2-m+d)/d
+    principle: log likelihood ratio of M0/M1 is chi2 distributed
+
+    :param x: coverage of the alternative for the two sample groups
+    :param n: total coverage for the two sample groups'''    
+
     params=list()
     success=True
     if any(ni.sum()==0 for ni in n):
@@ -106,10 +109,15 @@ TESTS={ 'betabinom_lr':betabinom_lr_test,
 
 
 def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto',padj_method='fdr_bh'):
-    #min_total: minimum total coverage over splice bubble for both groups combined
-    #min_alt_fraction: each alternative must contribute at least this fraction in both groups combined
-    #min_n: for each group min_sa % of the samples must have coverage> min_n over splice_bubble
-    
+    '''Performs the alternative splicing event test
+
+    :param groups: Dict with groupnames as keys and lists of samplenames as values, defining the two groups for the test.
+    :param min_total: Minimum total coverage over all selected samples (for both groups combined).
+    :param min_alt_fraction: Minimum fraction of reads supporting the alternative (for both groups combined). 
+    :param min_n: The minimum coverage of the event for an individual sample to be considered for the min_sa filter.
+    :param min_sa: The fraction of samples within each group that must be covered by at least min_n reads.
+    :param test: The name of one of the implemented statistical tests ('betabinom_lr','binom_lr','proportions').
+    '''
     assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
     #find groups and sample indices
     if isinstance(groups, dict):
@@ -223,6 +231,18 @@ def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',re
     return df            
         
 def find_splice_bubbles(self, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
+    '''Find splice bubbles in the Segment Graphs of all genes. 
+
+    Splice Bubbles correspond to alternative splicing events. 
+    
+    :param min_total: Minimum total coverage over all selected samples.
+    :param min_alt_fraction: Minimum fraction of reads supporting the alternative.
+    :param samples: Specify the samples to consider    
+    :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. 
+        If omitted specify the complete genome.
+    :param include: Specify required flags to include genes. 
+    :param remove: Specify flags to ignore genes.    
+    :return: Table with alternative splicing events.'''
     bubbles=[]
     if samples is None:
         samples=self.samples
@@ -264,6 +284,16 @@ def find_splice_bubbles(self, min_total=100, min_alt_fraction=.1,samples=None, r
 
 # summary tables (can be used as input to plot_bar / plot_dist)
 def altsplice_stats(self, groups=None , weight_by_coverage=True, min_coverage=2, tr_filter={}):    
+    '''Summary statistics for novel alternative splicing
+    
+    This function counts the novel alternative splicing events of LRTS isoforms with respect to the reference annotation. 
+    The result can be depicted by isotools.plots.plot_bar.
+
+    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param weight_by_coverage: If True, each transcript is weighted by the coverage. 
+    :param min_coverage: Threshold to ignore poorly covered transcripts.
+    :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
+    :return: Table with numbers of novel alternative splicing events, and suggested parameters for isotools.plots.plot_bar().'''
     weights=dict()
     #if groups is not None:
     #    gi={r:i for i,r in enumerate(runs)}
@@ -302,6 +332,17 @@ def altsplice_stats(self, groups=None , weight_by_coverage=True, min_coverage=2,
     #
     
 def filter_stats(self, groups=None, weight_by_coverage=True, min_coverage=2,consider=None, tr_filter={}):   
+    '''Summary statistics for filter flags
+    
+    This function counts the number of transcripts flagged by a filter flag. 
+    The result can be depicted by isotools.plots.plot_bar.
+
+    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param weight_by_coverage: If True, each transcript is weighted by the coverage. 
+    :param min_coverage: Threshold to ignore poorly covered transcripts.
+    :param consider: Flags to consider. If omitted all flags are used. 
+    :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
+    :return: Table with numbers of transcripts featuring a filter flag, and suggested parameters for isotools.plots.plot_bar().'''
 
     weights=dict()
     if groups is not None:
@@ -335,6 +376,22 @@ def filter_stats(self, groups=None, weight_by_coverage=True, min_coverage=2,cons
     return df, {'ylabel':ylab,'title':title}
 
 def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,x_range=(0,10000),weight_by_coverage=True,min_coverage=2,use_alignment=True, tr_filter={}, ref_filter={}):
+    '''Retrieve the transcript length distribution.
+    
+    This function counts the number of transcripts within length interval.
+    The result can be depicted by isotools.plots.plot_dist.
+
+    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param add_reference: Add the transcript length distribution of the reference annotaiton. 
+    :param bins: Define the length interval, either by a single number of bins, or by a list of lengths, defining the interval boudaries. 
+    :param x_range: The range of the intervals. Ignored if "bins" is provided as a list. 
+    :param weight_by_coverage: If True, each transcript is weighted by the coverage. 
+    :param min_coverage: Threshold to ignore poorly covered transcripts.
+    :param use_alignment: use the transcript length as defined by the alignment (e.g. the sum of all exon lengths).
+    :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
+    :param ref_filter: Filter dict, that is passed to self.iter_ref_transcripts() (relevant only if add_reference=True).
+    :return: Table with numbers of transcripts within the length intervals, and suggested parameters for isotools.plots.plot_distr().'''
+
     trlen=[]
     cov=[]
     current=None
@@ -361,6 +418,16 @@ def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
 def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(1,1001), tr_filter={}):
+    '''Retrieve the transcript coverage distribution.
+    
+    This function counts the number of transcripts within coverage interval.
+    The result can be depicted by isotools.plots.plot_dist.
+    
+    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param bins: Define the covarge interval, either by a single number of bins, or by a list of values, defining the interval boudaries. 
+    :param x_range: The range of the intervals. Ignored if "bins" is provided as a list. 
+    :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
+    :return: Table with numbers of transcripts within the coverage intervals, and suggested parameters for isotools.plots.plot_distr().'''
     # get the transcript coverage in bins for groups
     # return count dataframe and suggested default parameters for plot_distr
     cov=[]
@@ -385,6 +452,19 @@ def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(1,1001), tr_fil
     # ax.plot(x, counts)
    
 def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=49,x_range=(1,50), min_coverage=2, tr_filter={}, ref_filter={}):
+    '''Retrieve the histogram of number of transcripts per gene.
+    
+    This function counts the genes featuring transcript numbers within specified intervals.
+    The result can be depicted by isotools.plots.plot_dist.
+
+    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param add_reference: Add the transcript per gene histogram of the reference annotaiton. 
+    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boudaries. 
+    :param x_range: The range of the intervals. Ignored if "bins" is provided as a list. 
+    :param min_coverage: Threshold to ignore poorly covered transcripts.
+    :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
+    :param ref_filter: Filter dict, that is passed to self.iter_ref_transcripts() (relevant only if add_reference=True).
+    :return: Table with numbers of genes featuring transcript numbers within the specified intervals, and suggested parameters for isotools.plots.plot_distr().'''
     ntr=[]
     current=None
     if groups is None:
@@ -421,6 +501,20 @@ def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=49,
     
 def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=34,x_range=(1,69),weight_by_coverage=True,  min_coverage=2, tr_filter={}, ref_filter={}):
 
+    '''Retrieve the histogram of number of exons per transcript
+    
+    This function counts the transcripts featuring exon numbers within specified intervals.
+    The result can be depicted by isotools.plots.plot_dist.
+
+    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param add_reference: Add the exons per transcript histogram of the reference annotaiton. 
+    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boudaries. 
+    :param x_range: The range of the intervals. Ignored if "bins" is provided as a list. 
+    :param weight_by_coverage: If True, each transcript is weighted by the coverage. 
+    :param min_coverage: Threshold to ignore poorly covered transcripts.
+    :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
+    :param ref_filter: Filter dict, that is passed to self.iter_ref_transcripts() (relevant only if add_reference=True).
+    :return: Table with numbers of transcripts featuring exon numbers within the specified intervals, and suggested parameters for isotools.plots.plot_distr().'''
     n_exons=[]
     cov=[]
     current=None
@@ -452,6 +546,20 @@ def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=34,x
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
 def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1),weight_by_coverage=True,  min_coverage=2, tr_filter={}, ref_filter={}):
+
+    '''Retrieve the distribution of downstream adenosine content.
+    
+    High downstream adenosine content is indicative for internal priming. 
+
+    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param add_reference: Add the distribution of downstream adenosine content of the reference annotaiton. 
+    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boudaries. 
+    :param x_range: The range of the intervals. Ignored if "bins" is provided as a list. Should not exceed (0,1), e.g. 0 to 100%.
+    :param weight_by_coverage: If True, each transcript is weighted by the coverage. 
+    :param min_coverage: Threshold to ignore poorly covered transcripts.
+    :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
+    :param ref_filter: Filter dict, that is passed to self.iter_ref_transcripts() (relevant only if add_reference=True).
+    :return: Table with downstream adenosine content distribution, and suggested parameters for isotools.plots.plot_distr().'''
     acontent=[]
     cov=[]
     current=None
@@ -481,6 +589,17 @@ def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
 def direct_repeat_hist(self, groups=None, bins=10, x_range=(0,10), weight_by_coverage=True, min_coverage=2, tr_filter={}):
+    '''Retrieve the distribution direct repeat length at splice junctions.
+    
+    Direct repeats are indicative for reverse transcriptase template switching. 
+
+    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boudaries. 
+    :param x_range: The range of the intervals. Ignored if "bins" is provided as a list.
+    :param weight_by_coverage: If True, each transcript is weighted by the coverage. 
+    :param min_coverage: Threshold to ignore poorly covered transcripts.
+    :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
+    :return: Table with direct repeat length distribution, and suggested parameters for isotools.plots.plot_distr().'''
     # find the direct repeat length distribution in FSM transcripts and putative RTTS
     # putative RTTS are identified by introns where both splice sites are novel but within annotated exons
     novel_rl=[]

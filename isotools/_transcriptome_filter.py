@@ -3,16 +3,19 @@ from tqdm import tqdm
 import logging
 logger=logging.getLogger('isotools')
 
-default_gene_filter={'NOVEL_GENE':'not reference',
+DEFAULT_GENE_FILTER={'NOVEL_GENE':'not reference',
                     'EXPRESSED':'transcripts',
                     'CHIMERIC':'chimeric'}
+'''Default definitions for gene filter, as used in iosotools.Transcriptome.add_filters()'''
 
-default_ref_transcript_filter={
+DEFAULT_REF_TRANSCRIPT_FILTER={
         'UNSPLICED':'len(exons)==1',
         'MULTIEXON':'len(exons)>1',
         'INTERNAL_PRIMING':'downstream_A_content and downstream_A_content>.5'}
+'''Default definitions for reference transcript filter, as used in iosotools.Transcriptome.add_filters()'''
 
-default_transcript_filter={
+#:Default definitions for transcript filter, as used in iosotools.Transcriptome.add_filters()
+DEFAULT_TRANSCRIPT_FILTER={
         #'CLIPPED_ALIGNMENT':'clipping',
         'INTERNAL_PRIMING':'len(exons)==1 and downstream_A_content and downstream_A_content>.5', #more than 50% a
         'RTTS':'noncanonical_splicing and novel_splice_sites and any(2*i in novel_splice_sites[0] and 2*i+1 in novel_splice_sites[0] for i,_ in noncanonical_splicing)',
@@ -23,10 +26,20 @@ default_transcript_filter={
         'UNSPLICED':'len(exons)==1',
         'MULTIEXON':'len(exons)>1'}
 
-annotation_vocabulary=['antisense', 'intergenic', 'genic genomic', 'novel exonic splice donor', 'novel exonic splice acceptor', 'novel PAS', 'readthrough fusion', 'novel exon', 'novel intronic splice donor', 'intron retention', 'novel intronic splice acceptor', 'exon skipping', 'novel combination', 'novel TSS', 'mono-exon', 'novel junction', "5' fragment", "3' fragment", 'intronic']
+
+ANNOTATION_VOCABULARY=['antisense', 'intergenic', 'genic genomic', 'novel exonic splice donor', 'novel exonic splice acceptor', 'novel PAS', 'readthrough fusion', 'novel exon', 'novel intronic splice donor', 'intron retention', 'novel intronic splice acceptor', 'exon skipping', 'novel combination', 'novel TSS', 'mono-exon', 'novel junction', "5' fragment", "3' fragment", 'intronic']
+'''Controlled vocabulary for filtering by novel alternative splicing'''
+
 # filtering functions for the transcriptome class
 def add_biases(self, genome_fn):
-    'populates transcript["biases"] information, which can be used do create filters'
+    #poor naming - refactor?
+    ''' Retrive QC metrics for the transcripts. 
+
+    Calling this function populates transcript["biases"] information, which can be used do create filters. 
+    In particular, the direct repeat length, the downstream adenosine content and information about noncanonical splice sites are fetched.
+    Additionaly genes are scaned for transcripts that are fully contained in other transcripts. 
+    
+    :param geneome_fn: path to the genome in fastA format.'''
     with FastaFile(genome_fn) as genome_fh:
         missing_chr=set(self.chromosomes)-set(genome_fh.references)
         if missing_chr:
@@ -43,18 +56,27 @@ def add_biases(self, genome_fn):
     self.infos['biases']=True # flag to check that the function was called
 
 def add_filter(self, gene_filter=None,transcript_filter=None, ref_transcript_filter=None):
-    'create filter flags which can be used by iter_transcripts'
+    '''Defines and assignes filter flags, which can be used by iter_transcripts.
+    
+    Filters are defined as dict, where the key is a filter identifier, and the value is an expression, 
+    which gets evaluated on the gene/transcript. For examples, see the default filter definitions 
+    isotools.DEFAULT_GENE_FILTER, isotools.DEFAULT_TRANSCRIPT_FILTER and isotools.DEFAULT_REF_TRANSCRIPT_FILTER.
+
+    :param gene_filter: dict of gene filters. If omitted the default gene filters apply.
+    :param transcript_filter: dict of gene filters. If omitted the default reference filters apply.
+    :param ref_transcript_filter: dict of gene filters. If omitted the default transcript filters apply.
+    '''
     gene_attributes={k for g in self for k in g.data.keys() }
     tr_attributes={k for g in self for tr in g.transcripts for k in tr.keys() }
     ref_tr_attributes={k for g in self if g.is_annotated for tr in g.ref_transcripts for k in tr.keys() }
     tr_attributes.add('filter')
     ref_tr_attributes.add('filter')
     if  gene_filter is None:
-        gene_filter=default_gene_filter
+        gene_filter=DEFAULT_GENE_FILTER
     if transcript_filter is None:
-        transcript_filter=default_transcript_filter
+        transcript_filter=DEFAULT_TRANSCRIPT_FILTER
     if ref_transcript_filter is None:
-        ref_transcript_filter=default_ref_transcript_filter
+        ref_transcript_filter=DEFAULT_REF_TRANSCRIPT_FILTER
     gene_ffun={label:_filter_function(gene_attributes, fun) for label,fun in gene_filter.items()}
     tr_ffun={label:_filter_function(tr_attributes, fun) for label,fun in transcript_filter.items()}
     reftr_ffun={label:_filter_function(ref_tr_attributes, fun) for label,fun in ref_transcript_filter.items()}
@@ -63,7 +85,9 @@ def add_filter(self, gene_filter=None,transcript_filter=None, ref_transcript_fil
     self.infos['filter']={'gene_filter':gene_filter, 'transcript_filter':transcript_filter, 'ref_transcript_filter':ref_transcript_filter}
 
 def iter_genes(self, region=None,include=None, remove=None):
-    'iterate over the genes of a region, optionally applying filters'
+    '''Iterate over the genes of a region, optionally applying filters.
+    
+    :param region:'''
     if include or remove:
         assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
         assert not include or all(f in self.infos['filter']['gene_filter'] for f in include), 'not all filters to include found'
@@ -91,7 +115,7 @@ def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=No
     'iterate over the transcripts of a region, optionally applying filters'   
     
     if include or remove:
-        valid_filters=annotation_vocabulary
+        valid_filters=ANNOTATION_VOCABULARY
         if isinstance(include, str):
             include=[include]
         if isinstance(remove, str):
@@ -105,8 +129,8 @@ def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=No
         assert not remove or all(f in valid_filters for f in remove), msg.format(
             'removal', ', '.join(f for f in remove if f not in valid_filters), ', '.join(valid_filters) )
 
-    anno_include=[f for f in include if f in annotation_vocabulary] if include else []
-    anno_remove=[f for f in remove if f in annotation_vocabulary] if remove else []
+    anno_include=[f for f in include if f in ANNOTATION_VOCABULARY] if include else []
+    anno_remove=[f for f in remove if f in ANNOTATION_VOCABULARY] if remove else []
     g_include=[f for f in include if f in all_filter['gene_filter']] if include else []
     g_remove=[f for f in remove if f in all_filter['gene_filter']] if remove else []
     t_include=[f for f in include if f in all_filter['transcript_filter']] if include else []

@@ -1,0 +1,22 @@
+sample term	description	type	cell	lineage	organ	karyotype
+GM12878	B-lymphocyte, lymphoblastoid, International HapMap Project - CEPH/Utah - European Caucasion, Epstein-Barr Virus	cellline	leukocyte	mesoderm	blood	normal
+H9	embryonic stem cell (hESC) H9	cellline	embryonic cell	inner cell mass	embryo	normal
+HCT116	colorectal carcinoma (PMID: 7214343)	cellline	epithelial cell	endoderm	colon	cancer
+HL-60	promyelocytic leukemia cells, (PMID: 276884)	cellline	leukocyte	mesoderm	blood	cancer
+HepG2	hepatocellular carcinoma	cellline	epithelial cell	endoderm	liver	cancer
+IMR-90	fetal lung fibroblasts, newly promoted to tier 2: not in 2011 analysis	cellline	fibroblast	endoderm	lung	normal
+K562	"leukemia, ""The continuous cell line K-562 was established by Lozzio and Lozzio from the pleural effusion of a 53-year-old female with chronic myelogenous leukemia in terminal blast crises."" - ATCC"	cellline	leukocyte	mesoderm	blood	cancer
+MCF-7	mammary gland, adenocarcinoma. (PMID: 4357757), newly promoted to tier 2: not in 2011 analysis	cellline	epithelial cell	ectoderm	breast	cancer
+PC-3	The PC3 cell line was established in 1979 from bone metastasis of grade IV of prostate cancer in a 62-year-old Caucasian male	cellline	epithelial cell	endoderm	prostate gland	cancer
+Panc1	pancreatic carcinoma, (PMID: 1140870) PANC-1 was established from a pancreatic carcinoma, which was extracted via pancreatico-duodenectomy specimen from a 56-year-old Caucasian individual. Malignancy of this cell line was verified via in vitro and in vivo assays.	cellline	epithelial cell	endoderm	pancreas	cancer
+aorta		tissue	tissue	mesoderm	blood vessel	normal
+endodermal cell		in vitro differentiated cells	embryonic cell	endoderm	embryo	normal
+heart left ventricle		tissue	tissue	mesoderm	heart	normal
+heart right ventricle		tissue	tissue	mesoderm	heart	normal
+lower lobe of left lung		tissue	tissue	endoderm	lung	normal
+mesenteric fat pad		tissue	tissue	mesoderm	adipose tissue	normal
+neural crest cell		in vitro differentiated cells	embryonic cell	ectoderm	embryo	normal
+posterior vena cava		tissue	tissue	mesoderm	blood vessel	normal
+progenitor cell of endocrine pancreas		in vitro differentiated cells	progenitor cell	endoderm	pancreas	normal
+right cardiac atrium		tissue	tissue	mesoderm	heart	normal
+type B pancreatic cell	e	in vitro differentiated cells	epithelial cell	endoderm	pancreas	normal

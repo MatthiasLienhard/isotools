@@ -588,13 +588,13 @@ class SegmentGraph():
         return node
     
 
-    def find_splice_bubbles(self, include_starts=True):
+    def find_splice_bubbles(self, start_end_events=True):
         '''Search for alternative paths in the segment graph ("bubbles").
 
         Bubbles are defined as combinations of nodes x_s and x_e with more than one path from x_s to x_e.
 
-        :param include_starts: If True, alternative TSS and PAS events are also reported 
-        :type include_starts: bool
+        :param start_end_events: If True, alternative TSS and PAS events are also reported 
+        :type start_end_events: bool
         :return: Tuple with 1) transcript indices of primary (e.g. most direct) paths and 2) alternative paths respectivly, 
             as well as 3) start and 4) end node ids and 5) type of alternative event 
             ('ES','3AS', '5AS','IR' or 'ME', 'TSS', 'PAS')'''
@@ -659,37 +659,38 @@ class SegmentGraph():
                             me_alt=me_alt-found_alt
                             me_alt_seen.update(found_alt)                    
                 alternative[0].update(outA_sets[joi]) #now transcripts supporting joi join the alternatives
-        if include_starts:
-            yield from self.find_alternative_starts()
+        if start_end_events:
+            yield from self.find_start_end_events()
         
-    def find_alternative_starts(self):
-        '''Search for alternative TSS/PAS in the segment graph ("open bifurkation").
+    def find_start_end_events(self):
+        '''Search for alternative TSS/PAS in the segment graph.
 
-        Open bifurcations are two paths that join at the end node, not sharing any nodes from 5' to this node, 
-        or paths starting from a common start node, not sharing any nodes to the 3' node of the respective transcripts.
-        They constitute alternative TSS/alternative PAS, depending on the stand of the gene. 
+        All transcripts sharing the same first/ last splice junction are considered to start/end at the same site and are summarized. 
+        Alternative transcripts are all other transcripts of the gene that end after the TSS or respectivly start before the PAS.
         
-        :return: Tuple with 1) transcript indices of primary paths and 2) alternative paths respectivly, 
-            as well as 3) start and 4) end node ids and 5) type of alternative event "TSS" or "PAS"'''
+        :return: Tuple with 1) transcript ids sharing common start exon and 2) alternative transcript ids respectivly, 
+            as well as 3) start and 4) end node ids of the exon and 5) type of alternative event ("TSS" or "PAS")'''
         tss={}
         pas={}
         tss_start={}
         pas_end={}
         for tr,(start1, end1) in enumerate(zip(self._tss, self._pas)):
             start2=self._get_exon_end(tr,start1)
-            if start2 != end1:
-                tss.setdefault(start2,set()).add(tr)
-                tss_start[start2]=min(start1, tss_start.get(start2,start1))
-            end2=self._get_exon_start(tr,end1)
-            if end2 != start1:
+            if start2 != end1: # skip single exon transcripts
+                # tss:  key: last node idx of start exon (e.g. first real splice junction), 
+                #       value: a list of transcripts sharing this node as the last node of their start exon)
+                tss.setdefault(start2,set()).add(tr) 
+                #tss_start is first node of start exon (wrt all transcripts sharing same last node of start exon)
+                tss_start[start2]=min(start1, tss_start.get(start2,start1)) 
+                end2=self._get_exon_start(tr,end1)
                 pas.setdefault(end2,set()).add(tr)
                 pas_end[end2]=max(end1, pas_end.get(end2,end1))
-        for n,tr_set in tss.items(): # TODO: maybe also add compatible alternatives: end after tss /start before pas
-            alt_tr=[tr for tr in range(len(self._tss)) if tr not in tr_set and self._pas[tr] > n]
+        for n,tr_set in tss.items(): # find compatible alternatives: end after tss /start before pas
+            alt_tr=[tr for tr,pas in enumerate(self._pas) if tr not in tr_set and pas > n]
             yield (alt_tr,list(tr_set),tss_start[n],n,'TSS' if self.strand=='+' else 'PAS')
         for n,tr_set in pas.items():
-            alt_tr=[tr for tr in range(len(self._tss)) if tr not in tr_set and self._tss[tr] < n]
-            yield (alt_tr,list(tr_set),pas_end[n],n,'PAS' if self.strand=='+' else 'TSS')
+            alt_tr=[tr for tr, tss in enumerate(self._tss) if tr not in tr_set and tss < n]
+            yield (alt_tr,list(tr_set),n,pas_end[n],'PAS' if self.strand=='+' else 'TSS')
 
 
     def _get_all_exons(self, nodeX, nodeY, tr):    

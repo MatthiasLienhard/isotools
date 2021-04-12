@@ -7,12 +7,14 @@ with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
 with open(path.join(this_directory, 'requirements.txt'), encoding='utf-8') as f:
     requirements = [line.strip() for line in f]
 
+exec(open('isotools/_version.py').read())
+
 setuptools.setup(
     name="isotools",
-    version="0.1.0",
+    version=__version__,
     author="Matthias Lienhard",
     author_email="lienhard@molgen.mpg.de",
-    description="framework for the analysis of long read transcriptome sequencing data",
+    description="Framework for the analysis of long read transcriptome sequencing data",
     long_description=long_description,
     long_description_content_type="text/markdown",
     packages=setuptools.find_packages(),

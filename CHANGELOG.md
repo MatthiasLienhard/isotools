@@ -1,13 +1,14 @@
 # Change Log
 
 ## [TODO] ideas and planed extensions or changes that are not yet implemented
-* extend flanking exons for MISO/rMATS export 
-* integrate reference and isoseq genes
-    * Gene.get_splice_graph(force_recaculation=False, min_transcripts=None)
+* run_isotools console script is totally outdated and broken...
+* extend flanking exons for MISO/rMATS export (not really needed, works fine as is)
+* consider integrating reference and isoseq genes one in segment graph
+    * Gene.get_segment_graph(force_recaculation=False, min_transcripts=None)
+    * would be major change and potentially break things
 * keep track of actual (read) TSS and PAS within first/last exon
 * implement some functionality of altsplice_test in find_splice_bubbles()
     * find_splice_bubbles(weights=g.coverage) ...
-    * implement "novel" also add for PCA / find_splice_bubbles
     * implement filter for functions calling find_splice_bubbles by setting weights=0
 * consider using common splice graph e.g. to import bam:
     * nodes/vertices are donor/acceptor sites
@@ -19,6 +20,12 @@
         * can be extended easily
     * con:
         * segment graph still needed for bubble definition - two graphs stored 
+
+## [0.1.1] - 2020-04-12
+
+* Fix: fixed bug in TSS/PAS events affecting start/end positions and known flag.
+* Change: refactored Transcriptome.find_splice_bubbles() to Transcriptome.alternative_splicing_events()
+* Change: refactored SegmentGraph.find_alternative_starts() to SegmentGraph.find_start_end_events()
 
 ## [0.1.0] - 2020-03-24
 

@@ -20,7 +20,7 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
     :param min_support: Minimum number of samples per group supporting the differential event.
     :param min_diff: Minimum PSI group difference.
     :param grid_shape: Number of rows and columns for the figure. 
-    :splice_type: Only events from the splecified splice_type(s) are depicted. If omitted, all types are selected. 
+    :param splice_type: Only events from the splecified splice_type(s) are depicted. If omitted, all types are selected. 
     :return: figure, axes and list of plotted events'''
 
     plotted=pd.DataFrame(columns=result_table.columns)
@@ -81,7 +81,7 @@ def plot_embedding(splice_bubbles, method='PCA',prior_count=3,
     A prior weight is added to all samples proportional to the average fraction of the alternatives, 
     in order to bias poorly covered samples towards the mean and limit their potential to disturb the analysis.
 
-    :param splice_bubles: The splice bubble table, produced by Transcriptome.find_splice_bubbles().
+    :param splice_bubles: The splice bubble table, produced by Transcriptome.alternative_splicing_events().
     :param method: The embedding method, either "PCA" or "UMAP". 
     :param prior_count: Number of prior reads which are added to each sample proportional to the average fraction of the alternatives. 
     :param top_var: Number of alternative splicing events which are used for the embedding. 

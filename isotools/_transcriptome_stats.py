@@ -158,16 +158,17 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
         known={} #check for known events
         if g.is_annotated and g.n_transcripts: 
             sg=g.ref_segment_graph
-            for _,_,nX,nY, splice_type in sg.find_splice_bubbles():#find annotated alternatives (known)
+            #find annotated alternatives for gene (e.g. known events)
+            for _,_,nX,nY, splice_type in sg.find_splice_bubbles(start_end_events=True):
                 if splice_type in ("TSS","PAS"):
                     if (splice_type=="TSS")==(g.strand=="+"):
-                        known.setdefault(splice_type,set()).add((sg[nY].end))
+                        known.setdefault(splice_type,set()).add((sg[nX].end))
                     else:
-                        known.setdefault(splice_type,set()).add((sg[nX].start))
+                        known.setdefault(splice_type,set()).add((sg[nY].start))
                 else:
                     known.setdefault(splice_type,set()).add((sg[nX].end,sg[nY].start))
         sg=g.segment_graph
-        for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles():
+        for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles(start_end_events=True):
             
             junction_cov=g.coverage[:,setB].sum(1)
             total_cov=g.coverage[:,setA].sum(1)+junction_cov
@@ -230,16 +231,18 @@ def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',re
         logger.error('unexpected error during calculation of adjusted p-values: {e}' ,e=e)
     return df            
         
-def find_splice_bubbles(self, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
-    '''Find splice bubbles in the Segment Graphs of all genes. 
+def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
+    '''Find alternative splicing events. 
 
-    Splice Bubbles correspond to alternative splicing events. 
+    Find alternative splicing events and potential transcription start sites/polyA sites
+    by searching for splice bubbles in the Segment Graph. 
+    Genes may be specified by genomic "region", and/or by filter flags / novelity class using the "include" / "remove" parameters.
     
     :param min_total: Minimum total coverage over all selected samples.
     :param min_alt_fraction: Minimum fraction of reads supporting the alternative.
-    :param samples: Specify the samples to consider    
+    :param samples: Specify the samples to consider. If omitted, all samples are selected.    
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. 
-        If omitted specify the complete genome.
+        If omitted, the complete genome is searched.
     :param include: Specify required flags to include genes. 
     :param remove: Specify flags to ignore genes.    
     :return: Table with alternative splicing events.'''
@@ -257,16 +260,16 @@ def find_splice_bubbles(self, min_total=100, min_alt_fraction=.1,samples=None, r
         known={} #check for known events
         if g.is_annotated and g.n_transcripts: 
             sg=g.ref_segment_graph
-            for _,_,nX,nY, splice_type in sg.find_splice_bubbles():#find annotated alternatives (known)
+            for _,_,nX,nY, splice_type in sg.find_splice_bubbles(start_end_events=True):#find annotated alternatives (known)
                 if splice_type in ("TSS","PAS"):
                     if (splice_type=="TSS")==(g.strand=="+"):
-                        known.setdefault(splice_type,set()).add((sg[nY].end))
+                        known.setdefault(splice_type,set()).add((sg[nX].end))
                     else:
-                        known.setdefault(splice_type,set()).add((sg[nX].start))
+                        known.setdefault(splice_type,set()).add((sg[nY].start))
                 else:
                     known.setdefault(splice_type,set()).add((sg[nX].end,sg[nY].start))
         sg=g.segment_graph
-        for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles():
+        for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles(start_end_events=True):
             junction_cov=g.coverage[np.ix_(sidx,setA)].sum(1)
             total_cov=g.coverage[np.ix_(sidx,setB)].sum(1)+junction_cov
             if total_cov.sum()>=min_total and min_alt_fraction < junction_cov.sum()/total_cov.sum() < 1-min_alt_fraction:

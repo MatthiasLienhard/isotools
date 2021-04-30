@@ -609,13 +609,14 @@ def direct_repeat_hist(self, groups=None, bins=10, x_range=(0,10), weight_by_cov
     known_rl=[]
     for g,trid,tr in self.iter_transcripts():
         if g.is_annotated and 'annotation' in tr and "novel 5' splice site" in tr['annotation'][1] and "novel 3' splice site" in tr['annotation'][1]:
-            novel1, novel2=(tr['annotation'][1][k] for k in ("novel 5' splice site","novel 3' splice site"))
+            sg=g.ref_segment_graph #check exonic overlap in the reference annotation
+            novel1=[alt for alt in tr['annotation'][1]["novel 5' splice site"]  if sg.is_exonic(alt[0])]
+            novel2=[alt for alt in tr['annotation'][1]["novel 3' splice site"] if sg.is_exonic(alt[0])]
             if g.strand=='-':
                 novel1, novel2=novel2,novel1 # sort according to genomic position
-            #find the exon numbers
-            sg=g.ref_segment_graph #to check exonic overlap in the reference annotation
-            e1=[next(i for i,e in enumerate(tr['exons']) if e[1]==alt[0]) for alt in novel1 if sg.is_exonic(alt[0])]    #alt[0] is the genomic position
-            e2=[next(i for i,e in enumerate(tr['exons']) if e[0]==alt[0]) for alt in novel2 if sg.is_exonic(alt[0])]    
+            #find the exon numbers            
+            e1=[next(i for i,e in enumerate(tr['exons']) if e[1]==alt[0]) for alt in novel1]    #alt[0] is the genomic position
+            e2=[next(i for i,e in enumerate(tr['exons']) if e[0]==alt[0]) for alt in novel2]    
             candidates=[e for e in e1 if e+1 in e2]
             nc={v[0] for v in tr['noncanonical_splicing']} if 'noncanonical_splicing' in tr else {}
             #splicesite=dict(tr.get('noncanonical_splicing',[]))

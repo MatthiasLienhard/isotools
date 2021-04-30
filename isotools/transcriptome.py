@@ -208,7 +208,7 @@ class Transcriptome:
         return (gene for tree in self.data.values() for gene in tree)
 
     ### IO: load new data from primary data files
-    from ._transcriptome_io import add_sample_from_bam,remove_samples,add_short_read_coverage, collapse_immune_genes
+    from ._transcriptome_io import add_sample_from_bam,remove_samples,add_short_read_coverage,remove_short_read_coverage, collapse_immune_genes
 
     ### IO: utility functions
     from ._transcriptome_io import _add_sample_transcript, _add_novel_genes, _get_intersects, _add_chimeric
@@ -219,7 +219,7 @@ class Transcriptome:
     ### filtering functionality and iterators
     from ._transcriptome_filter import add_biases, add_filter,iter_genes,iter_transcripts,iter_ref_transcripts
 
-    ### statistic: differential splicing, embedding
+    ### statistic: differential splicing, alternative_splicing_events
     from ._transcriptome_stats import altsplice_test,splice_dependence_test, alternative_splicing_events
 
     # statistic: summary tables (can be used as input to plot_bar / plot_dist)

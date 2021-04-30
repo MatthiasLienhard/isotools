@@ -236,7 +236,10 @@ def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,
         _, ax=  plt.subplots()
     if density: 
         counts=(counts/counts.sum())
-        axparams.setdefault('ylabel','density')
+        if 'ylabel' in axparams and 'density' not in axparams['ylabel']:
+            axparams['ylabel']+=' density'
+        else:
+            axparams['ylabel']='density'
     else:
         axparams.setdefault('ylabel','# transcripts')
     if smooth:

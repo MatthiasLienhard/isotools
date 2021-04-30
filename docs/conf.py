@@ -13,7 +13,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath('..'))
-
+from isotools import __version__
 # -- Project information -----------------------------------------------------
 
 project = 'isotools'
@@ -21,10 +21,10 @@ copyright = '2021, Matthias Lienhard'
 author = 'Matthias Lienhard'
 
 # The short X.Y version
-version = '0.1'
+version = '.'.join(__version__.split('.')[:2])
 
 # The full version, including alpha/beta/rc tags
-release = '0.1.0'
+release = __version__
 
 
 # -- General configuration ---------------------------------------------------

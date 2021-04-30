@@ -27,7 +27,9 @@ DEFAULT_TRANSCRIPT_FILTER={
         'MULTIEXON':'len(exons)>1'}
 
 
-ANNOTATION_VOCABULARY=['antisense', 'intergenic', 'genic genomic', 'novel exonic splice donor', 'novel exonic splice acceptor', 'novel PAS', 'readthrough fusion', 'novel exon', 'novel intronic splice donor', 'intron retention', 'novel intronic splice acceptor', 'exon skipping', 'novel combination', 'novel TSS', 'mono-exon', 'novel junction', "5' fragment", "3' fragment", 'intronic']
+ANNOTATION_VOCABULARY=['antisense', 'intergenic', 'genic genomic', 'novel exonic PAS','novel intronic PAS', 'readthrough fusion', 
+'novel exon', "novel 3' splice site", 'intron retention', "novel 5' splice site", 'exon skipping', 'novel combination', 
+'novel intronic TSS','novel exonic TSS', 'mono-exon', 'novel junction', "5' fragment", "3' fragment", 'intronic']
 '''Controlled vocabulary for filtering by novel alternative splicing'''
 
 # filtering functions for the transcriptome class
@@ -122,7 +124,9 @@ def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=No
             remove=[remove]
         if 'filter' in self.infos:
             all_filter=self.infos['filter']
-            valid_filters=valid_filters+list(all_filter['transcript_filter'])+list(all_filter['gene_filter'] )
+        else:
+            all_filter={'transcript_filter':{}, 'gene_filter':{}}
+        valid_filters=valid_filters+list(all_filter['transcript_filter'])+list(all_filter['gene_filter'] )
         msg='did not find the following filter flags for {}: {}\nvalid filters are: {}'
         assert not include or all(f in valid_filters for f in include), msg.format( 
             'inclusion', ', '.join(f for f in include if f not in valid_filters), ', '.join(valid_filters) )

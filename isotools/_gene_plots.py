@@ -35,40 +35,52 @@ def extend_params(params):
 
 def get_index(samples,names):
     if not samples:
-        return {}
+        return []
     if isinstance(names,list):
         idx={sa:i for i,sa in enumerate(names)}
     else:
         idx={sa:i for i,sa in names.items()}
-    if isinstance(samples,list):
-        samples=[[s] if isinstance(s,str) else s for s in samples]
-        samples={','.join(sl):sl for sl in samples}
     try:
-        samples={n:[idx[sa] for sa in sl] for n,sl in samples.items()}
+        sidx=[idx[sa] for sa in samples]
     except KeyError:
-        notfound=list({sa for sl in samples for sa in sl if sa not in idx})
+        notfound=[sa for sa in samples if sa not in idx]
         logger.error('did not find the following samples: %s',','.join(notfound))
         raise
-    return samples
+    return sidx
 
 #sashimi plots
 
 def sashimi_figure(self,samples=None,short_read_samples=None,draw_gene_track=True,long_read_params=None, short_read_params=None ,junctions_of_interest=None, x_range=None):
+    '''Arange multiple sahimi plots of the Gene.
+    
+    The sahimi figure consist of a reference gene track, long read sashimi plots for one or more samples or groups of samples, 
+    and optionally short read sashimi plots for one or more samples or groups of samples.
+
+    :param samples: Definition of samples (as a list) or groups of samples (as a dict) for long read plots.
+    :param short_read_samples: Definition of samples (as a list) or groups of samples (as a dict) for short read plots.
+    :param draw_gene_track: Specify whether to plot the reference gene track.
+    :param long_read_params: Dict with parameters for the long read plots, get passed to self.sashimi_plot. 
+        See isotools._gene_plots.DEFAULT_PARAMS and isotools._gene_plots.DEFAULT_JPARAMS
+    :param short_read_params: Dict with parameters for the short read plots, get passed to self.sashimi_plot_short_reads. 
+        See isotools._gene_plots.DEFAULT_PARAMS and isotools._gene_plots.DEFAULT_JPARAMS
+    :param junctions_of_interest: List of int pairs to define junctions of interest (which are highlighed in the plots)
+    :param x_range: Genomic positions to specify the x range of the plot.
+    :return: Tuple with figure and axses'''
+    
+    
     draw_gene_track=bool(draw_gene_track)
-    if samples is None and short_read_samples is None:
-        samples={'all':self._transcriptome.samples} #all samples grouped # pylint: disable=W0212
+
     if samples is None:
         samples={}
-    else:
-        samples=get_index(samples, self._transcriptome.samples)# pylint: disable=W0212
     if short_read_samples is None:
         short_read_samples={}
-    else:
-        short_read_samples=get_index(short_read_samples, self._transcriptome.infos['short_reads']['name'])    # pylint: disable=W0212
-    long_read_params=extend_params(long_read_params)
-    short_read_params=extend_params(short_read_params)
-    if x_range is None:
-        x_range=(self.start-100, self.end+100)
+    if not samples and not short_read_samples:
+        samples={'all':None}
+    if long_read_params is None:
+        long_read_params={}
+    if short_read_params is None:
+        short_read_params={}
+    
 
     f,axes=plt.subplots(len(samples)+len(short_read_samples) +draw_gene_track)
     axes=np.atleast_1d(axes) # in case there was only one subplot
@@ -87,7 +99,39 @@ def sashimi_figure(self,samples=None,short_read_samples=None,draw_gene_track=Tru
     return f,axes
 
 
-def sashimi_plot_short_reads(self,sidx, title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th,min_cov_th, text_width, arc_type,text_height):
+def sashimi_plot_short_reads(self,samples=None, title='short read coverage', ax=None,junctions_of_interest=None, x_range=None,
+                            jparams=None, min_cov_th=.001,high_cov_th=.05, text_width=.02, arc_type='both',text_height=1, 
+                            exon_color='green'):
+    '''Draw short read sahimi plot of the Gene.
+    
+    The sahimi plot depicts the genomic coverage from short read sequencing as blocks, and junction coverage as arcs.
+
+    :param samples: Names of the short read samples to be depicted (as a list).
+    :param title: Specify the title of the axis. 
+    :param ax: Specify the axis.
+    :param junctions_of_interest: List of int pairs to define junctions of interest (which are highlighed in the plots)
+    :param x_range: Genomic positions to specify the x range of the plot.
+    :param jparams: Define the apperance of junctions, depending on their priority. 
+        A list with three dicts, defining parameters for low coverage junctions, high coverage junctions, and junctions of interest. 
+        For default values, see isotools._gene_plots.DEFAULT_JPARAMS
+    :param exon_color: Specify the color of the genomic coverage blocks (e.g. the exons)
+    :param high_cov_th: Minimum coverage for a junction to be considdered high coverage. 
+    :param min_cov_th: Coverage threshold for a junction to be considdered at all. 
+    :param text_width: Control the horizontal space that gets reserved for labels on the arcs. This affects the hight of the arcs.
+    :param arc_type: Label the junction arcs with  the "coverage" (e.g. number of supporting reads), 
+        "fraction" (e.g. fraction of supporting reads in %), or "both".
+    :param text_height: Control the vertical space that gets reserved for labels on the arcs. This affects the hight of the arcs.'''
+
+
+    if samples is None:
+        samples=list(self._transcriptome.infos['short_reads']['name']) #all samples grouped # pylint: disable=W0212
+    sidx=get_index(samples, self._transcriptome.infos['short_reads']['name'])# pylint: disable=W0212
+    if x_range is None:
+        x_range=(self.start-100, self.end+100)
+
+    if jparams is None:
+        jparams=DEFAULT_JPARAMS
+
     short_reads=[self.short_reads(idx) for idx in sidx]
     #jparams=[low_cov_junctions,high_cov_junctions,interest_junctions]
     start=short_reads[0].reg[1]
@@ -104,6 +148,8 @@ def sashimi_plot_short_reads(self,sidx, title, ax,junctions_of_interest, x_range
     if min_cov_th<1:
         min_cov_th*=max(cov)
     #exons
+    if ax is None:
+        _, ax=plt.subplots()
     ax.fill_between(range(start, end), 0, np.log10(cov, where=cov>0, out=np.nan*cov),facecolor=exon_color )    
     #junctions
     textpositions=[]
@@ -150,10 +196,48 @@ def sashimi_plot_short_reads(self,sidx, title, ax,junctions_of_interest, x_range
     #ax.ticklabel_format(axis='x', style='sci',scilimits=(6,6))
     ax.set_title(title)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
+    return ax
 
-def sashimi_plot(self,sidx, title, ax,junctions_of_interest, x_range,jparams, exon_color, high_cov_th,min_cov_th, text_width, arc_type,text_height):   
+def sashimi_plot(self,samples=None, title='Long read sashimi plot', ax=None,junctions_of_interest=None, x_range=None,
+                    jparams=None, exon_color='green', min_cov_th=.001,high_cov_th=.05, text_width=.02, 
+                    arc_type='both',text_height=1):
+    
+    '''Draw long read sahimi plot of the Gene.
+    
+    The sahimi plot depicts the genomic long read sequencing coverage of one or more samples as blocks, and junction coverage as arcs.
+
+
+    :param samples: Names of the samples to be depicted (as a list).
+    :param title: Specify the title of the axis. 
+    :param ax: Specify the axis.
+    :param junctions_of_interest: List of int pairs to define junctions of interest (which are highlighed in the plots)
+    :param x_range: Genomic positions to specify the x range of the plot.
+    :param jparams: Define the apperance of junctions, depending on their priority. 
+        A list with three dicts, defining parameters for low coverage junctions, high coverage junctions, and junctions of interest. 
+        For default values, see isotools._gene_plots.DEFAULT_JPARAMS
+    :param exon_color: Specify the color of the genomic coverage blocks (e.g. the exons)
+    :param high_cov_th: Minimum coverage for a junction to be considdered high coverage. 
+    :param min_cov_th: Coverage threshold for a junction to be considdered at all. 
+    :param text_width: Control the horizontal space that gets reserved for labels on the arcs. This affects the hight of the arcs.
+    :param arc_type: Label the junction arcs with  the "coverage" (e.g. number of supporting reads), 
+        "fraction" (e.g. fraction of supporting reads in %), or "both".
+    :param text_height: Control the vertical space that gets reserved for labels on the arcs. This affects the hight of the arcs.'''
+
     sg=self.segment_graph
-    boxes=[(node[0], node[1], self.coverage[np.ix_(sidx,[i for i in set(node[2]).union(node[3])])].sum()) for node in sg]
+    if jparams is None:
+        jparams=DEFAULT_JPARAMS
+    if samples is None:
+        samples = self._transcriptome.samples
+    if ax is None:
+        _, ax=plt.subplots()
+    sidx=get_index(samples, self._transcriptome.samples)# pylint: disable=W0212
+    if junctions_of_interest is None:
+        junctions_of_interest=[]
+    if x_range is None:
+        x_range=self.start-100, self.end+100
+    node_matrix=sg.get_node_matrix()
+    boxes=[(node[0], node[1], self.coverage[np.ix_(sidx,node_matrix[:,i])].sum()) for i,node in enumerate(sg)]
+    
     if text_width<1:
         text_width=(sg[-1][1]-sg[0][0])*text_width
     total_weight=self.coverage[sidx,:].sum()
@@ -228,19 +312,38 @@ def sashimi_plot(self,sidx, title, ax,junctions_of_interest, x_range,jparams, ex
     #ax.set_xscale(1e-6, 'linear')
     ax.set_title(title)
 
-def gene_track(self, ax=None,title=None, reference=True, remove_transcripts=None, label_exon_numbers=True,label_transcripts=True,label_fontsize=10, color='blue',x_range=None):
+def gene_track(self, ax=None,title=None, reference=True, drop_transcripts=None, select_transcripts=None,label_exon_numbers=True,label_transcripts=True,label_fontsize=10, color='blue',x_range=None):
+    '''Draw a gene track of the Gene.
+    
+    The gene track depicts the exon structure of a gene, like in a genome browser. 
+    Exons are depicted as boxes, and junctions are lines. For coding regions, the hight of the boxes is increased. 
+    Transcripts are labeled with the name, and a ">" or "<" sign, marking the direction of transcription. 
+
+    :param ax: Specify the axis.
+    :param title: Specify the title of the axis. 
+    :param reference: If True, depict the reference transcripts, else transcripts are defined by long read sequencing. 
+    :param drop_transcripts: A list of transcript numbers that should not be depicted.
+    :param select_transcripts: A list of transcript numbers to be depicted.
+    :param label_exon_numbers: Draw exon numbers within exons. 
+    :param label_transcripts: Draw transcript name below transcripts.
+    :param label_fontsize: Specify the font sice for the labels. 
+    :param color: Specify the color for the exons. 
+    :param x_range: Genomic positions to specify the x range of the plot.'''
+
+    if select_transcripts is not None:
+        drop_transcripts=[i for i in range(self.n_ref_transcripts if reference else self.n_transcripts) if i not in select_transcripts]
     contrast='white' if np.mean(plt_col.to_rgb(color))<.5 else 'black'
     if ax is None:
         _,ax = plt.subplots(1)    
     if x_range is None:
         x_range=(self.start-100, self.end+100)
     blocked=[]
-    if remove_transcripts is None:
-        remove_transcripts=[]
+    if drop_transcripts is None:
+        drop_transcripts=[]
     if reference: #select transcripts and sort by start
-        transcript_list=sorted([(tr_nr,tr) for tr_nr,tr in enumerate(self.ref_transcripts) if tr_nr not in remove_transcripts],key=lambda x:x[1]['exons'][0][0]) #sort by start position
+        transcript_list=sorted([(tr_nr,tr) for tr_nr,tr in enumerate(self.ref_transcripts) if tr_nr not in drop_transcripts],key=lambda x:x[1]['exons'][0][0]) #sort by start position
     else:
-        transcript_list=sorted([(tr_nr,tr) for tr_nr,tr in enumerate(self.transcripts)     if tr_nr not in remove_transcripts],key=lambda x:x[1]['exons'][0][0]) 
+        transcript_list=sorted([(tr_nr,tr) for tr_nr,tr in enumerate(self.transcripts)     if tr_nr not in drop_transcripts],key=lambda x:x[1]['exons'][0][0]) 
     for tr_nr,tr in transcript_list:
         tr_start, tr_end=tr['exons'][0][0],tr['exons'][-1][1]
         if (tr_end < x_range[0] or tr_start > x_range[1]): #transcript does not overlap x_range

@@ -28,7 +28,7 @@ def add_short_read_coverage(self, bam_files,names=None, load=False):
     assert isinstance(bam_files, dict), 'either provide a bam file and names as strings, lists of strings or as a dict'
     names=list(bam_files)
     bam_files=list(bam_files.values())
-    assert all(~self.infos['short_reads'].isin(names)), 'Trying to add short read track that is present already.'
+    assert all(~self.infos['short_reads'].name.isin(names)), 'Trying to add short read track that is present already.'
     
     self.infos['short_reads']=pd.concat([self.infos['short_reads'], pd.DataFrame({'name':names, 'file':bam_files})], ignore_index=True)
     if load: # when loading coverage for all genes keep the filehandle open, hopefully a bit faster
@@ -40,6 +40,18 @@ def add_short_read_coverage(self, bam_files,names=None, load=False):
                     if len(g.data['short_reads'])==i:
                         g.data['short_reads'].append(Coverage.from_alignment(align,g))
                 
+def remove_short_read_coverage(self):
+    '''Remove short read coverage.
+    
+    Remove all short read coverage information from self.'''
+    if 'short_reads' in self.infos:
+        del self.infos['short_reads']
+        for g in self:
+            if 'short_reads' in g:
+                del self.data['short_reads']
+    else:
+        logger.warning('No short read coverage to remove')
+        
  
 @experimental
 def remove_samples(self, sample_names):

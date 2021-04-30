@@ -2,6 +2,7 @@
 
 ## [TODO] ideas and planed extensions or changes that are not yet implemented
 * run_isotools console script is totally outdated and broken...
+* optimize add_biases for run after new samples have been added - should not recompute everything
 * extend flanking exons for MISO/rMATS export (not really needed, works fine as is)
 * consider integrating reference and isoseq genes one in segment graph
     * Gene.get_segment_graph(force_recaculation=False, min_transcripts=None)
@@ -20,6 +21,16 @@
         * can be extended easily
     * con:
         * segment graph still needed for bubble definition - two graphs stored 
+
+## [0.1.2]
+
+* New: added function remove_short_read_coverage
+* New: added some missing documentation for gene plots
+* Fix: fixed bug in novel transcript class definition, affecting last exons
+* New: Distinguish novel exonic TSS (NIC) and novel intronic TSS (NNC)
+* New: Do not distinguish intronic/exonic novel splice sites. Report distance to shortest splice site of same type.
+* Fix: Sashimi plots ignored mono exons
+
 
 ## [0.1.1] - 2020-04-12
 

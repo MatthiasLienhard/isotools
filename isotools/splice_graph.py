@@ -218,8 +218,7 @@ class SegmentGraph():
         #returns a tuple
         # the sqanti category: 0=FSM,1=ISM,2=NIC,3=NNC,4=Novel gene
         # subcategories: a list of novel splicing events or splice_identical
-        #t='novel exon','intron retention', 'novel exonic', 'novel intronic','splice identical','combination', 'fragment', 'extention'
-        
+               
         if alternative is not None and len(alternative)>0: # a list of tuples with (1) gene names and (2) junction numbers covered by other genes (e.g. readthrough fusion)
             category=4
             fusion_exons={int((i+1)/2) for j in alternative for i in j[1]}
@@ -297,14 +296,14 @@ class SegmentGraph():
         :param j1: index of first segment ending after exon start (i.e. first overlapping segment)
         :param j2: index of last segment starting befor exon end (i.e. last overlapping  segment)'''
 
-        logger.debug(f'check exon {e} between sg node {j1} and {j2}/{len(self)} (first={is_first},rev={is_reverse},e2={e2})')
+        logger.debug(f'exon {e} between sg node {j1} and {j2}/{len(self)} (first={is_first},rev={is_reverse},e2={e2})')
         is_last=e2==None
         altsplice={}
         category=0
         if j1>j2: #e is not contained at all  -> novel exon (or TSS/PAS if first/last)
             category=3
             if is_first or is_last:
-                altsplice={'novel PAS' if is_first==is_reverse else 'novel TSS':[e]}
+                altsplice={'novel intronic PAS' if is_first==is_reverse else 'novel intronic TSS':[e]}
             else:
                 altsplice={'novel exon':[e]}
             j2=j1
@@ -314,41 +313,45 @@ class SegmentGraph():
         else: # check splice sites
             if self[j1][0]!=e[0]: #first splice site missmatch
                 if not is_first:
-                    pos="intronic" if self[j1][0]>e[0] else "exonic"
-                    kind='donor' if is_reverse else 'acceptor'
-                    dist=e[0]-self[j1][0] #the distance to next junction
-                    altsplice[f'novel {pos} splice {kind}']=[(e[0],dist)] 
+                    #pos="intronic" if self[j1][0]>e[0] else "exonic"
+                    kind='3' if is_reverse else '5'
+                    dist=min((self[j][0]-e[0] for j in range(j1, j2+1)),key=lambda x:abs(x))  #the distance to next junction
+                    altsplice[f"novel {kind}' splice site"]=[(e[0],dist)] 
                     category=3
                 elif self[j1][0] > e[0] and not any(j in self._tss for j in range(j1,j2+1)): #exon start is intronic in ref
                     site='PAS' if is_reverse else 'TSS'
-                    altsplice.setdefault(f'novel {site}',[]).append((e[0], self[j1][0]))
+                    altsplice.setdefault(f'novel exonic {site}',[]).append((e[0], self[j1][0]))
                     category=max(2,category)  
             if self[j2][1]!=e[1]:#second splice site missmatch
                 if not is_last:
-                    pos="intronic" if self[j2][1]<e[1] else "exonic"
-                    kind='acceptor' if is_reverse else 'donor'
-                    dist= e[1]-self[j2][1]
-                    altsplice.setdefault(f'novel {pos} splice {kind}',[]).append((e[1],dist))
+                    #pos="intronic" if self[j2][1]<e[1] else "exonic"
+                    kind='5' if is_reverse else '3'
+                    dist=min((self[j][1]-e[1] for j in range(j1, j2+1)),key=lambda x:abs(x))  #the distance to next junction
+                    altsplice.setdefault(f"novel {kind}' splice site",[]).append((e[1],dist))
                     category=3
                 elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1,j2+1)): #exon end is intronic in ref
                     site='TSS' if is_reverse else 'PAS'
-                    altsplice.setdefault(f'novel {site}',[]).append((self[j2][1],e[1]))
+                    altsplice.setdefault(f'novel exonic {site}',[]).append((self[j2][1],e[1]))
                     category=max(2,category)    
 
         #find intron retentions
-        if j1<j2:
-            ret_introns=[]
-            troi=set(self[j1].suc.keys()).intersection(self[j2].pre.keys())
-            if troi:
-                j=j1
-                while j<j2:
-                    nextj=min(js for trid,js in self[j].suc.items() if trid in troi)
-                    if self[nextj].start-self[j].end>0:
-                        ret_introns.append((self[nextj].start,self[j].end))
-                    j=nextj
-                if ret_introns:                
-                    altsplice['intron retention']=ret_introns
-                    category=max(2,category)
+        if j1<j2 and any(self[ji+1].start-self[ji].end>0 for ji in range(j1, j2)):
+            gaps=[ji for ji in range(j1, j2) if self[ji+1].start-self[ji].end>0 ]
+            if (gaps 
+                    and not (is_first and any(j in self._tss for j in range(gaps[-1]+1,j2)))
+                    and not (is_last and any(j in self._pas for j in range(j1,gaps[0]+1)))):
+                ret_introns=[]
+                troi=set(self[j1].suc.keys()).intersection(self[j2].pre.keys())
+                if troi:
+                    j=j1
+                    while j<j2:
+                        nextj=min(js for trid,js in self[j].suc.items() if trid in troi)
+                        if self[nextj].start-self[j].end>0 and any(self[ji+1].start-self[ji].end>0 for ji in range(j, nextj)):
+                            ret_introns.append((self[j].end,self[nextj].start)) 
+                        j=nextj
+                    if ret_introns:                
+                        altsplice['intron retention']=ret_introns
+                        category=max(2,category)
         logger.debug(f'check exon {e} resulted in {altsplice}')
         return altsplice, category
 
@@ -356,10 +359,10 @@ class SegmentGraph():
         ''' check a junction in the segment graph
 
         * check presence e1-e2 junction in ref (-> if not exon skipping or novel junction)
-        * AND find j3: first node overlapping e2 and j4: last node overlapping e2'''
+        * AND find j3 and j4: first node overlapping e2 and last node overlapping e2'''
         altsplice={}
         introns=[]
-        for j3 in range(j2+1,len(self)-1): 
+        for j3 in range(j2+1,len(self)): 
             if j3 in self[j3-1].suc.values() and self[j3-1][1]<self[j3][0]: #"real" junction 
                 introns.append([self[j3-1][1],self[j3][0]])
             if self[j3][1] > e2[0]:
@@ -691,6 +694,16 @@ class SegmentGraph():
         for n,tr_set in pas.items():
             alt_tr=[tr for tr, tss in enumerate(self._tss) if tr not in tr_set and tss < n]
             yield (alt_tr,list(tr_set),n,pas_end[n],'PAS' if self.strand=='+' else 'TSS')
+    
+    def is_exonic(self, position):
+        '''Checks whether the position is within an exon.
+        
+        :param position: The genomic position to check. 
+        :return: True, if the position overlaps with an exon, else False.'''
+        for n in self:
+            if n[0]<=position and n[1]>=position:
+                return True
+        return False
 
 
     def _get_all_exons(self, nodeX, nodeY, tr):    

@@ -314,7 +314,7 @@ class SegmentGraph():
             if self[j1][0]!=e[0]: #first splice site missmatch
                 if not is_first:
                     #pos="intronic" if self[j1][0]>e[0] else "exonic"
-                    kind='3' if is_reverse else '5'
+                    kind='5' if is_reverse else '3'
                     dist=min((self[j][0]-e[0] for j in range(j1, j2+1)),key=lambda x:abs(x))  #the distance to next junction
                     altsplice[f"novel {kind}' splice site"]=[(e[0],dist)] 
                     category=3
@@ -325,7 +325,8 @@ class SegmentGraph():
             if self[j2][1]!=e[1]:#second splice site missmatch
                 if not is_last:
                     #pos="intronic" if self[j2][1]<e[1] else "exonic"
-                    kind='5' if is_reverse else '3'
+                    # TODO: could also be a "novel intron", if the next "first" splice site is also novel.
+                    kind='3' if is_reverse else '5'
                     dist=min((self[j][1]-e[1] for j in range(j1, j2+1)),key=lambda x:abs(x))  #the distance to next junction
                     altsplice.setdefault(f"novel {kind}' splice site",[]).append((e[1],dist))
                     category=3

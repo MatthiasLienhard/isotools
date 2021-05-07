@@ -109,7 +109,7 @@ TESTS={ 'betabinom_lr':betabinom_lr_test,
 
 
 def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto',padj_method='fdr_bh'):
-    '''Performs the alternative splicing event test
+    '''Performs the alternative splicing event test.
 
     :param groups: Dict with groupnames as keys and lists of samplenames as values, defining the two groups for the test.
     :param min_total: Minimum total coverage over all selected samples (for both groups combined).
@@ -232,9 +232,9 @@ def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',re
     return df            
         
 def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
-    '''Find alternative splicing events. 
+    '''Finds alternative splicing events. 
 
-    Find alternative splicing events and potential transcription start sites/polyA sites
+    Finds alternative splicing events and potential transcription start sites/polyA sites
     by searching for splice bubbles in the Segment Graph. 
     Genes may be specified by genomic "region", and/or by filter flags / novelity class using the "include" / "remove" parameters.
     
@@ -287,7 +287,7 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1,samples
 
 # summary tables (can be used as input to plot_bar / plot_dist)
 def altsplice_stats(self, groups=None , weight_by_coverage=True, min_coverage=2, tr_filter={}):    
-    '''Summary statistics for novel alternative splicing
+    '''Summary statistics for novel alternative splicing.
     
     This function counts the novel alternative splicing events of LRTS isoforms with respect to the reference annotation. 
     The result can be depicted by isotools.plots.plot_bar.
@@ -335,7 +335,7 @@ def altsplice_stats(self, groups=None , weight_by_coverage=True, min_coverage=2,
     #
     
 def filter_stats(self, groups=None, weight_by_coverage=True, min_coverage=2,consider=None, tr_filter={}):   
-    '''Summary statistics for filter flags
+    '''Summary statistics for filter flags.
     
     This function counts the number of transcripts flagged by a filter flag. 
     The result can be depicted by isotools.plots.plot_bar.
@@ -379,7 +379,7 @@ def filter_stats(self, groups=None, weight_by_coverage=True, min_coverage=2,cons
     return df, {'ylabel':ylab,'title':title}
 
 def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,x_range=(0,10000),weight_by_coverage=True,min_coverage=2,use_alignment=True, tr_filter={}, ref_filter={}):
-    '''Retrieve the transcript length distribution.
+    '''Retrieves the transcript length distribution.
     
     This function counts the number of transcripts within length interval.
     The result can be depicted by isotools.plots.plot_dist.
@@ -421,7 +421,7 @@ def transcript_length_hist(self=None,  groups=None, add_reference=False,bins=50,
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
 def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(1,1001), tr_filter={}):
-    '''Retrieve the transcript coverage distribution.
+    '''Retrieves the transcript coverage distribution.
     
     This function counts the number of transcripts within coverage interval.
     The result can be depicted by isotools.plots.plot_dist.
@@ -455,7 +455,7 @@ def transcript_coverage_hist(self,  groups=None,bins=50,x_range=(1,1001), tr_fil
     # ax.plot(x, counts)
    
 def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=49,x_range=(1,50), min_coverage=2, tr_filter={}, ref_filter={}):
-    '''Retrieve the histogram of number of transcripts per gene.
+    '''Retrieves the histogram of number of transcripts per gene.
     
     This function counts the genes featuring transcript numbers within specified intervals.
     The result can be depicted by isotools.plots.plot_dist.
@@ -504,7 +504,7 @@ def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=49,
     
 def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=34,x_range=(1,69),weight_by_coverage=True,  min_coverage=2, tr_filter={}, ref_filter={}):
 
-    '''Retrieve the histogram of number of exons per transcript
+    '''Retrieves the histogram of number of exons per transcript.
     
     This function counts the transcripts featuring exon numbers within specified intervals.
     The result can be depicted by isotools.plots.plot_dist.
@@ -550,7 +550,7 @@ def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=34,x
 
 def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1),weight_by_coverage=True,  min_coverage=2, tr_filter={}, ref_filter={}):
 
-    '''Retrieve the distribution of downstream adenosine content.
+    '''Retrieves the distribution of downstream adenosine content.
     
     High downstream adenosine content is indicative for internal priming. 
 
@@ -592,7 +592,7 @@ def downstream_a_hist(self, groups=None,add_reference=False,bins=30,x_range=(0,1
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
 def direct_repeat_hist(self, groups=None, bins=10, x_range=(0,10), weight_by_coverage=True, min_coverage=2, tr_filter={}):
-    '''Retrieve the distribution direct repeat length at splice junctions.
+    '''Retrieves the distribution direct repeat length at splice junctions.
     
     Direct repeats are indicative for reverse transcriptase template switching. 
 
@@ -641,7 +641,8 @@ def direct_repeat_hist(self, groups=None, bins=10, x_range=(0,10), weight_by_cov
     cov={'novel noncanonical':novel_rl_cov, 'known':known_rl_cov}
     if isinstance(bins,int):
         bins=np.linspace(x_range[0]-.5,x_range[1]-.5,bins+1)
-    counts=pd.DataFrame({f'{sa} {k}':np.histogram([val[0] for val in v],weights=cov[k][sa], bins=bins)[0]  for k,v in rl.items() for sai,sa in enumerate(groups)}   )
+    counts=pd.DataFrame({f'{sa} {k}':np.histogram([val[0] for val in v],weights=cov[k][sa], bins=bins)[0]  for k,v in rl.items() for sa in (self.samples if groups is None else groups)}   )
+    
 
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     params=dict( title='direct repeat length',xlabel='length of direct repeats at splice junctons', ylabel='# transcripts')

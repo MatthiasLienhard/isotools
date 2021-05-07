@@ -11,7 +11,7 @@ logger=logging.getLogger('isotools')
 
     
 def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5), splice_types=None):
-    '''Plot differential splicing results.
+    '''Plots differential splicing results.
 
     For the first (e.g. most significant) differential splicing events from result_table
     that pass the checks defined by the parameters, 
@@ -75,13 +75,13 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
 def plot_embedding(splice_bubbles, method='PCA',prior_count=3, 
         top_var=500,min_total=100,min_alt_fraction=.1,plot_components=[1,2], 
         splice_types='all', labels=True,groups=None,colors=None, ax=None,**kwargs):
-    ''' Plot embedding of alternative splicing events. 
+    ''' Plots embedding of alternative splicing events. 
 
     Alternative splicing events are soreted by variance and only the top variable events are used for the embedding. 
     A prior weight is added to all samples proportional to the average fraction of the alternatives, 
     in order to bias poorly covered samples towards the mean and limit their potential to disturb the analysis.
 
-    :param splice_bubles: The splice bubble table, produced by Transcriptome.alternative_splicing_events().
+    :param splice_bubbles: The splice bubble table, produced by Transcriptome.alternative_splicing_events().
     :param method: The embedding method, either "PCA" or "UMAP". 
     :param prior_count: Number of prior reads which are added to each sample proportional to the average fraction of the alternatives. 
     :param top_var: Number of alternative splicing events which are used for the embedding. 
@@ -174,7 +174,7 @@ def plot_embedding(splice_bubbles, method='PCA',prior_count=3,
   
 #plots
 def plot_bar(df,ax=None, drop_categories=None, legend=True, annotate=True,rot=90, bar_width=.5,**axparams):   
-    '''Depict data as a barplot.
+    '''Depicts data as a barplot.
 
     This function is intended to be called with the result from 
     isoseq.Transcriptome.filter_stats() or isoseq.Transcriptome.altsplice_stats().
@@ -215,7 +215,7 @@ def plot_bar(df,ax=None, drop_categories=None, legend=True, annotate=True,rot=90
     return ax
 
 def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,**axparams):
-    '''Depict data as density plot.
+    '''Depicts data as density plot.
 
     This function is intended to be called with the result from 
     isoseq.Transcriptome.transcript_length_hist(), isoseq.Transcriptome.transcripts_per_gene_hist(), 
@@ -255,12 +255,12 @@ def plot_distr(counts,ax=None,density=False,smooth=None,  legend=True,fill=True,
     return ax
 
 def plot_saturation(isoseq=None,ax=None,cov_th=2,expr_th=[.5,1,2,5,10],x_range=(1e4,1e7,1e4),legend=True,label=True, **axparams):
-    '''Plot Negative Binomial Model to analyze the saturation of LRTS data.
+    '''Plots Negative Binomial model to analyze the saturation of LRTS data.
     
     Saturation (e.g. the probability to observe a transcript of interest in the sample) is dependent on the sequencing depth (number of reads), 
     the concentration of the transcripts of interest in the sample (in TPM),
     and the requested coverage of the transcript in the data (minimum number of reads per transcript). 
-    This function models the relation with a Negative Binomial Distribution, to help estimate the required sequencing depth.
+    This function models the relation with a Negative Binomial distribution, to help estimate the required sequencing depth.
 
     :param isoseq: If provided, the sequencing depth of samples from this isotools.Transcriptome object are depicted as vertical lines. 
     :param ax: The axis for the plot. 

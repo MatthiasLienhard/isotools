@@ -17,10 +17,10 @@ logger=logging.getLogger('isotools')
 class SegmentGraph():
     '''Segment Graph Implementation
 
-    Nodes int the Segment Graph represent disjoint exonic bins (aka segments) and have start (genomic 5'), end (genomic 3'), 
+    Nodes in the Segment Graph represent disjoint exonic bins (aka segments) and have start (genomic 5'), end (genomic 3'), 
     and a dict of successors and predesessors (edges)
-    Edges link two exonic bins x and y that follow sucessivly in a transcript. 
-    They represent either introns (if x.end<y.start) or connect exonic bins of the same exon(x.end==y.start)
+    Edges link two exonic bins x and y that follow successively in a transcript. 
+    They represent either introns (if x.end<y.start) or connect exonic bins of the same exon (x.end==y.start).
     
     :param transcripts: A list of transcripts, which are lists of exons, which in turn are (start,end) tuples
     :type transcripts: list
@@ -108,7 +108,7 @@ class SegmentGraph():
 
     def search_transcript(self, exons):
         
-        '''Test if a transcript (provided as list of exons) is contained in self and return the corresponding transcript indices.
+        '''Tests if a transcript (provided as list of exons) is contained in self and return the corresponding transcript indices.
         
         :param exons: A list of exon tuples representing the transcript
         :type exons: list
@@ -144,14 +144,14 @@ class SegmentGraph():
 
 
     def _is_same_exon(self, tr_nr,j1,j2):
-        '''Test if nodes j1 and j2 belong to same exon in transcript tr_nr.'''
+        '''Tests if nodes j1 and j2 belong to same exon in transcript tr_nr.'''
         for j in range(j1,j2):
             if tr_nr not in self[j].suc or self[j].suc[tr_nr]>j+1 or self[j].end!= self[j+1].start:
                 return False
         return True
     
     def _count_introns(self,tr_nr,j1,j2):
-        '''count the number of junctions between j1 and j2.'''
+        '''Counts the number of junctions between j1 and j2.'''
         logger.debug('counting introns of transcript %i between nodes %i and %i',tr_nr,j1,j2)
         delta=0
         if j1==j2:
@@ -165,12 +165,12 @@ class SegmentGraph():
         return delta
 
     def get_node_matrix(self)->np.array:
-        '''Get the node matrix representation of the segment graph.'''
+        '''Gets the node matrix representation of the segment graph.'''
 
         return np.array([[True if tss==j or trid in n.pre else False for j,n in enumerate(self)] for trid,tss in enumerate(self._tss)])    
 
     def find_fragments(self):
-        '''Find all fragments (e.g. transcript contained in other transcripts) in the segment graph.'''
+        '''Finds all fragments (e.g. transcript contained in other transcripts) in the segment graph.'''
         truncated=set()
         contains={}
         starts=[set() for _ in range(len(self))]
@@ -182,18 +182,7 @@ class SegmentGraph():
                 continue
             contains[trid]={trid2 for trid2,(tss2,pas2) in enumerate(zip(self._tss, self._pas)) if trid2!=trid and tss2>= tss and pas2<= pas and all(nodes[trid2,tss2:pas2+1]==nodes[trid,tss2:pas2+1])}
             truncated.update(contains[trid])#those are not checked 
-            #start_in=set() #transcripts that are contained until idx
-            #contains[trid]=set()
-            #while True:
-            #    start_in.update(starts[idx])
-            #    contains[trid].update({c for c in start_in if self._pas[c]==idx}) # add fully contained
-            #    if idx == self._pas[trid]:
-            #        contains[trid].remove(trid) #remove self
-            #        truncated.update(contains[trid]) #those are not checked 
-            #        break
-            #    suc=self._graph[idx].suc
-            #    start_in={c for c in start_in if c in suc and suc[c] ==suc[trid] } #remove transcripts that split at idx
-            #    idx=suc[trid]
+
         fragments={}
         for big,smallL in contains.items():
             if big not in truncated:
@@ -388,10 +377,10 @@ class SegmentGraph():
         return j3,j4, altsplice
             
     def fuzzy_junction(self,exons,size):
-        '''Look for "fuzzy junctions" in the provided transcript.
+        '''Looks for "fuzzy junctions" in the provided transcript.
         
         For each intron from "exons", look for introns in the splice graph shifted by less than "size".
-        these shifts may be produced by ambigious alignments.
+        These shifts may be produced by ambigious alignments.
 
         :param exons: A list of exon tuples representing the transcript
         :type exons: list
@@ -426,7 +415,7 @@ class SegmentGraph():
 
         
     def find_splice_sites(self, exons):
-        '''Check whether the splice sites of a new transcript are present in the segment graph
+        '''Checks whether the splice sites of a new transcript are present in the segment graph.
 
         :param exons: A list of exon tuples representing the transcript
         :type exons: list
@@ -473,7 +462,7 @@ class SegmentGraph():
         return ol
 
     def get_intersects(self, exons):
-        '''Compute the splice junction exonic overlap of a new transcript with the segment graph.
+        '''Computes the splice junction exonic overlap of a new transcript with the segment graph.
         
         :param exons: A list of exon tuples representing the transcript
         :type exons: list
@@ -497,7 +486,7 @@ class SegmentGraph():
 
     @deprecated    
     def _find_ts_candidates(self, coverage):   
-        '''Compute a metric indicating template switching.'''     
+        '''Computes a metric indicating template switching.'''     
         for i, gnode in enumerate(self._graph[:-1]):
             if self._graph[i+1].start==gnode.end: #jump candidates: introns that start within an exon
                 jumps={idx:n for idx,n in gnode.suc.items() if n>i+1 and self._graph[n].start==self._graph[n-1].end}
@@ -593,7 +582,7 @@ class SegmentGraph():
     
 
     def find_splice_bubbles(self, start_end_events=True):
-        '''Search for alternative paths in the segment graph ("bubbles").
+        '''Searches for alternative paths in the segment graph ("bubbles").
 
         Bubbles are defined as combinations of nodes x_s and x_e with more than one path from x_s to x_e.
 
@@ -667,7 +656,7 @@ class SegmentGraph():
             yield from self.find_start_end_events()
         
     def find_start_end_events(self):
-        '''Search for alternative TSS/PAS in the segment graph.
+        '''Searches for alternative TSS/PAS in the segment graph.
 
         All transcripts sharing the same first/ last splice junction are considered to start/end at the same site and are summarized. 
         Alternative transcripts are all other transcripts of the gene that end after the TSS or respectivly start before the PAS.
@@ -741,7 +730,7 @@ class SegmentGraph():
       
 
 class SegGraphNode(tuple):
-    '''A node in a Segment Graph represents an exonic segment'''
+    '''A node in a segment graph represents an exonic segment.'''
     def __new__(cls,start, end, pre=None, suc=None):
         if pre is None:
             pre=dict()

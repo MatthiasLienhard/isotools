@@ -19,7 +19,7 @@ def _eval_filter_fun(fun,name,args):
 
 
 class Gene(Interval):
-    'this class stores all gene information and transcripts. It is derived from intervaltree.Interval'
+    'This class stores all gene information and transcripts. It is derived from intervaltree.Interval.'
     required_infos=['ID','name', 'chr', 'strand']
 
     ###initialization
@@ -48,7 +48,7 @@ class Gene(Interval):
         return self.data['short_reads'][idx]
 
     def add_filter(self, gene_filter,transcript_filter,ref_transcript_filter):   
-        'add the filter flags'
+        'Adds the filter flags.'
         self.data['filter']=[name for name,fun in gene_filter.items() if  _eval_filter_fun(fun,name,self.data)]
         for tr in self.transcripts:
             tr['filter']=[name for name,fun in transcript_filter.items() if _eval_filter_fun(fun,name,tr)]
@@ -56,9 +56,12 @@ class Gene(Interval):
             tr['filter']=[name for name,fun in ref_transcript_filter.items() if _eval_filter_fun(fun,name,tr)]
 
     def filter_transcripts(self, include, remove, anno_include, anno_remove, mincoverage=None, maxcoverage=None):
-        ''' iterator over the transcripts of the gene. Filtering implemented by passing lists of flags to the parameters:
-        include: transcripts must have at least one of the flags
-        remove: transcripts must not have one of the flags'''
+        ''' Iterator over the transcripts of the gene. 
+        
+        Filtering implemented by passing lists of flags to the parameters:
+        
+        :param include: transcripts must have at least one of the flags
+        :param remove: transcripts must not have one of the flags'''
         for i,tr in enumerate(self.transcripts):
             if mincoverage and self.coverage[:,i].sum()< mincoverage:
                 continue
@@ -71,7 +74,7 @@ class Gene(Interval):
                             yield i,tr 
 
     def filter_ref_transcripts(self, include, remove):
-        ''' iterator over the refernce transcripts of the gene. Filtering implemented by passing lists of flags to the parameters:
+        ''' Iterator over the refernce transcripts of the gene. Filtering implemented by passing lists of flags to the parameters:
         include: transcripts must have at least one of the flags
         remove: transcripts must not have one of the flags'''
         for i,tr in enumerate(self.ref_transcripts):
@@ -80,7 +83,10 @@ class Gene(Interval):
                     yield i,tr
         
     def correct_fuzzy_junctions(self,tr, size, modify=True):
-        'this corrects for splicing shifts (e.g. same difference compared to reference annotaiton at both donor and acceptor) presumably caused by ambigous alignments'
+        '''Corrects for splicing shifts.
+        
+         (e.g. same difference compared to reference annotaiton at both donor and acceptor) presumably caused by ambigous alignments'''
+
         exons=tr['exons']
         shifts=self.ref_segment_graph.fuzzy_junction(exons,size)
         if shifts and modify:
@@ -91,7 +97,7 @@ class Gene(Interval):
         return shifts
  
     def _to_gtf(self,trids, source='isoseq', use_gene_name=False):
-        'creates the gtf lines of the gene as strings'
+        'Creates the gtf lines of the gene as strings.'
         info={'gene_id':self.name if use_gene_name else self.id}
         lines=[]
         starts=[]
@@ -128,7 +134,9 @@ class Gene(Interval):
                 tr['noncanonical_splicing']=nc
 
     def add_direct_repeat_len(self, genome_fh,delta=10):
-        'perform a global alignment of the sequences at splice sites and report the score. Direct repeats indicate template switching'
+        '''Perform a global alignment of the sequences at splice sites and reports the score. 
+        
+        Direct repeats indicate template switching'''
         
         intron_seq={}
         score={}
@@ -153,7 +161,9 @@ class Gene(Interval):
             tr['direct_repeat_len']=[min(score[intron], delta) for intron in ((tr['exons'][i][1], tr['exons'][i+1][0]) for i in range(len(tr['exons'])-1))]
     
     def add_threeprime_a_content(self, genome_fh, length=30):
-        'add the information of the genomic A content downstream the transcript. High values indicate genomic origin of the pacbio read'
+        '''Adds the information of the genomic A content downstream the transcript. 
+
+        High values indicate genomic origin of the pacbio read'''
         a_content={}
         for tr in (t for tL in (self.transcripts, self.ref_transcripts) for t in tL):
             if self.strand=='+':
@@ -169,13 +179,13 @@ class Gene(Interval):
             tr['downstream_A_content']=a_content[pos]
 
     def add_fragments(self): 
-        'check for transcripts that are fully contained in other transcripts and save indices of these fragments'
+        'Checks for transcripts that are fully contained in other transcripts and save indices of these fragments.'
         for trid, containers in self.segment_graph.find_fragments().items():
             self.transcripts[trid]['fragments']=containers # list of (containing transcript id, first 5' exons, first 3'exons)
        
         
     def coding_len(self, trid):
-        'returns length of 5\'UTR, coding sequence and 3\'UTR'
+        'Returns length of 5\'UTR, coding sequence and 3\'UTR.'
         try:            
             exons=self.transcripts[trid]['exons']
             cds=self.transcripts[trid]['CDS']
@@ -188,7 +198,7 @@ class Gene(Interval):
         return coding_len
 
     def get_infos(self,trid, keys):
-        'returns the transcript information specified in "keys" as a list'
+        'Returns the transcript information specified in "keys" as a list.'
         return [value for k in keys for value in self._get_info(trid,k)]
 
 

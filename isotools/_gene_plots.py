@@ -51,9 +51,9 @@ def get_index(samples,names):
 #sashimi plots
 
 def sashimi_figure(self,samples=None,short_read_samples=None,draw_gene_track=True,long_read_params=None, short_read_params=None ,junctions_of_interest=None, x_range=None):
-    '''Arange multiple sahimi plots of the Gene.
+    '''Arranges multiple Sashimi plots of the gene.
     
-    The sahimi figure consist of a reference gene track, long read sashimi plots for one or more samples or groups of samples, 
+    The Sashimi figure consist of a reference gene track, long read sashimi plots for one or more samples or groups of samples, 
     and optionally short read sashimi plots for one or more samples or groups of samples.
 
     :param samples: Definition of samples (as a list) or groups of samples (as a dict) for long read plots.
@@ -102,9 +102,9 @@ def sashimi_figure(self,samples=None,short_read_samples=None,draw_gene_track=Tru
 def sashimi_plot_short_reads(self,samples=None, title='short read coverage', ax=None,junctions_of_interest=None, x_range=None,
                             jparams=None, min_cov_th=.001,high_cov_th=.05, text_width=.02, arc_type='both',text_height=1, 
                             exon_color='green'):
-    '''Draw short read sahimi plot of the Gene.
+    '''Draws short read Sashimi plot of the gene.
     
-    The sahimi plot depicts the genomic coverage from short read sequencing as blocks, and junction coverage as arcs.
+    The Sashimi plot depicts the genomic coverage from short read sequencing as blocks, and junction coverage as arcs.
 
     :param samples: Names of the short read samples to be depicted (as a list).
     :param title: Specify the title of the axis. 
@@ -117,10 +117,10 @@ def sashimi_plot_short_reads(self,samples=None, title='short read coverage', ax=
     :param exon_color: Specify the color of the genomic coverage blocks (e.g. the exons)
     :param high_cov_th: Minimum coverage for a junction to be considdered high coverage. 
     :param min_cov_th: Coverage threshold for a junction to be considdered at all. 
-    :param text_width: Control the horizontal space that gets reserved for labels on the arcs. This affects the hight of the arcs.
+    :param text_width: Control the horizontal space that gets reserved for labels on the arcs. This affects the height of the arcs.
     :param arc_type: Label the junction arcs with  the "coverage" (e.g. number of supporting reads), 
         "fraction" (e.g. fraction of supporting reads in %), or "both".
-    :param text_height: Control the vertical space that gets reserved for labels on the arcs. This affects the hight of the arcs.'''
+    :param text_height: Control the vertical space that gets reserved for labels on the arcs. This affects the height of the arcs.'''
 
 
     if samples is None:
@@ -202,9 +202,9 @@ def sashimi_plot(self,samples=None, title='Long read sashimi plot', ax=None,junc
                     jparams=None, exon_color='green', min_cov_th=.001,high_cov_th=.05, text_width=.02, 
                     arc_type='both',text_height=1):
     
-    '''Draw long read sahimi plot of the Gene.
+    '''Draws long read Sashimi plot of the gene.
     
-    The sahimi plot depicts the genomic long read sequencing coverage of one or more samples as blocks, and junction coverage as arcs.
+    The Sashimi plot depicts the genomic long read sequencing coverage of one or more samples as blocks, and junction coverage as arcs.
 
 
     :param samples: Names of the samples to be depicted (as a list).
@@ -218,10 +218,10 @@ def sashimi_plot(self,samples=None, title='Long read sashimi plot', ax=None,junc
     :param exon_color: Specify the color of the genomic coverage blocks (e.g. the exons)
     :param high_cov_th: Minimum coverage for a junction to be considdered high coverage. 
     :param min_cov_th: Coverage threshold for a junction to be considdered at all. 
-    :param text_width: Control the horizontal space that gets reserved for labels on the arcs. This affects the hight of the arcs.
+    :param text_width: Control the horizontal space that gets reserved for labels on the arcs. This affects the height of the arcs.
     :param arc_type: Label the junction arcs with  the "coverage" (e.g. number of supporting reads), 
         "fraction" (e.g. fraction of supporting reads in %), or "both".
-    :param text_height: Control the vertical space that gets reserved for labels on the arcs. This affects the hight of the arcs.'''
+    :param text_height: Control the vertical space that gets reserved for labels on the arcs. This affects the height of the arcs.'''
 
     sg=self.segment_graph
     if jparams is None:
@@ -313,10 +313,10 @@ def sashimi_plot(self,samples=None, title='Long read sashimi plot', ax=None,junc
     ax.set_title(title)
 
 def gene_track(self, ax=None,title=None, reference=True, drop_transcripts=None, select_transcripts=None,label_exon_numbers=True,label_transcripts=True,label_fontsize=10, color='blue',x_range=None):
-    '''Draw a gene track of the Gene.
+    '''Draws a gene track of the gene.
     
     The gene track depicts the exon structure of a gene, like in a genome browser. 
-    Exons are depicted as boxes, and junctions are lines. For coding regions, the hight of the boxes is increased. 
+    Exons are depicted as boxes, and junctions are lines. For coding regions, the height of the boxes is increased. 
     Transcripts are labeled with the name, and a ">" or "<" sign, marking the direction of transcription. 
 
     :param ax: Specify the axis.

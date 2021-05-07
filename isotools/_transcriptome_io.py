@@ -16,7 +16,7 @@ logger=logging.getLogger('isotools')
 SPLICE_CATEGORY=['FSM','ISM','NIC','NNC','NOVEL']
 
 def add_short_read_coverage(self, bam_files,names=None, load=False):
-    '''Add short read coverage to the genes.
+    '''Adds short read coverage to the genes.
     
     This does, by default (e.g. if load==False), this method does not actually read the bams, 
     but import for each gene is done at first access.
@@ -41,9 +41,9 @@ def add_short_read_coverage(self, bam_files,names=None, load=False):
                         g.data['short_reads'].append(Coverage.from_alignment(align,g))
                 
 def remove_short_read_coverage(self):
-    '''Remove short read coverage.
+    '''Removes short read coverage.
     
-    Remove all short read coverage information from self.'''
+    Removes all short read coverage information from self.'''
     if 'short_reads' in self.infos:
         del self.infos['short_reads']
         for g in self:
@@ -76,7 +76,7 @@ def remove_samples(self, sample_names):
         g.data['coverage']=None            
         
 def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=True,chimeric_mincov=2,  **kwargs):
-    '''Import expressed transcripts from bam and add it to the 'Transcriptome' object
+    '''Imports expressed transcripts from bam and adds it to the 'Transcriptome' object.
     
     :param fn: The bam filename of the new sample
     :param sample_name: Name of the new sample
@@ -551,7 +551,7 @@ def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=
             genes[chrom].add(Gene(start,end,info, transcriptome))
         elif all([v in info for v in ['Parent', "ID"]]) and (ls[2] == 'transcript' or info['Parent'].startswith('gene')):# those denote transcripts
             tr_info={k:v for k,v in info.items() if k.startswith('transcript_')}
-            transcripts.setdefault(info["Parent"], {})[info]=tr_info
+            transcripts.setdefault(info["Parent"], {})[info['ID']]=tr_info
         elif ls[2]  == 'start_codon' and 'Parent' in info:
             cds_start[info['Parent']]=end if ls[6]=='-' else start
         elif ls[2]  == 'stop_codon' and 'Parent' in info:
@@ -694,9 +694,9 @@ def _prepare_gene_info(info,chrom, strand, modify=True):
 
 #human readable output
 def gene_table(self, region=None ): #ideas: filter, extra_columns
-    '''Create a gene summary table.
+    '''Creates a gene summary table.
 
-    Export all genes within region to a table.
+    Exports all genes within region to a table.
 
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. If omitted specify the complete genome.'''
 
@@ -706,9 +706,9 @@ def gene_table(self, region=None ): #ideas: filter, extra_columns
     return(df)
 
 def transcript_table(self, region=None, extra_columns=None,  include=None, remove=None, min_coverage=None, max_coverage=None): 
-    '''Create a transcript table.
+    '''Creates a transcript table.
     
-    Export all transcript isoforms within region to a table.
+    Exports all transcript isoforms within region to a table.
 
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. If omitted specify the complete genome.
     :param extra_columns: Specify the additional information added to the table. Valid examples are "annotation", "coverage", or any other transcrit property as defined by the key in the transcript dict. 
@@ -731,7 +731,7 @@ def transcript_table(self, region=None, extra_columns=None,  include=None, remov
     return(df)
 
 def chimeric_table(self, region=None,  include=None, remove=None):#, star_chimeric=None, illu_len=200):
-    '''Create a cimeric table
+    '''Creates a chimeric table
     
     This table contains relevant infos about breakpoints and coverage for chimeric genes.
 
@@ -789,13 +789,13 @@ def write_gtf(self, fn, source='isotools',use_gene_name=False,  include=None, re
                 _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
 
 def export_alternative_splicing(self,out_dir,out_format='mats', reference=False, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
-    '''Export alternative splicing events defined by the transcriptome.
+    '''Exports alternative splicing events defined by the transcriptome.
     
-    This is intendet to integrate spliceing event analysis from short read data. 
+    This is intended to integrate splicing event analysis from short read data. 
     Tools for short read data implement different formats for the import of events. 
     These formats include several files and depend on specific file naming.
     Currently only MISO (out_format="miso") and rMATS (out_format='mats') are supported. 
-    I reccoment rMATS. 
+    rMATS is recommended. 
 
     :param out_dir: Path to the directory where the event files are written to.
     :param out_format: Specify the output format. Must be either "miso" or "mats".

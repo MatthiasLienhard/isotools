@@ -6,13 +6,13 @@ logger=logging.getLogger('isotools')
 DEFAULT_GENE_FILTER={'NOVEL_GENE':'not reference',
                     'EXPRESSED':'transcripts',
                     'CHIMERIC':'chimeric'}
-'''Default definitions for gene filter, as used in iosotools.Transcriptome.add_filters()'''
+'''Default definitions for gene filter, as used in iosotools.Transcriptome.add_filters().'''
 
 DEFAULT_REF_TRANSCRIPT_FILTER={
         'UNSPLICED':'len(exons)==1',
         'MULTIEXON':'len(exons)>1',
         'INTERNAL_PRIMING':'downstream_A_content and downstream_A_content>.5'}
-'''Default definitions for reference transcript filter, as used in iosotools.Transcriptome.add_filters()'''
+'''Default definitions for reference transcript filter, as used in iosotools.Transcriptome.add_filters().'''
 
 #:Default definitions for transcript filter, as used in iosotools.Transcriptome.add_filters()
 DEFAULT_TRANSCRIPT_FILTER={
@@ -30,16 +30,16 @@ DEFAULT_TRANSCRIPT_FILTER={
 ANNOTATION_VOCABULARY=['antisense', 'intergenic', 'genic genomic', 'novel exonic PAS','novel intronic PAS', 'readthrough fusion', 
 'novel exon', "novel 3' splice site", 'intron retention', "novel 5' splice site", 'exon skipping', 'novel combination', 
 'novel intronic TSS','novel exonic TSS', 'mono-exon', 'novel junction', "5' fragment", "3' fragment", 'intronic']
-'''Controlled vocabulary for filtering by novel alternative splicing'''
+'''Controlled vocabulary for filtering by novel alternative splicing.'''
 
 # filtering functions for the transcriptome class
 def add_biases(self, genome_fn):
     #poor naming - refactor?
-    ''' Retrive QC metrics for the transcripts. 
+    ''' Retrieves QC metrics for the transcripts. 
 
     Calling this function populates transcript["biases"] information, which can be used do create filters. 
     In particular, the direct repeat length, the downstream adenosine content and information about noncanonical splice sites are fetched.
-    Additionaly genes are scaned for transcripts that are fully contained in other transcripts. 
+    Additionaly genes are scanned for transcripts that are fully contained in other transcripts. 
     
     :param geneome_fn: path to the genome in fastA format.'''
     with FastaFile(genome_fn) as genome_fh:
@@ -58,7 +58,7 @@ def add_biases(self, genome_fn):
     self.infos['biases']=True # flag to check that the function was called
 
 def add_filter(self, gene_filter=None,transcript_filter=None, ref_transcript_filter=None):
-    '''Defines and assignes filter flags, which can be used by iter_transcripts.
+    '''Defines and assigns filter flags, which can be used by iter_transcripts.
     
     Filters are defined as dict, where the key is a filter identifier, and the value is an expression, 
     which gets evaluated on the gene/transcript. For examples, see the default filter definitions 
@@ -87,7 +87,7 @@ def add_filter(self, gene_filter=None,transcript_filter=None, ref_transcript_fil
     self.infos['filter']={'gene_filter':gene_filter, 'transcript_filter':transcript_filter, 'ref_transcript_filter':ref_transcript_filter}
 
 def iter_genes(self, region=None,include=None, remove=None):
-    '''Iterate over the genes of a region, optionally applying filters.
+    '''Iterates over the genes of a region, optionally applying filters.
     
     :param region:'''
     if include or remove:
@@ -114,7 +114,7 @@ def iter_genes(self, region=None,include=None, remove=None):
                 yield g
 
 def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=None, max_coverage=None):
-    'iterate over the transcripts of a region, optionally applying filters'   
+    'Tterate over the transcripts of a region, optionally applying filters.'   
     
     if include or remove:
         valid_filters=ANNOTATION_VOCABULARY
@@ -145,7 +145,7 @@ def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=No
             yield g,i,tr
 
 def iter_ref_transcripts(self,region=None,include=None, remove=None):
-    'iterate over the transcripts of a region, optionally applying filters'   
+    'Iterates over the transcripts of a region, optionally applying filters.'   
     if include or remove:
         assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
         all_filter=self.infos['filter']

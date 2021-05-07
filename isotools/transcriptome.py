@@ -37,7 +37,7 @@ class Transcriptome:
     
     @classmethod
     def from_reference(cls, reference_file, file_format='auto',**kwargs) -> 'Transcriptome':
-        '''Creats a Transcriptome object by importing reference annotation.
+        '''Creates a Transcriptome object by importing reference annotation.
         
         :param reference_file: Reference file in gff3 format or pickle file to restore previously imported annotation
         :type reference_file: str
@@ -126,7 +126,7 @@ class Transcriptome:
     def __len__(self):
         '''Syntax: len(self)
         
-        :return: the number of genes'''
+        :return: The number of genes.'''
         return self.n_genes
     
     def __contains__(self, key):
@@ -186,7 +186,7 @@ class Transcriptome:
     
     @property
     def novel_genes(self)-> int: #this is used for id assignment
-        '''The total number of novel (not reference) genes'''
+        '''The total number of novel (not reference) genes.'''
         try:
             return self.infos['novel_counter']
         except KeyError:
@@ -195,7 +195,7 @@ class Transcriptome:
 
     @property
     def chromosomes(self) -> list:
-        '''The list of chromosome names'''
+        '''The list of chromosome names.'''
         return list(self.data)            
 
     def __str__(self):

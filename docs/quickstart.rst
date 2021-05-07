@@ -1,12 +1,12 @@
 Getting Started
 ===============
-Python module for Long Read Transcriptome Sequencing (LRTS) quality control and analysis.
+IsoTools is a python module for Long Read Transcriptome Sequencing (LRTS) analysis.
 
-Key Features:
+Key features:
 
 * Import of LRTS bam files (aligned full length transcripts).
 * Import of reference annotation in gff3/gtf format.
-* Computation quality control metrics.
+* Computation of quality control metrics.
 * Annotation and classification of novel transcripts with biologically motivated classification scheme.
 * Definition of alternative splicing events based on segment graphs.
 * Detection of differential alternative splicing between samples and groups of samples. 
@@ -41,9 +41,10 @@ This code block demonstrates the basic file import with isoseq. For a more compr
     isoseq.add_filter()
     isoseq.save('example_isotools.pkl')
 
-Citation
---------
-If you use isotools in your publication, please cite the following paper:
-
-IsoTools: the python toolbox for characterization,expression quantification, 
-and differential analysis of isoforms from long read sequencing experiments (in preparation)
+Citation and feedback
+---------------------
+* If you run into any issues, please use the github issues report feature. 
+* For feedback, please write me an email to lienhard@molgen.mpg.de.
+* If you use isotools in your publication, please cite the following paper:
+  IsoTools: the python toolbox for characterization,expression quantification, 
+  and differential analysis of isoforms from long read sequencing experiments (in preparation)

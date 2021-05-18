@@ -1,6 +1,6 @@
 # Change Log
 
-## [TODO] ideas and planed extensions or changes that are not yet implemented
+## [TODO] ideas, issues and planed extensions or changes that are not yet implemented
 * run_isotools console script is totally outdated and broken...
 * optimize add_biases for run after new samples have been added - should not recompute everything
 * extend flanking exons for MISO/rMATS export (not really needed, works fine as is)
@@ -22,7 +22,18 @@
     * con:
         * segment graph still needed for bubble definition - two graphs stored 
 
-## [0.1.2]
+
+## [0.1.4]
+* Fix: Issue with noncanonical splicing detection introduced in 0.1.3
+* Fix: crash with secondary alignments in bam files during import.
+* New feature: Report and skip if alignment outside chromosome (uLTRA issue)
+
+
+## [0.1.3]
+* Fix: improved performance of noncanonical splicing detection by avoiding redundant lookups. 
+
+
+## [0.1.2] - 2020-05-03
 
 * New: added function remove_short_read_coverage
 * New: added some missing documentation for gene plots

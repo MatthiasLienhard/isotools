@@ -34,7 +34,7 @@ ANNOTATION_VOCABULARY=['antisense', 'intergenic', 'genic genomic', 'novel exonic
 
 # filtering functions for the transcriptome class
 def add_biases(self, genome_fn):
-    #poor naming - refactor?
+    #poor naming - refactor? add_qc_metrics?
     ''' Retrieves QC metrics for the transcripts. 
 
     Calling this function populates transcript["biases"] information, which can be used do create filters. 
@@ -89,7 +89,9 @@ def add_filter(self, gene_filter=None,transcript_filter=None, ref_transcript_fil
 def iter_genes(self, region=None,include=None, remove=None):
     '''Iterates over the genes of a region, optionally applying filters.
     
-    :param region:'''
+    :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional. 
+    :param include: If provided, only genes featuring at least one of these flags are considered.
+    :param remove: If provided, genes featuring one of at least these flags are ignored.'''
     if include or remove:
         assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
         assert not include or all(f in self.infos['filter']['gene_filter'] for f in include), 'not all filters to include found'
@@ -114,7 +116,16 @@ def iter_genes(self, region=None,include=None, remove=None):
                 yield g
 
 def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=None, max_coverage=None):
-    'Tterate over the transcripts of a region, optionally applying filters.'   
+    '''Iterates over the transcripts of a region, optionally applying filters.
+    
+    :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional. 
+    :param include: If provided, only transcripts featuring at least one of these flags are considered.
+    :param remove: If provided, transcripts featuring one of at least these flags are ignored.
+    :param min_coverage: The minimum coverage threshold. Transcripts with less reads are ignored. 
+    :param max_coverage: The maximum coverage threshold. Transcripts with more reads are ignored. '''
+
+
+
     
     if include or remove:
         valid_filters=ANNOTATION_VOCABULARY
@@ -145,7 +156,11 @@ def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=No
             yield g,i,tr
 
 def iter_ref_transcripts(self,region=None,include=None, remove=None):
-    'Iterates over the transcripts of a region, optionally applying filters.'   
+    '''Iterates over the referemce transcripts of a region, optionally applying filters.
+    
+    :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional. 
+    :param include: If provided, only genes featuring at least one of these flags are considered.
+    :param remove: If provided, genes featuring one of at least these flags are ignored.'''
     if include or remove:
         assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
         all_filter=self.infos['filter']

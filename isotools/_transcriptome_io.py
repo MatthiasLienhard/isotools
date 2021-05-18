@@ -89,6 +89,7 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
     logger.info(f'adding sample {sample_name}')
     kwargs['name']=sample_name
     kwargs['file']=fn
+    n_secondary=0
     #genome_fh=FastaFile(genome_fn) if genome_fn is not None else None
     with AlignmentFile(fn, "rb") as align:        
         if add_chromosomes:
@@ -113,13 +114,19 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                 for read in align.fetch(chrom):
                     n_reads+=1
                     pbar.update(.5)
-                    if read.flag & 0x100:
+
+                    if read.flag & 0x4: #unmapped 
+                        continue
+                    if read.flag & 0x700: #not primary alignment or failed qual check or PCR duplicate
                         n_secondary+=1
                         continue # use only primary alignments
                     strand = '-' if read.is_reverse else '+'
                     exons = junctions_from_cigar(read.cigartuples,read.reference_start)
                     tags= dict(read.tags)
                     tr_range=(exons[0][0], exons[-1][1])
+                    if tr_range[0]<0 or tr_range[1]>chr_len:
+                        logger.error(f'Alignment outside chromosome range: transcript at {tr_range} for chromosome {chrom} of length {chr_len}')
+                        continue
                     if 'is' in tags:
                         cov=tags['is'] #number of actual reads supporting this transcript
                     else:
@@ -167,8 +174,10 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                     n_reads-=cov
                     pbar.update(cov/2)
                 self._add_novel_genes(novel,chrom)
-                pbar.update(n_reads/2) #the chimeric reads not processed here, add them to the progress
-    kwargs['total_reads']=total_reads
+                pbar.update(n_reads/2) #some reads are not processed here, add them to the progress: chimeric, unmapped, secondary alignment
+    if n_secondary>0:
+        logger.info('skipped {n_secondary} secondary alignments')
+    kwargs['total_reads']=total_reads    
     self.infos['sample_table']=self.sample_table.append(kwargs, ignore_index=True)
     #merge chimeric reads and assign gene names
     chimeric,non_chimeric=_check_chimeric(chimeric)
@@ -958,13 +967,22 @@ class IntervalArray:
         self.bin_size=bin_size
 
     def overlap(self,begin, end):
-        candidates={obj_id for idx in range(int(begin//self.bin_size), int(end//self.bin_size)+1) for obj_id in self.data[idx]}
+        try:
+            candidates={obj_id for idx in range(int(begin//self.bin_size), int(end//self.bin_size)+1) for obj_id in self.data[idx]}
+        except IndexError:
+            logger.error(f'requesting interval between {begin} and {end}, but array is allocated only until position {len(self.data)*self.bin_size}')
+            raise
         return (self.obj[obj_id] for obj_id in candidates if overlap((begin, end),self.obj[obj_id]) ) #this assumes object has range obj[0] to obj[1]
 
     def add(self,obj):
         self.obj[id(obj)]=obj
-        for idx in range(int(obj.begin//self.bin_size), int(obj.end//self.bin_size)+1):
-            self.data[idx].add(id(obj))
+        try:
+            for idx in range(int(obj.begin//self.bin_size), int(obj.end//self.bin_size)+1):
+                self.data[idx].add(id(obj))
+        except IndexError:
+            logger.error(f'adding interval from {obj.begin} to {obj.end}, but array is allocated only until position {len(self.data)*self.bin_size}')
+            raise
+      
     
     def __iter__(self):
         return (v for v in self.obj.values())

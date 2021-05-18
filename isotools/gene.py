@@ -9,7 +9,8 @@ import logging
 logger=logging.getLogger('isotools')
 
 def _eval_filter_fun(fun,name,args):
-    '''decorator for the filter functions''' #which are lambdas and thus cannot have normal decorators
+    '''Decorator for the filter functions, which are lambdas and thus cannot have normal decorators.
+    On exceptions the provided parameters are reported. This is helpfull for debugging.'''
     try:
         return fun(**args)
     except Exception as e:
@@ -38,6 +39,10 @@ class Gene(Interval):
     from ._gene_plots import sashimi_plot,gene_track,sashimi_plot_short_reads, sashimi_figure
 
     def short_reads(self,idx):
+        '''Returns the short read coverage profile for a short read sample. 
+        
+        :param idx: The index of the short read sample. '''
+
         try:
             return self.data['short_reads'][idx]
         except (KeyError, IndexError):
@@ -48,7 +53,13 @@ class Gene(Interval):
         return self.data['short_reads'][idx]
 
     def add_filter(self, gene_filter,transcript_filter,ref_transcript_filter):   
-        'Adds the filter flags.'
+        '''Adds the filter flags to the gene, transcripts and reference transcripts.
+        
+        This evaluates the provided expressions on the gene, transcripts and reference transcripts and adds the appropriate filter flags.
+
+        :param gene_filter: Flag expressions for the gene level information. 
+        :param transcript_filter: Flag expressions to be evalutated on the transcripts. 
+        :param ref_transcript_filter: Flag expressions to be evalutated on the reference transcripts. '''
         self.data['filter']=[name for name,fun in gene_filter.items() if  _eval_filter_fun(fun,name,self.data)]
         for tr in self.transcripts:
             tr['filter']=[name for name,fun in transcript_filter.items() if _eval_filter_fun(fun,name,tr)]
@@ -58,7 +69,7 @@ class Gene(Interval):
     def filter_transcripts(self, include, remove, anno_include, anno_remove, mincoverage=None, maxcoverage=None):
         ''' Iterator over the transcripts of the gene. 
         
-        Filtering implemented by passing lists of flags to the parameters:
+        Transcrips are specified by lists of flags submitted to the parameters.
         
         :param include: transcripts must have at least one of the flags
         :param remove: transcripts must not have one of the flags'''
@@ -74,20 +85,28 @@ class Gene(Interval):
                             yield i,tr 
 
     def filter_ref_transcripts(self, include, remove):
-        ''' Iterator over the refernce transcripts of the gene. Filtering implemented by passing lists of flags to the parameters:
-        include: transcripts must have at least one of the flags
-        remove: transcripts must not have one of the flags'''
+        ''' Iterator over the refernce transcripts of the gene. 
+        
+        Transcrips are specified by lists of flags submitted to the parameters.
+
+        :param include: Transcripts must have at least one of the flags.
+        :param remove: Transcripts must not have one of the flags.'''
         for i,tr in enumerate(self.ref_transcripts):
             if not include or any(f in tr['filter'] for f in include):
                 if not remove or all(f not in tr['filter'] for f in remove):
                     yield i,tr
         
-    def correct_fuzzy_junctions(self,tr, size, modify=True):
+    def correct_fuzzy_junctions(self,trid, size, modify=True):
         '''Corrects for splicing shifts.
         
-         (e.g. same difference compared to reference annotaiton at both donor and acceptor) presumably caused by ambigous alignments'''
+         This function looks for "shifted junctions", e.g. same difference compared to reference annotaiton at both donor and acceptor) 
+         presumably caused by ambigous alignments. In these cases the positions are adapted to the reference position (if modify is set). 
+         
+         :param trid: The index of the transcript to be checked.
+         :param size: The maximum shift to be corrected. 
+         :param modify: If set, the exon positions are corrected according to the reference.'''
 
-        exons=tr['exons']
+        exons=trid['exons']
         shifts=self.ref_segment_graph.fuzzy_junction(exons,size)
         if shifts and modify:
             for i,sh in shifts.items():
@@ -97,7 +116,8 @@ class Gene(Interval):
         return shifts
  
     def _to_gtf(self,trids, source='isoseq', use_gene_name=False):
-        'Creates the gtf lines of the gene as strings.'
+        '''Creates the gtf lines of the gene as strings.'''
+
         info={'gene_id':self.name if use_gene_name else self.id}
         lines=[]
         starts=[]
@@ -118,25 +138,39 @@ class Gene(Interval):
         return lines
  
     def add_noncanonical_splicing(self, genome_fh):
-        '''for all transcripts, add the the index and sequence of noncanonical (i.e. not GT-AG) splice sites
-        i.e. save the dinucleotides of donor and aceptor as XX-YY string in the transcript biases dicts
-        noncanonical splicing might indicate technical artifacts (template switching, missalignment, ...)'''
-        # TODO: this is highly redundant - should be done on graph
+        '''Add information on noncanonical splicing. 
+        
+        For all transcripts of the gene, scan for noncanonical (i.e. not GT-AG) splice sites.
+        If noncanonical splice sites are present, the corresponding intron index (in genomic orientation) and the sequence
+        i.e. the dinucleotides of donor and aceptor as XX-YY string are stored in the "noncannoncical_splicing" field of the transcript dicts.
+        True noncanonical splicing is rare, thus it might indicate technical artifacts (template switching, missalignment, ...)
+        
+        :param genome_fh: A file handle of the genome fasta file.'''
+        ss_seq={}
         for tr in self.transcripts:
-            pos=((tr['exons'][i][1], tr['exons'][i+1][0]-2) for i in range(len(tr['exons'])-1))
-            sj_seq=((genome_fh.fetch(self.chrom, p, p+2).upper() for p in i) for i in pos)
+            pos=[(tr['exons'][i][1], tr['exons'][i+1][0]-2) for i in range(len(tr['exons'])-1)]
+            new_ss_seq={   site:genome_fh.fetch(self.chrom, site , site+2).upper() for intron in pos for site in intron if site not in ss_seq  }
+            if new_ss_seq:
+                ss_seq.update(new_ss_seq)
+
             if self.strand=='+':
-                sj_seq=[d+a for d,a in sj_seq]
+                sj_seq=[ss_seq[d]+ss_seq[a] for d,a in pos]
             else:
-                sj_seq=[str(Seq(d+a).reverse_complement()) for d,a in sj_seq]
+                sj_seq=[str(Seq(ss_seq[d]+ss_seq[a]).reverse_complement()) for d,a in pos]
+            
             nc=[(i,seq) for i,seq in enumerate(sj_seq) if seq != 'GTAG']
             if nc:
                 tr['noncanonical_splicing']=nc
 
     def add_direct_repeat_len(self, genome_fh,delta=10):
-        '''Perform a global alignment of the sequences at splice sites and reports the score. 
+        '''Computes direct repeat length. 
         
-        Direct repeats indicate template switching'''
+        This function counts the number of consequtive equal bases at donor and acceptor sites of the splice junctions. 
+        This information is stored in the "direct_repeat_len" filed of the transcript dictionaries. 
+        Direct repeats longer than expected by chance indicate template switching.
+        
+        :param genome_fh: The file handle to the genome fasta.
+        :param delta: The maximum length of direct repeats that can be found. '''
         
         intron_seq={}
         score={}
@@ -163,7 +197,12 @@ class Gene(Interval):
     def add_threeprime_a_content(self, genome_fh, length=30):
         '''Adds the information of the genomic A content downstream the transcript. 
 
-        High values indicate genomic origin of the pacbio read'''
+        High values of genomic A content indicate internal priming and hence genomic origin of the LRTS read. 
+        This function populates the 'downstream_A_content' field of the transcript dictionaries.
+
+        :param geneome_fh: A file handle for the indexed genome fasta file. 
+        :param length: The length of the downstream region to be considered. 
+        '''
         a_content={}
         for tr in (t for tL in (self.transcripts, self.ref_transcripts) for t in tL):
             if self.strand=='+':
@@ -179,13 +218,20 @@ class Gene(Interval):
             tr['downstream_A_content']=a_content[pos]
 
     def add_fragments(self): 
-        'Checks for transcripts that are fully contained in other transcripts and save indices of these fragments.'
+        '''Checks for transcripts that are fully contained in other transcripts.
+        
+        Transcripts that are fully contained in other transcripts are potential truncations. 
+        This function populates the 'fragment' filed of the transcript dictionaries with the indices of the containing transcripts, 
+        and the exon ids that match the first and last exons.'''
         for trid, containers in self.segment_graph.find_fragments().items():
             self.transcripts[trid]['fragments']=containers # list of (containing transcript id, first 5' exons, first 3'exons)
        
         
     def coding_len(self, trid):
-        'Returns length of 5\'UTR, coding sequence and 3\'UTR.'
+        '''Returns length of 5\'UTR, coding sequence and 3\'UTR.
+        
+        :param trid: The transcript index for which the coding length is requested. '''
+
         try:            
             exons=self.transcripts[trid]['exons']
             cds=self.transcripts[trid]['CDS']
@@ -198,7 +244,7 @@ class Gene(Interval):
         return coding_len
 
     def get_infos(self,trid, keys):
-        'Returns the transcript information specified in "keys" as a list.'
+        '''Returns the transcript information specified in "keys" as a list.'''
         return [value for k in keys for value in self._get_info(trid,k)]
 
 
@@ -259,6 +305,9 @@ class Gene(Interval):
 
     @property
     def coverage(self):
+        '''Returns the transcript coverage.
+
+        Coverage is returned as a numpy array, with samples in columns and transcript isoforms in the rows.'''
         cov=self.data.get('coverage', None)
         if cov is not None:
             return cov
@@ -267,10 +316,15 @@ class Gene(Interval):
 
     @property
     def gene_coverage(self):
+        '''Returns the gene coverage.
+        
+        Total Coverage of the gene for each sample.'''
+
         return self.coverage.sum(1)
 
     @property
     def chrom(self):
+        '''Returns the genes chromosome.'''
         return self.data['chr']
         
     @property
@@ -279,20 +333,15 @@ class Gene(Interval):
     
     @property
     def region(self):
+        '''Returns the region of the gene as a string in the format "chr:start-end".'''
         try:
             return '{}:{}-{}'.format(self.chrom,self.start, self.end )
         except KeyError:
             raise
 
-    @property 
-    def illumina_coverage(self):
-        try:
-            return self.data['illumina']
-        except KeyError:
-            raise ValueError(f'no illumina coverage for gene {self.name} - add illumina bam files first')
-
     @property
     def id(self):
+        '''Returns the gene id'''
         try:
             return self.data['ID']    
         except KeyError:
@@ -301,6 +350,7 @@ class Gene(Interval):
             
     @property
     def name(self):
+        '''Returns the gene name'''
         try:
             return self.data['name']
         except KeyError:
@@ -308,18 +358,22 @@ class Gene(Interval):
     
     @property
     def is_annotated(self):
+        '''Returns "True" iff reference annotation is present for the gene.'''
         return 'reference' in self.data
     
     @property
     def is_expressed(self):
+        '''Returns "True" iff gene is covered by at least one long read in at least one sample.'''
         return bool(self.transcripts)
 
     @property
     def strand(self):
+        '''Returns the strand of the gene, e.g. "+" or "-"'''
         return self.data['strand']
 
     @property
     def transcripts(self):
+        '''Returns the list of transcripts of the gene, as found by LRTS.'''
         try:
             return self.data['transcripts']
         except KeyError:
@@ -327,6 +381,7 @@ class Gene(Interval):
 
     @property
     def ref_transcripts(self):
+        '''Returns the list of reference transcripts of the gene.'''
         try:
             return self.data['reference']['transcripts']
         except KeyError:
@@ -334,14 +389,18 @@ class Gene(Interval):
 
     @property
     def n_transcripts(self):
+        '''Returns number of transcripts of the gene, as found by LRTS.'''
         return len(self.transcripts)
     
     @property
     def n_ref_transcripts(self):
+        '''Returns number of reference transcripts of the gene.'''
         return len(self.ref_transcripts)
 
     @property
     def ref_segment_graph(self): #raises key error if not self.is_annotated
+        '''Returns the segment graph of the reference transcripts for the gene'''
+
         assert self.is_annotated, "reference segment graph requested on novel gene"
         if 'segment_graph' not in self.data['reference'] or self.data['reference']['segment_graph'] is None:
             exons=[tr['exons'] for tr in self.ref_transcripts]
@@ -350,6 +409,7 @@ class Gene(Interval):
         
     @property
     def segment_graph(self):
+        '''Returns the segment graph of the LRTS transcripts for the gene'''
         if 'segment_graph' not in self.data or self.data['segment_graph'] is None:        
             exons=[tr['exons'] for tr in self.transcripts]
             self.data['segment_graph']=SegmentGraph(exons, self.strand)
@@ -358,7 +418,7 @@ class Gene(Interval):
     def __copy__(self):
         return Gene(self.start, self.end, self.data, self._transcriptome)        
 
-    def __deepcopy__(self, memo):
+    def __deepcopy__(self, memo): #does not copy _transcriptome!
         return Gene(self.start, self.end, copy.deepcopy(self.data, memo), self._transcriptome)
 
     def __reduce__(self):

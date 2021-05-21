@@ -27,6 +27,10 @@
 * Fix: Issue with noncanonical splicing detection introduced in 0.1.3
 * Fix: crash with secondary alignments in bam files during import.
 * New feature: Report and skip if alignment outside chromosome (uLTRA issue)
+* Fix: import of chimeric reads (secondary alignments have no SA tag)
+* Fix: Transcripts per sample in sample table: During import count only used transcripts, do not count chimeric transcripts twice. 
+* Change: sample_table reports chimeric_reads and nonchimeric_reads (instead of total_reads)
+* Change: import of long read bam is more verbose in info mode
 
 
 ## [0.1.3]

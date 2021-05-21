@@ -86,10 +86,9 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
     :param kwargs: Additional keyword arugments are added to the sample table.'''
     #todo: one alignment may contain several samples - this is not supported at the moment
     assert sample_name not in self.samples, 'sample %s is already in the data set.' % sample_name
-    logger.info(f'adding sample {sample_name}')
+    logger.info(f'adding sample {sample_name} from file {fn}')
     kwargs['name']=sample_name
     kwargs['file']=fn
-    n_secondary=0
     #genome_fh=FastaFile(genome_fn) if genome_fn is not None else None
     with AlignmentFile(fn, "rb") as align:        
         if add_chromosomes:
@@ -99,7 +98,7 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
         stats = align.get_index_statistics()
         # try catch if sam/ no index /not pacbio?
         total_alignments = sum([s.mapped for s in stats if s.contig in chromosomes])
-        total_reads=0
+        total_nc_reads=unmapped=n_secondary=0
         chimeric=dict()
         with tqdm(total=total_alignments, unit='reads') as pbar:
             
@@ -116,13 +115,14 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                     pbar.update(.5)
 
                     if read.flag & 0x4: #unmapped 
+                        unmapped+=1
                         continue
                     if read.flag & 0x700: #not primary alignment or failed qual check or PCR duplicate
                         n_secondary+=1
                         continue # use only primary alignments
+                    tags= dict(read.tags)
                     strand = '-' if read.is_reverse else '+'
                     exons = junctions_from_cigar(read.cigartuples,read.reference_start)
-                    tags= dict(read.tags)
                     tr_range=(exons[0][0], exons[-1][1])
                     if tr_range[0]<0 or tr_range[1]>chr_len:
                         logger.error(f'Alignment outside chromosome range: transcript at {tr_range} for chromosome {chrom} of length {chr_len}')
@@ -131,12 +131,12 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                         cov=tags['is'] #number of actual reads supporting this transcript
                     else:
                         cov=1
-                    total_reads+=cov
-                    if 'SA' in tags:#part of a chimeric alignment
+                    
+                    if 'SA' in tags or read.flag & 0x800:#part of a chimeric alignment
                         if chimeric_mincov>0:
                             chimeric.setdefault(read.query_name, [{sample_name:cov},[]])[1].append([chrom,strand,exons, aligned_part(read.cigartuples, read.is_reverse),None]) 
                         continue
-
+                    total_nc_reads+=cov
                     for tr_interval in transcripts.overlap(*tr_range):    #did we see this transcript already?
                         if tr_interval.data['strand'] != strand:
                             continue
@@ -176,12 +176,16 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                 self._add_novel_genes(novel,chrom)
                 pbar.update(n_reads/2) #some reads are not processed here, add them to the progress: chimeric, unmapped, secondary alignment
     if n_secondary>0:
-        logger.info('skipped {n_secondary} secondary alignments')
-    kwargs['total_reads']=total_reads    
-    self.infos['sample_table']=self.sample_table.append(kwargs, ignore_index=True)
+        logger.info('skipped {n_secondary} secondary alignments (0x100), alignment that failed quality check (0x200) or PCR duplicates (0x400)')
+    if unmapped>0:
+        logger.debug('ignored {unmapped} unaligned reads')
     #merge chimeric reads and assign gene names
     chimeric,non_chimeric=_check_chimeric(chimeric)
-    self._add_chimeric(chimeric, chimeric_mincov)
+    n_chimeric=self._add_chimeric(chimeric, chimeric_mincov)
+    if len(chimeric)-n_chimeric>0:
+        logger.info(f'ignoring {len(chimeric)-n_chimeric} chimeric alignments with less than {chimeric_mincov} reads' )
+    total_nc_reads+=len(non_chimeric) # this adds long introns
+    logger.info(f'imported {total_nc_reads} nonchimeric reads and {n_chimeric} reads with coverage of at least {chimeric_mincov}' )
     novel=dict()
     for cov,((chrom,strand,exons,parts, _),) in non_chimeric:
         tr={'exons':exons, 'coverage':cov,'strand':strand,'chr':chrom, 'long_intron_chimeric':[parts] }
@@ -194,13 +198,20 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
     for g in self:
         if 'coverage' in g.data and g.data['coverage'] is not None: # still valid splice graphs no new transcripts - add a row of zeros to coveage
             g._set_coverage()
+    kwargs['chimeric_reads']=n_chimeric
+    kwargs['nonchimeric_reads']=total_nc_reads    
+    self.infos['sample_table']=self.sample_table.append(kwargs, ignore_index=True)
+
 
 def _add_chimeric(self,new_chimeric, min_cov):
     ''' add new chimeric transcripts to transcriptome, if covered by > min_cov reads
-    '''        
-    for new_bp,new_chim_list in new_chimeric.items():        
-        if sum(sum(cov.values()) for cov,_ in new_chim_list)<min_cov:
+    '''    
+    total=0    
+    for new_bp,new_chim_list in new_chimeric.items():   
+        n_reads=sum(sum(cov.values()) for cov,_ in new_chim_list)     
+        if n_reads<min_cov:
             continue
+        total+=n_reads
         for new_chim in new_chim_list:
             #todo: check special cases (long intron, one part only), discard invalid (large overlaps, large gaps)
             #find equivalent chimeric reads
@@ -229,7 +240,7 @@ def _add_chimeric(self,new_chimeric, min_cov):
                         if g is not None:
                             part[4]=g.name
                             g.data.setdefault('chimeric',{})[new_bp]=self.chimeric[new_bp]
-                
+    return total            
 
 def _breakpoints(chimeric):
     ''' gets chimeric aligment as a list and returns list of breakpoints.

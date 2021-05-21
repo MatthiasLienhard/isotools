@@ -154,7 +154,7 @@ class Transcriptome:
         try:
            return self.infos['sample_table']
         except KeyError:
-            return pd.DataFrame(columns=['name','file','group'])
+            return pd.DataFrame(columns=['name','file','group','nonchimeric_reads', 'chimeric_reads'])
     
     @property
     def samples(self) -> list:

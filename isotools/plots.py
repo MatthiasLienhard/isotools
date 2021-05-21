@@ -277,7 +277,7 @@ def plot_saturation(isoseq=None,ax=None,cov_th=2,expr_th=[.5,1,2,5,10],x_range=(
     axparams.setdefault('ylabel',(f'probaility of sampling at least {cov_th} transcript{"s" if cov_th>1 else ""}'))
     axparams.setdefault('ylim',(0,1))
     axparams.setdefault('xlabel','number of reads [million]')
-    n_reads=isoseq.sample_table.set_index('name')['total_reads'] if isoseq is not None else {}
+    n_reads=isoseq.sample_table.set_index('name')['nonchimeric_reads'] if isoseq is not None else {}
     for tpm_th in expr_th:
         chance = nbinom.cdf(k-cov_th, n=cov_th, p=tpm_th*1e-6) # 0 to k-cov_th failiors
         ax.plot(k/1e6, chance, label=f'{tpm_th} TPM')

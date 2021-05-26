@@ -36,7 +36,7 @@ This code block demonstrates the basic file import with isoseq. For a more compr
     groups={'sample1':'control', 'sample2':'treatment'}
     for sa,bam in isoseq_bam_fn.items():
         isoseq.add_sample_from_bam(bam, sample_name=sa, group=groups[sa]) 
-    isoseq.add_biases('genome.fa')
+    isoseq.add_qc_metrics('genome.fa')
     isoseq.make_index()
     isoseq.add_filter()
     isoseq.save('example_isotools.pkl')

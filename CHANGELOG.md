@@ -31,7 +31,9 @@
 * Fix: Transcripts per sample in sample table: During import count only used transcripts, do not count chimeric transcripts twice. 
 * Change: sample_table reports chimeric_reads and nonchimeric_reads (instead of total_reads)
 * Change: import of long read bam is more verbose in info mode
-
+* Fix: Bug: import of chained chimeric alignments overwrites read coverage when merging to existing transcript
+* Fix: remove_samples actually removes the samples from the sample_table
+* Change: refractored add_biases to add_qc_metrics
 
 ## [0.1.3]
 * Fix: improved performance of noncanonical splicing detection by avoiding redundant lookups. 

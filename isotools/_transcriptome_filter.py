@@ -33,8 +33,7 @@ ANNOTATION_VOCABULARY=['antisense', 'intergenic', 'genic genomic', 'novel exonic
 '''Controlled vocabulary for filtering by novel alternative splicing.'''
 
 # filtering functions for the transcriptome class
-def add_biases(self, genome_fn):
-    #poor naming - refactor? add_qc_metrics?
+def add_qc_metrics(self, genome_fn):
     ''' Retrieves QC metrics for the transcripts. 
 
     Calling this function populates transcript["biases"] information, which can be used do create filters. 
@@ -92,24 +91,35 @@ def iter_genes(self, region=None,include=None, remove=None):
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional. 
     :param include: If provided, only genes featuring at least one of these flags are considered.
     :param remove: If provided, genes featuring one of at least these flags are ignored.'''
+
     if include or remove:
         assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
         assert not include or all(f in self.infos['filter']['gene_filter'] for f in include), 'not all filters to include found'
         assert not remove or all(f in self.infos['filter']['gene_filter'] for f in remove), 'not all filters to remove found'
     if region is None:
         genes=self
-    elif region in self.data:
-        genes=self.data[region] #provide chromosome
-    else:
-        try:
-            chrom,start,end=region
-        except ValueError:
-            chrom, pos=region.split(':')
-            start, end=[int(v) for v in pos.split('-')]
-        except:
-            raise ValueError('incorrect region {} - specify as string "chr:start-end" or tuple ("chr",start,end)'.format(region))
-        finally:
-            genes=self.data[chrom][start:end]
+    elif isinstance(region, str):
+        if region in self.data:
+            genes=self.data[region] #provide chromosome
+        else:
+            try:
+                chrom, pos=region.split(':')
+                if chrom in self.data:
+                    start, end=[int(v) for v in pos.split('-')]
+                else:
+                    raise ValueError('specified chromosome {} not found'.format(chrom))
+            except:
+                raise ValueError('incorrect region {} - specify as string "chr:start-end" or tuple ("chr",start,end)'.format(region))
+            if chrom in self.data:
+                genes=self.data[chrom][int(start):int(end)]
+            else:
+                raise ValueError('specified chromosome {} not found'.format(chrom))
+    elif isinstance(region,tuple):
+        chrom,start,end=region
+        if chrom in self.data:
+            genes=self.data[chrom][int(start):int(end)]
+        else:
+            raise ValueError('specified chromosome {} not found'.format(chrom))
     for g in genes:
         if not include or any(f in include for f in g.data['filter']):
             if not remove or all(f not in remove for f in g.data['filter']):        
@@ -117,16 +127,11 @@ def iter_genes(self, region=None,include=None, remove=None):
 
 def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=None, max_coverage=None):
     '''Iterates over the transcripts of a region, optionally applying filters.
-    
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional. 
     :param include: If provided, only transcripts featuring at least one of these flags are considered.
     :param remove: If provided, transcripts featuring one of at least these flags are ignored.
     :param min_coverage: The minimum coverage threshold. Transcripts with less reads are ignored. 
     :param max_coverage: The maximum coverage threshold. Transcripts with more reads are ignored. '''
-
-
-
-    
     if include or remove:
         valid_filters=ANNOTATION_VOCABULARY
         if isinstance(include, str):

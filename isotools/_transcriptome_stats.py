@@ -116,8 +116,8 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
     :param min_alt_fraction: Minimum fraction of reads supporting the alternative (for both groups combined). 
     :param min_n: The minimum coverage of the event for an individual sample to be considered for the min_sa filter.
     :param min_sa: The fraction of samples within each group that must be covered by at least min_n reads.
-    :param test: The name of one of the implemented statistical tests ('betabinom_lr','binom_lr','proportions').
-    '''
+    :param test: The name of one of the implemented statistical tests ('betabinom_lr','binom_lr','proportions').'''
+    
     assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
     #find groups and sample indices
     if isinstance(groups, dict):

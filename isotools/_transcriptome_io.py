@@ -61,8 +61,9 @@ def remove_samples(self, sample_names):
     if isinstance(sample_names, str):
         sample_names=[sample_names]
     assert all(s in self.samples for s in sample_names), 'Did not find all samples to remvoe in dataset'
-    rm_idx=self.sample_table.index[self.sample_table.name.isin(sample_names)]
-    self.sample_table.drop(index=rm_idx)
+    sample_table=self.sample_table
+    rm_idx=sample_table.index[sample_table.name.isin(sample_names)]
+    sample_table=sample_table.drop(index=sample_table.index[rm_idx])
     for g in self:
         remove_tr=[]
         for i,tr in enumerate(g.transcripts):
@@ -84,6 +85,7 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
     :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added. 
     :param chimeric_mincov: Minimum number of reads for a chimeric transcript to be considered
     :param kwargs: Additional keyword arugments are added to the sample table.'''
+
     #todo: one alignment may contain several samples - this is not supported at the moment
     assert sample_name not in self.samples, 'sample %s is already in the data set.' % sample_name
     logger.info(f'adding sample {sample_name} from file {fn}')
@@ -99,10 +101,12 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
         # try catch if sam/ no index /not pacbio?
         total_alignments = sum([s.mapped for s in stats if s.contig in chromosomes])
         total_nc_reads=unmapped=n_secondary=0
+        total_nc_reads_chr={}
         chimeric=dict()
         with tqdm(total=total_alignments, unit='reads') as pbar:
             
             for chrom in chromosomes: #todo: potential issue here - secondary/chimeric alignments to non listed chromosomes are ignored
+                total_nc_reads_chr[chrom]=0
                 pbar.set_postfix(chr=chrom)
                 #transcripts=IntervalTree()
                 #novel=IntervalTree()
@@ -113,7 +117,6 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                 for read in align.fetch(chrom):
                     n_reads+=1
                     pbar.update(.5)
-
                     if read.flag & 0x4: #unmapped 
                         unmapped+=1
                         continue
@@ -133,17 +136,19 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                         cov=1
                     
                     if 'SA' in tags or read.flag & 0x800:#part of a chimeric alignment
-                        if chimeric_mincov>0:
-                            chimeric.setdefault(read.query_name, [{sample_name:cov},[]])[1].append([chrom,strand,exons, aligned_part(read.cigartuples, read.is_reverse),None]) 
+                        if chimeric_mincov>0: #otherwise ignore chimeric read
+                            chimeric.setdefault(read.query_name,  [cov,[]])
+                            assert chimeric[read.query_name][0]==cov , 'error in bam: parts of chimeric alignment for read {} has different coverage information {} != {}'.format(read.query_name, chimeric[read.query_name][0],cov)
+                            chimeric[read.query_name][1].append([chrom,strand,exons, aligned_part(read.cigartuples, read.is_reverse),None]) 
                         continue
-                    total_nc_reads+=cov
+                    total_nc_reads_chr[chrom]+=cov
                     for tr_interval in transcripts.overlap(*tr_range):    #did we see this transcript already?
                         if tr_interval.data['strand'] != strand:
                             continue
                         if splice_identical(exons, tr_interval.data['exons']):   
                             tr=tr_interval.data                             
                             tr.setdefault('range',{}).setdefault(tr_range,0)
-                            tr['range'][tr_range]+=cov                               
+                            tr['range'][tr_range]+=cov                           
                             break
                     else:
                         tr={'exons':exons,'range':{tr_range:cov}, 'strand':strand}
@@ -162,38 +167,50 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                         tr['clipping'][sample_name][clip]+=cov
                 for tr_interval in transcripts:
                     tr=tr_interval.data
-                    tr_ranges=tr.pop('range')
-                    tr['exons'][0][0]=min(r[0] for r in tr_ranges) #todo - instead of extreams take the median?
+                    #tr_ranges=tr.pop('range')
+                    #todo: keep track of actual tss/pas
+                    tr_ranges=tr['range']
+                    tr['exons'][0][0]=min(r[0] for r in tr_ranges) #todo - instead of extremas take the median?
                     tr['exons'][-1][1]=max(r[1] for r in tr_ranges)  
-                    tr.setdefault('coverage',{}).setdefault(sample_name,0)
+                    tr.setdefault(sample_name,0)
                     cov=sum(tr_ranges.values())
-                    tr['coverage'][sample_name]+=cov
+                    tr['coverage']=tr.get('coverage',0)+cov
+                    
                     gene=self._add_sample_transcript(tr,chrom, sample_name, fuzzy_junction) 
                     if gene is None:
                         novel.add(tr_interval)  
                     n_reads-=cov
                     pbar.update(cov/2)
-                self._add_novel_genes(novel,chrom)
+                self._add_novel_genes(novel,chrom, sample_name)
+                
+
                 pbar.update(n_reads/2) #some reads are not processed here, add them to the progress: chimeric, unmapped, secondary alignment
+                #logger.debug(f'imported {total_nc_reads_chr[chrom]} nonchimeric reads for {chrom}')
+                total_nc_reads+=total_nc_reads_chr[chrom]
     if n_secondary>0:
-        logger.info('skipped {n_secondary} secondary alignments (0x100), alignment that failed quality check (0x200) or PCR duplicates (0x400)')
+        logger.info(f'skipped {n_secondary} secondary alignments (0x100), alignment that failed quality check (0x200) or PCR duplicates (0x400)')
     if unmapped>0:
-        logger.debug('ignored {unmapped} unaligned reads')
+        logger.info(f'ignored {unmapped} reads marked as unaligned')
     #merge chimeric reads and assign gene names
     chimeric,non_chimeric=_check_chimeric(chimeric)
-    n_chimeric=self._add_chimeric(chimeric, chimeric_mincov)
+    chained_msg=''
+    if len(non_chimeric):
+        logger.info(f'imported {len(non_chimeric)} chimeric alignments that can be chained to single nonchimeric transcripts (long intron alingment split)' )
+        chained_msg=f' (including  {sum(nc[0] for nc in non_chimeric) } chained chimeric alignments)'
+    n_chimeric=self._add_chimeric(chimeric, chimeric_mincov, sample_name)
     if len(chimeric)-n_chimeric>0:
         logger.info(f'ignoring {len(chimeric)-n_chimeric} chimeric alignments with less than {chimeric_mincov} reads' )
-    total_nc_reads+=len(non_chimeric) # this adds long introns
-    logger.info(f'imported {total_nc_reads} nonchimeric reads and {n_chimeric} reads with coverage of at least {chimeric_mincov}' )
+    total_nc_reads+=sum(nc[0] for nc in non_chimeric) # this adds long introns
+    chimeric_msg='' if not n_chimeric else f' and {n_chimeric} chimeric reads with coverage of at least {chimeric_mincov}'
+    logger.info(f'imported {total_nc_reads} nonchimeric reads{chained_msg}{chimeric_msg}.' )
     novel=dict()
-    for cov,((chrom,strand,exons,parts, _),) in non_chimeric:
-        tr={'exons':exons, 'coverage':cov,'strand':strand,'chr':chrom, 'long_intron_chimeric':[parts] }
+    for (cov,(chrom,strand,exons,_,_), introns) in non_chimeric:
+        tr={'exons':exons, 'coverage':cov,'strand':strand,'chr':chrom, 'long_intron_chimeric':{sample_name:{introns:cov} }}
         gene=self._add_sample_transcript(tr,chrom, sample_name, fuzzy_junction) #tr is not updated
         if gene is None:
             novel.setdefault(chrom,[]).append(tr)
     for chrom in novel:
-        self._add_novel_genes(IntervalTree(Interval(tr['exons'][0][0],tr['exons'][-1][1], tr) for tr in novel[chrom]),chrom)
+        self._add_novel_genes(IntervalTree(Interval(tr['exons'][0][0],tr['exons'][-1][1], tr) for tr in novel[chrom]),chrom, sample_name)
     #self.infos.setdefault('chimeric',{})[sample_name]=chimeric #save all chimeric reads (for debugging)
     for g in self:
         if 'coverage' in g.data and g.data['coverage'] is not None: # still valid splice graphs no new transcripts - add a row of zeros to coveage
@@ -201,24 +218,26 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
     kwargs['chimeric_reads']=n_chimeric
     kwargs['nonchimeric_reads']=total_nc_reads    
     self.infos['sample_table']=self.sample_table.append(kwargs, ignore_index=True)
+    return total_nc_reads_chr
 
 
-def _add_chimeric(self,new_chimeric, min_cov):
+def _add_chimeric(self,new_chimeric, min_cov, sa):
     ''' add new chimeric transcripts to transcriptome, if covered by > min_cov reads
     '''    
     total=0    
     for new_bp,new_chim_list in new_chimeric.items():   
-        n_reads=sum(sum(cov.values()) for cov,_ in new_chim_list)     
+        n_reads=sum(cov for cov,_ in new_chim_list)     
         if n_reads<min_cov:
             continue
         total+=n_reads
         for new_chim in new_chim_list:
-            #todo: check special cases (long intron, one part only), discard invalid (large overlaps, large gaps)
+            #should not contain: long intron, one part only (filtered by _check_chimeric), 
+            #todo: discard invalid (large overlaps, large gaps)
             #find equivalent chimeric reads
             for found in self.chimeric.setdefault(new_bp,[]):
                 if all(splice_identical(ch1[2], ch2[2]) for ch1,ch2 in zip(new_chim[1],found[1])):
-                    for sa in new_chim[0]:#add coverage
-                        found[0][sa]=found[0].get(sa,0)+new_chim[0][sa]
+                    #for sa in new_chim[0]:#add coverage
+                    found[0][sa]=found[0].get(sa,0)+new_chim[0]
                     #adjust start
                     if found[1][0][1]=='+':#strand of first part
                         found[1][0][2][0][0]=min(found[1][0][2][0][0],new_chim[1][0][2][0][0])
@@ -231,6 +250,7 @@ def _add_chimeric(self,new_chimeric, min_cov):
                         found[1][-1][2][-1][0]=min(found[1][-1][2][-1][0],new_chim[1][-1][2][-1][0])
                     break
             else: #not seen
+                new_chim[0]={sa:new_chim[0]}
                 self.chimeric[new_bp].append(new_chim)
                 for part in new_chim[1]:
                     if part[0] in self.data:
@@ -256,34 +276,55 @@ def _check_chimeric(chimeric):
         2) compute breakpoints
         3) check if the chimeric read is actually a long introns - return list as nonchimeric
         4) sort into dict by breakpoint - return dict as chimeric
+        
+        chimeric[0] is the coverage
+        chimeric[1] is a list of tuples: chrom,strand,exons,[aligned start, end] '''
 
-    '''
     chimeric_dict={}
     non_chimeric=list()
-    for new_chim in chimeric.values():    
+    skip=0
+    for new_chim in chimeric.values(): 
+        if len(new_chim[1])<2:
+            skip+=new_chim[0]
+            continue
+        merged_introns=[]
+
+        #1) sort    
         new_chim[1].sort(key=lambda x: x[3][1]) #sort by end of aligned part
+        #2) compute breakpoints
         bpts=_breakpoints(new_chim[1])#compute breakpoints
+        #3) check if long intron alignment spleits
         merge=[i for i,bp in enumerate(bpts) if
                 bp[0]==bp[3] and #same chr
                 bp[1]==bp[4] and #same strand,
                 0 < (bp[5]-bp[2] if bp[1]=='+' else bp[2]-bp[5]) < 1e6] # max 1mb gap -> long intron
                 #todo: also check that the aligned parts have not big gap or overlap
-        
-        if merge:
-            for i in merge:
+        if merge:   
+            new_chim[1]         
+            intron=0
+            for i,part in enumerate(new_chim[1]):
+                intron+=len(new_chim[1][i][2])
+                if i in merge:
+                    merged_introns.append(intron)
+
+            for i in merge: # part i is merged into part i+1
                 if new_chim[1][i][1]=='+':      #merge into next part      
                     new_chim[1][i+1][2]=new_chim[1][i][2]+new_chim[1][i+1][2]
                     new_chim[1][i+1][3]=new_chim[1][i][3]+new_chim[1][i+1][3]        
                 else:
                     new_chim[1][i+1][2]=new_chim[1][i+1][2]+new_chim[1][i][2]
                     new_chim[1][i+1][3]=new_chim[1][i+1][3]+new_chim[1][i][3]
+            # remove redundant parts (i)
             new_chim[1]=[part for i,part in enumerate(new_chim[1]) if i not in merge]           
             bpts=tuple(bp for i,bp in enumerate(bpts)  if i not in merge)
+        #sort into chimeric (e.g. still breakpoints left) and nonchimeric (only one part and no breakpoints left)
         if bpts:
             chimeric_dict.setdefault(bpts,[]).append(new_chim)
         else:
-            assert len(new_chim[1])==1
-            non_chimeric.append(new_chim)
+            assert len(new_chim[1])==1   
+            non_chimeric.append([new_chim[0],new_chim[1][0], tuple(merged_introns)])#coverage and "long introns"
+    if skip:
+        logger.warning(f'ignored {skip} chimeric alignments with only one part aligned to specified chromosomes.')
     return chimeric_dict, non_chimeric
 
 
@@ -294,13 +335,19 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
         return None
     genes_ol =self.data[chrom][tr['exons'][0][0]: tr['exons'][-1][1]]
     genes_ol_strand= [g for g in genes_ol if g.strand==tr['strand'] ] 
-    #check if transcript is already there (e.g. from other sample):
+    #check if transcript is already there (e.g. from other sample, or in case of long intron chimeric alignments also same sample):
     for g in genes_ol_strand:
         for tr2 in g.transcripts:
             if splice_identical(tr2['exons'], tr['exons']):
-                tr2['coverage'][sample_name]=tr['coverage'][sample_name]
+                try:
+                    tr2['coverage'][sample_name]=tr2['coverage'].get(sample_name,0)+tr['coverage']
+                except:
+                    logger.error(f'error when adding {tr} to {tr2} ({g.name})')
+                    raise
                 if 'long_intron_chimeric' in tr:
-                    tr2.setdefault('long_intron_chimeric',[]).append(tr['long_intron_chimeric'])
+                    for introns in tr['long_intron_chimeric'][sample_name]:
+                        tr2.setdefault('long_intron_chimeric',{}).setdefault(sample_name, {}).setdefault(introns,0)
+                        tr2['long_intron_chimeric'][sample_name][introns]+=tr['long_intron_chimeric'][sample_name][introns]
                 #todo:check other infos that might get lost here
                 return g
     #check if gene is already there (e.g. from same or other sample):
@@ -314,7 +361,11 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
                 for tr2 in g.transcripts:#check if correction made it identical to existing
                     if splice_identical(tr2['exons'], tr['exons']):
                         tr2.setdefault('fuzzy_junction', {}).setdefault(sample_name,[]).append(shifts) #keep the info, mainly for testing/statistics    
-                        tr2['coverage'][sample_name]=tr2['coverage'].get(sample_name,0)+tr['coverage'][sample_name]
+                        tr2['coverage'][sample_name]=tr2['coverage'].get(sample_name,0)+tr['coverage']
+                        if 'long_intron_chimeric' in tr:
+                            for introns in tr['long_intron_chimeric'][sample_name]:
+                                tr2.setdefault('long_intron_chimeric',{}).setdefault(sample_name, {}).setdefault(introns,0)
+                                tr2['long_intron_chimeric'][sample_name][introns]+=tr['long_intron_chimeric'][sample_name][introns]
                         return g 
             tr['annotation']=g.ref_segment_graph.get_alternative_splicing(tr['exons'],  additional)
             if not_covered:
@@ -331,6 +382,7 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
                 g=new_gene
         #if additional:
         #    tr['annotation']=(4,tr['annotation'][1]) #fusion transcripts... todo: overrule tr['annotation']
+        tr['coverage']={sample_name:tr['coverage']}
         g.data.setdefault('transcripts',[]).append(tr) 
         g.data['segment_graph']=None #gets recomputed on next request      
         g.data['coverage'] =None 
@@ -348,7 +400,7 @@ def _get_novel_type(genes_ol, genes_ol_strand, ref_ol):
     else:
         return {'intergenic':[]} 
 
-def _add_novel_genes( self,novel,chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix='PB_novel_'):
+def _add_novel_genes( self,novel,chrom,sa, spj_iou_th=0, reg_iou_th=.5, gene_prefix='PB_novel_'):
     '"novel" is a tree of transcript intervals (not Gene objects) ,e.g. from one chromosome, that do not overlap any annotated or unanntoated gene'
     n_novel=self.novel_genes
     idx={id(tr):i for i,tr in enumerate(novel)}
@@ -374,9 +426,13 @@ def _add_novel_genes( self,novel,chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix
         strand=trL[0]['strand']
         start=min(tr['exons'][0][0] for tr in trL)
         end=max(tr['exons'][-1][1] for tr in trL)
+        for tr in trL:
+            tr['coverage']={sa:tr['coverage']}
         n_novel+=1
         new_data={'chr':chrom, 'ID':f'{gene_prefix}{n_novel:05d}', 'strand':strand, 'transcripts':trL}
         self.data.setdefault(chrom,IntervalTree()).add(Gene(start,end,new_data,self ))
+        logging.debug(f'merging transcripts of novel gene {n_novel}: {trL}')
+
     self.infos['novel_counter']=n_novel
 
 def _find_splice_sites(genes_ol, exons):
@@ -994,6 +1050,8 @@ class IntervalArray:
             logger.error(f'adding interval from {obj.begin} to {obj.end}, but array is allocated only until position {len(self.data)*self.bin_size}')
             raise
       
-    
+    def __len__(self):
+        return(len(self.obj))
+
     def __iter__(self):
         return (v for v in self.obj.values())

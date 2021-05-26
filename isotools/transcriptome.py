@@ -217,7 +217,7 @@ class Transcriptome:
     from ._transcriptome_io import gene_table, transcript_table,chimeric_table,write_gtf,export_alternative_splicing
 
     ### filtering functionality and iterators
-    from ._transcriptome_filter import add_biases, add_filter,iter_genes,iter_transcripts,iter_ref_transcripts
+    from ._transcriptome_filter import add_qc_metrics, add_filter,iter_genes,iter_transcripts,iter_ref_transcripts
 
     ### statistic: differential splicing, alternative_splicing_events
     from ._transcriptome_stats import altsplice_test,splice_dependence_test, alternative_splicing_events

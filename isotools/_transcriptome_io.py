@@ -1,11 +1,12 @@
 import numpy as np
+from numpy.lib.function_base import percentile, quantile
 import pandas as pd
 from intervaltree import IntervalTree, Interval
 from pysam import TabixFile, AlignmentFile, FastaFile
 from tqdm import tqdm
 from contextlib import ExitStack
 from .short_read import Coverage
-from ._utils import junctions_from_cigar,splice_identical,is_same_gene, overlap, pairwise
+from ._utils import junctions_from_cigar,splice_identical,is_same_gene, overlap, pairwise,cigar_string2tuples
 from .gene import Gene
 from .decorators import deprecated, debug,experimental
 import copy
@@ -76,7 +77,7 @@ def remove_samples(self, sample_names):
         g.data['segment_graph']=None # gets recomputed on next request
         g.data['coverage']=None            
         
-def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=True,chimeric_mincov=2,  **kwargs):
+def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=True,chimeric_mincov=2,use_satag=False,   **kwargs):
     '''Imports expressed transcripts from bam and adds it to the 'Transcriptome' object.
     
     :param fn: The bam filename of the new sample
@@ -84,6 +85,8 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
     :param fuzzy_junction: maximum size for fuzzy junction correction
     :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added. 
     :param chimeric_mincov: Minimum number of reads for a chimeric transcript to be considered
+    :param use_satag: If True, import secondary alignments (of chimeric alignments) from the SA tag. 
+        This should only be specified if the secondary alignment is not reported in a seperate bam entry. 
     :param kwargs: Additional keyword arugments are added to the sample table.'''
 
     #todo: one alignment may contain several samples - this is not supported at the moment
@@ -140,6 +143,12 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                             chimeric.setdefault(read.query_name,  [cov,[]])
                             assert chimeric[read.query_name][0]==cov , 'error in bam: parts of chimeric alignment for read {} has different coverage information {} != {}'.format(read.query_name, chimeric[read.query_name][0],cov)
                             chimeric[read.query_name][1].append([chrom,strand,exons, aligned_part(read.cigartuples, read.is_reverse),None]) 
+                            if use_satag and 'SA' in tags:
+                                for snd_align in (sa.split(',') for sa in tags['SA'].split(';') if sa):            
+                                    snd_cigartuples=cigar_string2tuples (snd_align[3])
+                                    snd_exons=junctions_from_cigar(snd_cigartuples,int(snd_align[1]))
+                                    chimeric[read.query_name][1].append([snd_align[0],snd_align[2],snd_exons, aligned_part(snd_cigartuples, snd_align[2]=='-'),None]) 
+                                    #logging.debug(chimeric[read.query_name])
                         continue
                     total_nc_reads_chr[chrom]+=cov
                     for tr_interval in transcripts.overlap(*tr_range):    #did we see this transcript already?
@@ -167,14 +176,20 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
                         tr['clipping'][sample_name][clip]+=cov
                 for tr_interval in transcripts:
                     tr=tr_interval.data
-                    #tr_ranges=tr.pop('range')
-                    #todo: keep track of actual tss/pas
-                    tr_ranges=tr['range']
-                    tr['exons'][0][0]=min(r[0] for r in tr_ranges) #todo - instead of extremas take the median?
-                    tr['exons'][-1][1]=max(r[1] for r in tr_ranges)  
-                    tr.setdefault(sample_name,0)
+                    tr_ranges=tr.pop('range')
+                    #tr_ranges=tr['range']
+                    starts,ends={},{}
+                    for r,cov in tr_ranges.items():
+                        starts[r[0]]=starts.get(r[0],0)+cov
+                        ends[r[1]]=ends.get(r[1],0)+cov
+                    tr['TSS']=starts if tr['strand']=='+' else ends
+                    tr['PAS']=starts if tr['strand']=='-' else ends
+                    #tr['exons'][0][0]=min(r[0] for r in tr_ranges) #todo - instead of extremas take the median?
+                    #tr['exons'][-1][1]=max(r[1] for r in tr_ranges)  
+                    tr['exons'][0][0]=get_quantile(starts.items(),0.5)
+                    tr['exons'][-1][1]=get_quantile(ends.items(),0.5)
                     cov=sum(tr_ranges.values())
-                    tr['coverage']=tr.get('coverage',0)+cov
+                    tr['coverage']=cov
                     
                     gene=self._add_sample_transcript(tr,chrom, sample_name, fuzzy_junction) 
                     if gene is None:
@@ -205,7 +220,12 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
     logger.info(f'imported {total_nc_reads} nonchimeric reads{chained_msg}{chimeric_msg}.' )
     novel=dict()
     for (cov,(chrom,strand,exons,_,_), introns) in non_chimeric:
-        tr={'exons':exons, 'coverage':cov,'strand':strand,'chr':chrom, 'long_intron_chimeric':{sample_name:{introns:cov} }}
+        try:
+            tss,pas=(exons[0][0],exons[-1][1]) if strand =='+' else (exons[-1][1],exons[0][0])
+            tr={'exons':exons, 'coverage':cov,'TSS':{tss:cov},'PAS':{pas:cov},'strand':strand,'chr':chrom, 'long_intron_chimeric':{sample_name:{introns:cov} }}
+        except:
+            logger.error(f'\n\n-->{(exons[0][0],exons[-1][1]) if strand =="+" else (exons[-1][1],exons[0][0])}\n\n')
+            raise
         gene=self._add_sample_transcript(tr,chrom, sample_name, fuzzy_junction) #tr is not updated
         if gene is None:
             novel.setdefault(chrom,[]).append(tr)
@@ -261,6 +281,18 @@ def _add_chimeric(self,new_chimeric, min_cov, sa):
                             part[4]=g.name
                             g.data.setdefault('chimeric',{})[new_bp]=self.chimeric[new_bp]
     return total            
+
+def get_quantile(pos, percentile=.5):
+    '''provided a list of (positions,coverage) pairs, return the median position'''
+    total=sum(cov for _,cov in pos)
+    n=0
+    for p,cov in sorted(pos, key=lambda x: x[0]):
+        n+=cov
+        if n>=total*percentile:
+            return(p)
+    raise ValueError(f'cannot find {percentile} percentile of {pos}')
+
+
 
 def _breakpoints(chimeric):
     ''' gets chimeric aligment as a list and returns list of breakpoints.
@@ -339,17 +371,9 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
     for g in genes_ol_strand:
         for tr2 in g.transcripts:
             if splice_identical(tr2['exons'], tr['exons']):
-                try:
-                    tr2['coverage'][sample_name]=tr2['coverage'].get(sample_name,0)+tr['coverage']
-                except:
-                    logger.error(f'error when adding {tr} to {tr2} ({g.name})')
-                    raise
-                if 'long_intron_chimeric' in tr:
-                    for introns in tr['long_intron_chimeric'][sample_name]:
-                        tr2.setdefault('long_intron_chimeric',{}).setdefault(sample_name, {}).setdefault(introns,0)
-                        tr2['long_intron_chimeric'][sample_name][introns]+=tr['long_intron_chimeric'][sample_name][introns]
-                #todo:check other infos that might get lost here
+                _combine_transcripts(tr2, tr,sample_name)
                 return g
+    #we have a new transcript (not seen in this or other samples)
     #check if gene is already there (e.g. from same or other sample):
     #g,_=_get_intersects(genes_ol, tr['exons'])
     g,ref_ol,additional,not_covered=_find_splice_sites(genes_ol_strand, tr['exons'])
@@ -361,11 +385,7 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
                 for tr2 in g.transcripts:#check if correction made it identical to existing
                     if splice_identical(tr2['exons'], tr['exons']):
                         tr2.setdefault('fuzzy_junction', {}).setdefault(sample_name,[]).append(shifts) #keep the info, mainly for testing/statistics    
-                        tr2['coverage'][sample_name]=tr2['coverage'].get(sample_name,0)+tr['coverage']
-                        if 'long_intron_chimeric' in tr:
-                            for introns in tr['long_intron_chimeric'][sample_name]:
-                                tr2.setdefault('long_intron_chimeric',{}).setdefault(sample_name, {}).setdefault(introns,0)
-                                tr2['long_intron_chimeric'][sample_name][introns]+=tr['long_intron_chimeric'][sample_name][introns]
+                        _combine_transcripts(tr2,tr,sample_name)
                         return g 
             tr['annotation']=g.ref_segment_graph.get_alternative_splicing(tr['exons'],  additional)
             if not_covered:
@@ -382,13 +402,42 @@ def _add_sample_transcript(self,tr,chrom,sample_name,fuzzy_junction=5):
                 g=new_gene
         #if additional:
         #    tr['annotation']=(4,tr['annotation'][1]) #fusion transcripts... todo: overrule tr['annotation']
-        tr['coverage']={sample_name:tr['coverage']}
+        #this transcript is seen for the first time. Asign sample specific attributes to sample name
+        for what in 'coverage','TSS','PAS': 
+            tr[what]={sample_name:tr[what]}        
         g.data.setdefault('transcripts',[]).append(tr) 
         g.data['segment_graph']=None #gets recomputed on next request      
         g.data['coverage'] =None 
     else:
+        #new novel gene
         tr['annotation']  =(4,_get_novel_type(genes_ol, genes_ol_strand, ref_ol))
     return g
+
+def _combine_transcripts(established, new_tr, sample_name):
+    'merge new_tr into splice identical established transcript'
+    try:
+        established['coverage'][sample_name]=established['coverage'].get(sample_name,0)+new_tr['coverage']
+        established['TSS'].setdefault(sample_name,{})
+        established['PAS'].setdefault(sample_name,{})
+        #TODO: check other infos that might get lost here
+                
+        for side in 'TSS','PAS':
+            for pos,cov in new_tr[side].items():
+                established[side].setdefault(sample_name,{})[pos]=established[side].get(sample_name,{}).get(pos,0)+cov
+        #find median tss and pas
+        starts=[v for sa in established['TSS'] for v in established['TSS'][sa].items()]
+        ends=[v for sa in established['PAS'] for v in established['PAS'][sa].items()]
+        if established['strand']=='-':
+            starts, ends=ends,starts
+        established['exons'][0][0]=get_quantile(starts,0.5)
+        established['exons'][-1][1]=get_quantile(ends,0.5)
+        if 'long_intron_chimeric' in new_tr:
+            for introns in new_tr['long_intron_chimeric'][sample_name]:
+                established.setdefault('long_intron_chimeric',{}).setdefault(sample_name, {}).setdefault(introns,0)
+                established['long_intron_chimeric'][sample_name][introns]+=new_tr['long_intron_chimeric'][sample_name][introns]
+    except:
+        logger.error(f'error when merging {new_tr} into {established}')
+        raise
 
 def _get_novel_type(genes_ol, genes_ol_strand, ref_ol):
     if len(ref_ol):
@@ -426,8 +475,12 @@ def _add_novel_genes( self,novel,chrom,sa, spj_iou_th=0, reg_iou_th=.5, gene_pre
         strand=trL[0]['strand']
         start=min(tr['exons'][0][0] for tr in trL)
         end=max(tr['exons'][-1][1] for tr in trL)
+        if start>=end:
+            logger.error(f'start>=end ({start}>={end}): {trL}')
         for tr in trL:
             tr['coverage']={sa:tr['coverage']}
+            tr['TSS']={sa:tr['TSS']}
+            tr['PAS']={sa:tr['PAS']}
         n_novel+=1
         new_data={'chr':chrom, 'ID':f'{gene_prefix}{n_novel:05d}', 'strand':strand, 'transcripts':trL}
         self.data.setdefault(chrom,IntervalTree()).add(Gene(start,end,new_data,self ))

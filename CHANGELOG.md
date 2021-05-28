@@ -1,6 +1,6 @@
 # Change Log
 
-## [TODO] ideas, issues and planed extensions or changes that are not yet implemented
+## ideas, issues and planed extensions or changes that are not yet implemented
 * run_isotools console script is totally outdated and broken...
 * optimize add_biases for run after new samples have been added - should not recompute everything
 * extend flanking exons for MISO/rMATS export (not really needed, works fine as is)
@@ -22,6 +22,8 @@
     * con:
         * segment graph still needed for bubble definition - two graphs stored 
 
+## [0.1.5]
+* todo: avoid the need for add_filters - construct and evaluate lambdas during filtering
 
 ## [0.1.4]
 * Fix: Issue with noncanonical splicing detection introduced in 0.1.3
@@ -33,7 +35,11 @@
 * Change: import of long read bam is more verbose in info mode
 * Fix: Bug: import of chained chimeric alignments overwrites read coverage when merging to existing transcript
 * Fix: remove_samples actually removes the samples from the sample_table
-* Change: refractored add_biases to add_qc_metrics
+* Change: refactored add_biases to add_qc_metrics
+* fix: property of transcripts included {sample_name:0}
+* save the TSS and PAS positions
+* New: use_satag parameter for add_sample_from_bam 
+* Change: use median TSS/PAS (of all reads with same splice pattern) as transcript start/end (e.g. exons[0][0]/exons[-1][1])
 
 ## [0.1.3]
 * Fix: improved performance of noncanonical splicing detection by avoiding redundant lookups. 

@@ -1,11 +1,18 @@
 import numpy as np
 import itertools
+import re
+cigar='MIDNSHP=XB'
+cigar_lup={c:i for i,c in enumerate(cigar)}
 
 def pairwise(iterable): #e.g. usefull for enumerating introns
     "s -> (s0,s1), (s1,s2), (s2, s3), ..."
     a, b = itertools.tee(iterable)
     next(b, None)
     return zip(a, b) 
+
+def cigar_string2tuples(cigarstring):
+    res = re.findall(f'(\d+)([{cigar}]+)', cigarstring)
+    return tuple((cigar_lup[c],int(n)) for n,c in res)
 
 def junctions_from_cigar(cigartuples, offset):
     'returns the exon positions'

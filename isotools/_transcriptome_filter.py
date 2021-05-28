@@ -67,9 +67,9 @@ def add_filter(self, gene_filter=None,transcript_filter=None, ref_transcript_fil
     :param transcript_filter: dict of gene filters. If omitted the default reference filters apply.
     :param ref_transcript_filter: dict of gene filters. If omitted the default transcript filters apply.
     '''
-    gene_attributes={k for g in self for k in g.data.keys() }
-    tr_attributes={k for g in self for tr in g.transcripts for k in tr.keys() }
-    ref_tr_attributes={k for g in self if g.is_annotated for tr in g.ref_transcripts for k in tr.keys() }
+    gene_attributes={k for g in self for k in g.data.keys() if k.isidentifier()}
+    tr_attributes={k for g in self for tr in g.transcripts for k in tr.keys() if k.isidentifier()}
+    ref_tr_attributes={k for g in self if g.is_annotated for tr in g.ref_transcripts for k in tr.keys() if k.isidentifier()}
     tr_attributes.add('filter')
     ref_tr_attributes.add('filter')
     if  gene_filter is None:

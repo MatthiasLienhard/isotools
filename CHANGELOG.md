@@ -25,6 +25,7 @@
 ## [0.1.5]
 * todo: avoid the need for add_filters - construct and evaluate lambdas during filtering
 
+
 ## [0.1.4]
 * Fix: Issue with noncanonical splicing detection introduced in 0.1.3
 * Fix: crash with secondary alignments in bam files during import.
@@ -40,6 +41,7 @@
 * save the TSS and PAS positions
 * New: use_satag parameter for add_sample_from_bam 
 * Change: use median TSS/PAS (of all reads with same splice pattern) as transcript start/end (e.g. exons[0][0]/exons[-1][1])
+* Fix: Novel exon skipping annotation now finds all exonic regions that are skipped.
 
 ## [0.1.3]
 * Fix: improved performance of noncanonical splicing detection by avoiding redundant lookups. 

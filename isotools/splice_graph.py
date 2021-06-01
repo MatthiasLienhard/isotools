@@ -211,7 +211,7 @@ class SegmentGraph():
         if alternative is not None and len(alternative)>0: # a list of tuples with (1) gene names and (2) junction numbers covered by other genes (e.g. readthrough fusion)
             category=4
             fusion_exons={int((i+1)/2) for j in alternative for i in j[1]}
-            altsplice={'readthrough fusion':alternative}
+            altsplice={'readthrough fusion':alternative} #other novel events are only found in the primary reference transcript
         else:
             tr=self.search_transcript(exons)
             if tr:
@@ -241,7 +241,7 @@ class SegmentGraph():
 
         for i,ex1 in enumerate(exons):                               
             ex2=None if i+1==len(exons) else exons[i+1]            
-            if i not in fusion_exons:
+            if i not in fusion_exons: #exon belongs to other gene (read through fusion)
                 exon_altsplice,exon_cat=self._check_exon(j1,j2,i==0,is_reverse,ex1, ex2) #finds intron retention (NIC), novel exons, novel splice sites,  novel pas/tss  (NNC)
                 category=max(exon_cat,category)
                 for k,v in exon_altsplice.items(): 
@@ -349,30 +349,45 @@ class SegmentGraph():
         ''' check a junction in the segment graph
 
         * check presence e1-e2 junction in ref (-> if not exon skipping or novel junction)
-        * AND find j3 and j4: first node overlapping e2 and last node overlapping e2'''
+        * AND find j3 and j4: first node overlapping e2  and last node overlapping e2
+        * more specifically:
+            * j3: first node ending after e2 start, or len(self)
+            * j4: last node starting before e2 end (assuming there is such a node)'''
         altsplice={}
-        introns=[]
-        for j3 in range(j2+1,len(self)): 
-            if j3 in self[j3-1].suc.values() and self[j3-1][1]<self[j3][0]: #"real" junction 
-                introns.append([self[j3-1][1],self[j3][0]])
-            if self[j3][1] > e2[0]:
-                break
-        else:
-            j3=len(self) #e2 does not overlap splice graph
-        if j3<len(self) and j3 not in self[j2].suc.values(): #direkt e1-e2 junction not present
-            if set.intersection(set(self[j2].suc.keys()),set(self[j3].pre.keys())) and len(introns)>1: #path from e1 to e2 present
-                #assert len(introns)>1,'logical issue - exon skipping should involve two introns'
-                for i1,i2 in pairwise(introns):
-                    altsplice.setdefault('exon skipping',[]).append([i1[1], i2[0]])
+        j3=next((j for j in range(j2+1,len(self)) if self[j][1]>e2[0]),len(self))
+        #for j3 in range(j2+1,len(self)): 
+        #    if j3 in self[j3-1].suc.values() and self[j3-1][1]<self[j3][0]: #"real" junction 
+        #        introns.append([self[j3-1][1],self[j3][0]]) 
+        #    if self[j3][1] > e2[0]: 
+        #        break
+        #else:
+        #    j3=len(self) #e2 does not overlap splice graph
+        if j3<len(self) and j3 not in self[j2].suc.values() and self[j3].start< e2[1]: #direkt e1-e2 junction not present
+            paths=set.intersection(set(self[j2].suc.keys()),set(self[j3].pre.keys()))
+            if paths: #path from e1 to e2 present
+                #intron_reg=[i for i in range(j2,j3) if self[i].end<self[i+1].start and any(self[i].suc[p]==i+1 for p in paths)]
+                exons=[]
+                e_start=e[0]
+                e_end=e[1]
+                for j in range(j2+1,j3+1):
+                    if e_start and self[j].start>self[j-1].end:     #intron befor j
+                        exons.append([e_start, e_end])
+                        e_start=0
+                    if paths.intersection(self[j].suc):             #exon at j
+                        if e_start==0: #new exon start
+                            e_start= self[j].start 
+                        e_end=self[j].end
+                    elif e_start:                                   #intron at j
+                        exons.append([e_start, e_end])                            
+                        e_start=0  
+                    
+                altsplice.setdefault('exon skipping',[]).extend(exons[1:])
             elif e[1]==self[j2].end and e2[0]==self[j3].start: #e1-e2 path is not present, but splice sites are
                 altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter
         
         logger.debug(f'check junction {e[1]} - {e2[0]} resulted in {altsplice}')
         #find last node overlapping e2
-        try:
-            j4=next(j-1 for j in range(j3,len(self)) if self[j].start >= e2[1])
-        except StopIteration:
-            j4=len(self)-1
+        j4=next((j-1 for j in range(j3,len(self)) if self[j].start >= e2[1]),len(self)-1)
         
         return j3,j4, altsplice
             

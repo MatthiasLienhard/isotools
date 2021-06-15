@@ -635,7 +635,7 @@ def collapse_immune_genes(self, maxgap=300000):
     
 
 
-def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=['gene']):
+def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=['gene'], short_exon_th=25):
     '''import transcripts from gff file (e.g. for a reference)
     returns a dict interval trees for the genes'''
     #file_size=os.path.getsize(fn) # does not help for eat 
@@ -717,6 +717,10 @@ def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=
                 if t_id in cds_start and t_id in cds_stop:
                     tr_info['CDS']=(cds_start[t_id], cds_stop[t_id]) if cds_start[t_id]< cds_stop[t_id] else (cds_stop[t_id],cds_start[t_id])
                 gene.data['reference'].setdefault('transcripts', []).append(tr_info)
+            if short_exon_th is not None:
+                short_exons={e for tr in gene.data['reference']['transcripts'] for e in tr['exons'] if e[1]-e[0]<= short_exon_th }
+                if short_exons:
+                    gene.data['reference']['short_exons']=short_exons
     return genes
 
 ## io utility functions

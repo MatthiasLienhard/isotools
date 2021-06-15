@@ -198,7 +198,7 @@ def sashimi_plot_short_reads(self,samples=None, title='short read coverage', ax=
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x,pos=None: f'{x:,.0f}'))
     return ax
 
-def sashimi_plot(self,samples=None, title='Long read sashimi plot', ax=None,junctions_of_interest=None, x_range=None,
+def sashimi_plot(self,samples=None, title='Long read sashimi plot', ax=None,junctions_of_interest=None, x_range=None,select_transcripts=None,
                     jparams=None, exon_color='green', min_cov_th=.001,high_cov_th=.05, text_width=.02, 
                     arc_type='both',text_height=1):
     
@@ -212,6 +212,8 @@ def sashimi_plot(self,samples=None, title='Long read sashimi plot', ax=None,junc
     :param ax: Specify the axis.
     :param junctions_of_interest: List of int pairs to define junctions of interest (which are highlighed in the plots)
     :param x_range: Genomic positions to specify the x range of the plot.
+    :param select_transcripts: A list of transcript numbers from which the coverage is to be depicted..
+        If obmitted, all transcripts are displayed.
     :param jparams: Define the apperance of junctions, depending on their priority. 
         A list with three dicts, defining parameters for low coverage junctions, high coverage junctions, and junctions of interest. 
         For default values, see isotools._gene_plots.DEFAULT_JPARAMS
@@ -236,6 +238,14 @@ def sashimi_plot(self,samples=None, title='Long read sashimi plot', ax=None,junc
     if x_range is None:
         x_range=self.start-100, self.end+100
     node_matrix=sg.get_node_matrix()
+    if select_transcripts:
+        try:
+            _=iter(select_transcripts) #maybe only one transcript provided?
+        except TypeError:
+            select_transcripts=select_transcripts,
+        mask=np.ones(node_matrix.shape[0], np.bool)
+        mask[select_transcripts]=False
+        node_matrix[mask,:]=0
     boxes=[(node[0], node[1], self.coverage[np.ix_(sidx,node_matrix[:,i])].sum()) for i,node in enumerate(sg)]
     
     if text_width<1:
@@ -250,6 +260,8 @@ def sashimi_plot(self,samples=None, title='Long read sashimi plot', ax=None,junc
     for i,(_,ee, _, suc) in enumerate(sg):
         weights={}
         for tr,next_i in suc.items():
+            if select_transcripts is not None and tr not in select_transcripts:
+                continue
             weights.setdefault(next_i,0)
             weights[next_i]+=self.coverage[np.ix_(sidx,[tr])].sum()
         arcs_new=[(ee,boxes[i][2],sg[next_i][0],boxes[next_i][2],w) for next_i, w in weights.items() if sg[next_i][0]>ee and w>0]
@@ -312,7 +324,7 @@ def sashimi_plot(self,samples=None, title='Long read sashimi plot', ax=None,junc
     #ax.set_xscale(1e-6, 'linear')
     ax.set_title(title)
 
-def gene_track(self, ax=None,title=None, reference=True, drop_transcripts=None, select_transcripts=None,label_exon_numbers=True,label_transcripts=True,label_fontsize=10, color='blue',x_range=None):
+def gene_track(self, ax=None,title=None, reference=True, select_transcripts=None,label_exon_numbers=True,label_transcripts=True,label_fontsize=10, color='blue',x_range=None, draw_other_genes=False):
     '''Draws a gene track of the gene.
     
     The gene track depicts the exon structure of a gene, like in a genome browser. 
@@ -322,34 +334,53 @@ def gene_track(self, ax=None,title=None, reference=True, drop_transcripts=None, 
     :param ax: Specify the axis.
     :param title: Specify the title of the axis. 
     :param reference: If True, depict the reference transcripts, else transcripts are defined by long read sequencing. 
-    :param drop_transcripts: A list of transcript numbers that should not be depicted.
-    :param select_transcripts: A list of transcript numbers to be depicted.
+    :param select_transcripts: A list of transcript numbers to be depicted. 
+        If draw_other_genes is set, select_transcripts should be a dict with gene_name as keys and lists with transcript numbers as values. 
+        If obmitted, all transcripts are displayed.
     :param label_exon_numbers: Draw exon numbers within exons. 
     :param label_transcripts: Draw transcript name below transcripts.
     :param label_fontsize: Specify the font sice for the labels. 
     :param color: Specify the color for the exons. 
-    :param x_range: Genomic positions to specify the x range of the plot.'''
+    :param x_range: Genomic positions to specify the x range of the plot.
+    :param draw_other_genes: If set to True, transcripts from other genes overlapping the depicted region are also displayed.
+        You can also provide a list of gene names/ids, to specify which other genes should be included.'''
 
-    if select_transcripts is not None:
-        drop_transcripts=[i for i in range(self.n_ref_transcripts if reference else self.n_transcripts) if i not in select_transcripts]
+    if select_transcripts is None:
+        select_transcripts={}
+    elif isinstance(select_transcripts,list):
+        select_transcripts={self.name:select_transcripts}
+    else:
+        try:
+            _=iter(select_transcripts)
+        except TypeError:
+            select_transcripts={self.name:[select_transcripts]}
     contrast='white' if np.mean(plt_col.to_rgb(color))<.5 else 'black'
     if ax is None:
         _,ax = plt.subplots(1)    
     if x_range is None:
         x_range=(self.start-100, self.end+100)
     blocked=[]
-    if drop_transcripts is None:
-        drop_transcripts=[]
-    if reference: #select transcripts and sort by start
-        transcript_list=sorted([(tr_nr,tr) for tr_nr,tr in enumerate(self.ref_transcripts) if tr_nr not in drop_transcripts],key=lambda x:x[1]['exons'][0][0]) #sort by start position
+    if draw_other_genes:
+        if isinstance(draw_other_genes, list):
+            ol_genes={self._transcriptome[g] for g in draw_other_genes}.add(self)
+        else:
+            ol_genes=self._transcriptome.data[self.chrom].overlap(*x_range)
     else:
-        transcript_list=sorted([(tr_nr,tr) for tr_nr,tr in enumerate(self.transcripts)     if tr_nr not in drop_transcripts],key=lambda x:x[1]['exons'][0][0]) 
-    for tr_nr,tr in transcript_list:
+        ol_genes={self}
+    transcript_list=[]
+    for g in ol_genes:
+        select_tr=select_transcripts.get(g.name,None)
+        if reference: #select transcripts and sort by start
+            transcript_list.extend([(g,tr_nr,tr) for tr_nr,tr in enumerate(g.ref_transcripts) if select_tr is None or tr_nr in select_tr])
+        else:
+            transcript_list.extend([(g,tr_nr,tr) for tr_nr,tr in enumerate(g.transcripts)     if select_tr is None or tr_nr in select_tr])
+    transcript_list.sort(key=lambda x:x[2]['exons'][0][0]) #sort by start position
+    for g,tr_nr,tr in transcript_list:
         tr_start, tr_end=tr['exons'][0][0],tr['exons'][-1][1]
         if (tr_end < x_range[0] or tr_start > x_range[1]): #transcript does not overlap x_range
             continue
-        trid='> ' if self.strand=='+' else '< ' # indicate the strand like in ensembl browser
-        trid+=tr['transcript_name'] if 'transcript_name' in tr else f'{self.id}_{tr_nr}'
+        trid='> ' if g.strand=='+' else '< ' # indicate the strand like in ensembl browser
+        trid+=tr['transcript_name'] if 'transcript_name' in tr else f'{g.name}_{tr_nr}'
         
         # find next line that is not blocked
         try:
@@ -380,12 +411,12 @@ def gene_track(self, ax=None,title=None, reference=True, drop_transcripts=None, 
                 rect = patches.Rectangle((st,i+.125),(end-st),.25,linewidth=1,edgecolor=color,facecolor=color)
                 ax.add_patch(rect)  
             if label_exon_numbers and (end>x_range[0] and st<x_range[1]):
-                enr=j+1 if self.strand=='+' else len(tr['exons'])-j
+                enr=j+1 if g.strand=='+' else len(tr['exons'])-j
                 pos=(max(st, x_range[0])+min(end, x_range[1]))/2
                 ax.text(pos,i+.25,enr,ha='center', va='center', color=contrast, fontsize=label_fontsize, clip_on=True)    #bbox=dict(boxstyle='round', facecolor='wheat',edgecolor=None,  alpha=0.5)
         i+=1
     if title is None:
-        title=self.name
+        title=f'{self.name} ({self.region})'
     ax.set_title(title)
     ax.set(frame_on=False)   
     ax.get_yaxis().set_visible(False)

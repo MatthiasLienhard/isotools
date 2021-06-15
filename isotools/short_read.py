@@ -27,15 +27,19 @@ class Coverage:
             obj._cov=None
             obj._junctions=None
             obj.bam_fn=bam_fn
-            obj.reg=(g.chrom, g.start,g.end)
+            start=min(g.start,*[tr['exons'][0][0] for tr in g.transcripts])
+            end=max(g.end,*[tr['exons'][-1][1] for tr in g.transcripts])
+            obj.reg=(g.chrom, start,end)
             return obj
 
     @classmethod
     def from_alignment(cls, align_fh,g):
         'load the coverage from bam file'
-        cov,junctions=cls._import_coverage(align_fh,(g.chrom, g.start,g.end))
+        start=min(g.start,*[tr['exons'][0][0] for tr in g.transcripts])
+        end=max(g.end,*[tr['exons'][-1][1] for tr in g.transcripts])
+        cov,junctions=cls._import_coverage(align_fh,(g.chrom, start,end))
         obj = cls.__new__(cls)  
-        obj.__init__(cov,junctions, g.start )
+        obj.__init__(cov,junctions, start )
         return obj
 
     @classmethod #this is slow - called only if coverage is requested

@@ -223,6 +223,7 @@ class Gene(Interval):
         Transcripts that are fully contained in other transcripts are potential truncations. 
         This function populates the 'fragment' filed of the transcript dictionaries with the indices of the containing transcripts, 
         and the exon ids that match the first and last exons.'''
+            
         for trid, containers in self.segment_graph.find_fragments().items():
             self.transcripts[trid]['fragments']=containers # list of (containing transcript id, first 5' exons, first 3'exons)
        

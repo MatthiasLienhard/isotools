@@ -21,7 +21,7 @@ DEFAULT_TRANSCRIPT_FILTER={
         'RTTS':'noncanonical_splicing and novel_splice_sites and any(2*i in novel_splice_sites[0] and 2*i+1 in novel_splice_sites[0] for i,_ in noncanonical_splicing)',
         'NONCANONICAL_SPLICING':'noncanonical_splicing',
         'NOVEL_TRANSCRIPT':'annotation is None or annotation[0]>0',
-        'FRAGMENT':'fragments',
+        'FRAGMENT':'fragments and any("novel exonic " in a or "fragment" in a for a in annotation[1])' ,
         'NOVEL':'not annotation or annotation[0]==4',
         'UNSPLICED':'len(exons)==1',
         'MULTIEXON':'len(exons)>1'}

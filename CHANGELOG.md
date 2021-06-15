@@ -42,6 +42,8 @@
 * New: use_satag parameter for add_sample_from_bam 
 * Change: use median TSS/PAS (of all reads with same splice pattern) as transcript start/end (e.g. exons[0][0]/exons[-1][1])
 * Fix: Novel exon skipping annotation now finds all exonic regions that are skipped.
+* New: select_transcripts in sashimi_plots and draw_other_genes in gene_track. Dropped remove_transcript parameter.
+* New: add info about short (default:<=25 bases) reference exons (Gene.data['reference']['short_exons'])
 
 ## [0.1.3]
 * Fix: improved performance of noncanonical splicing detection by avoiding redundant lookups. 

@@ -221,12 +221,9 @@ class SegmentGraph():
             fusion_exons=set()
 
         is_reverse=self.strand=='-'
-        j1=next(j for j,n in enumerate(self) if n.end > exons[0][0])
+        j1=next((j for j,n in enumerate(self) if n.end > exons[0][0]))
         #j1: index of first segment ending after exon start (i.e. first overlapping segment)        
-        try:
-            j2=next(j-1 for j in range(j1,len(self)) if self[j].start >= exons[0][1])
-        except StopIteration:
-            j2=len(self)-1
+        j2=next((j-1 for j in range(j1,len(self)) if self[j].start >= exons[0][1]),len(self)-1)
         #j2: index of last segment starting befor exon end (i.e. last overlapping segment)   
      
         #check truncation at begining (e.g. low position)
@@ -249,7 +246,7 @@ class SegmentGraph():
                 # find j2: index of last segment starting befor exon2 end (i.e. last overlapping  segment)
                 if ex2 is not None:
                     if j2+1<len(self):
-                        j1,j2, junction_altsplice=self._check_junction(j2,ex1,ex2) #finds exon skipping and novel junction (NIC)
+                        j1,j2, junction_altsplice=self._check_junction(j1,j2,ex1,ex2) #finds exon skipping and novel junction (NIC)
                         if junction_altsplice and i+1 not in fusion_exons:
                             category=max(2,category)
                             for k,v in junction_altsplice.items():
@@ -319,7 +316,7 @@ class SegmentGraph():
                     dist=min((self[j][1]-e[1] for j in range(j1, j2+1)),key=lambda x:abs(x))  #the distance to next junction
                     altsplice.setdefault(f"novel {kind}' splice site",[]).append((e[1],dist))
                     category=3
-                elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1,j2+1)): #exon end is intronic in ref
+                elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1,j2+1)): #exon end is intronic in ref & not overlapping tss
                     site='TSS' if is_reverse else 'PAS'
                     altsplice.setdefault(f'novel exonic {site}',[]).append((self[j2][1],e[1]))
                     category=max(2,category)    
@@ -345,50 +342,58 @@ class SegmentGraph():
         logger.debug(f'check exon {e} resulted in {altsplice}')
         return altsplice, category
 
-    def _check_junction(self, j2, e, e2):
+    def _check_junction(self, j1,j2, e, e2):
         ''' check a junction in the segment graph
 
         * check presence e1-e2 junction in ref (-> if not exon skipping or novel junction)
+            * presence is defined a direct junction from an ref exon (e.g. from self) overlapping e1 to an ref exon overlapping e2
         * AND find j3 and j4: first node overlapping e2  and last node overlapping e2
         * more specifically:
             * j3: first node ending after e2 start, or len(self)
             * j4: last node starting before e2 end (assuming there is such a node)'''
         altsplice={}
         j3=next((j for j in range(j2+1,len(self)) if self[j][1]>e2[0]),len(self))
-        #for j3 in range(j2+1,len(self)): 
-        #    if j3 in self[j3-1].suc.values() and self[j3-1][1]<self[j3][0]: #"real" junction 
-        #        introns.append([self[j3-1][1],self[j3][0]]) 
-        #    if self[j3][1] > e2[0]: 
-        #        break
-        #else:
-        #    j3=len(self) #e2 does not overlap splice graph
-        if j3<len(self) and j3 not in self[j2].suc.values() and self[j3].start< e2[1]: #direkt e1-e2 junction not present
-            paths=set.intersection(set(self[j2].suc.keys()),set(self[j3].pre.keys()))
-            if paths: #path from e1 to e2 present
-                #intron_reg=[i for i in range(j2,j3) if self[i].end<self[i+1].start and any(self[i].suc[p]==i+1 for p in paths)]
-                exons=[]
-                e_start=e[0]
-                e_end=e[1]
-                for j in range(j2+1,j3+1):
-                    if e_start and self[j].start>self[j-1].end:     #intron befor j
-                        exons.append([e_start, e_end])
-                        e_start=0
-                    if paths.intersection(self[j].suc):             #exon at j
-                        if e_start==0: #new exon start
-                            e_start= self[j].start 
-                        e_end=self[j].end
-                    elif e_start:                                   #intron at j
-                        exons.append([e_start, e_end])                            
-                        e_start=0  
-                    
+        j4=next((j-1 for j in range(j3,len(self)) if self[j].start >= e2[1]),len(self)-1)
+        if j3==len(self) or  self[j3].start> e2[1]:     
+            return j3,j4,altsplice # no overlap with e2
+        exon_skipping=set()
+        for j in range(j1,j2+1):
+            for tr,j_suc in self[j].suc.items():
+                if j_suc<=j2 or j_suc>j4: #those are not interesting
+                    continue 
+                j_spliced=self._get_next_spliced(tr,j)
+                if j_spliced is None:
+                    continue
+                if j_spliced<j3: #found splice junction from e1 into e1-e2 intron
+                    j_spliced_end=self._get_exon_end(tr,j_spliced)
+                    if j_spliced_end<j3:
+                        exon_skipping.add(tr)        
+                        continue
+                return j3,j4, altsplice #found direct path
+        if exon_skipping: #path from e1 over another exon e_skip to e2 present
+            #intron_reg=[i for i in range(j2,j3) if self[i].end<self[i+1].start and any(self[i].suc[p]==i+1 for p in paths)]
+            exons=[]
+            e_start=e[1]-1
+            e_end=e[1]
+            for j in range(j2+1,j3+1):
+                if e_start and self[j].start>self[j-1].end:     #intron befor j
+                    exons.append([e_start, e_end])
+                    e_start=0
+                if exon_skipping.intersection(self[j].suc):             #exon at j
+                    if e_start==0: #new exon start
+                        e_start= self[j].start 
+                    e_end=self[j].end
+                elif e_start:                                   #intron at j
+                    exons.append([e_start, e_end])                            
+                    e_start=0
+            if len(exons)>1:
                 altsplice.setdefault('exon skipping',[]).extend(exons[1:])
-            elif e[1]==self[j2].end and e2[0]==self[j3].start: #e1-e2 path is not present, but splice sites are
-                altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter
+        elif e[1]==self[j2].end and e2[0]==self[j3].start: #e1-e2 path is not present, but splice sites are
+            altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter                
         
         logger.debug(f'check junction {e[1]} - {e2[0]} resulted in {altsplice}')
         #find last node overlapping e2
-        j4=next((j-1 for j in range(j3,len(self)) if self[j].start >= e2[1]),len(self)-1)
-        
+                
         return j3,j4, altsplice
             
     def fuzzy_junction(self,exons,size):
@@ -475,6 +480,67 @@ class SegmentGraph():
                 if j==len(self):
                    return ol
         return ol
+
+    def get_intron_support_matrix(self, exons):
+        '''Check the intron support for the provided transcript w.r.t. transcripts from self.
+
+        This is supposed to be helpfull for the analysis of novel combinations of known splice sites.
+        
+        
+        :param exons: A list of exon positions defining the transcript to check.
+        :return: A boolean array of shape (n_transcripts in self)x(len(exons)-1). 
+            An entry is True iff the intron from "exons" is present in the respective transcript of self.'''
+        node_iter=iter(self)
+        ism=np.zeros((len(self._tss),len(exons)-1), np.bool) #the intron support matrix
+        for intron_nr,(e1,e2) in enumerate(pairwise(exons)):
+            try:
+                node=next(n for n in node_iter if n.end>=e1[1])
+            except StopIteration:
+                return ism
+            if node.end==e1[1]:
+                for trid,suc in node.suc.items():
+                    if self[suc].start==e2[0]:
+                        ism[trid,intron_nr]=True
+        return ism
+
+    def get_exon_support_matrix(self, exons):
+        '''Check the exon support for the provided transcript w.r.t. transcripts from self.
+
+        This is supposed to be helpfull for the analysis of novel combinations of known splice sites.
+        
+        
+        :param exons: A list of exon positions defining the transcript to check.
+        :return: A boolean array of shape (n_transcripts in self)x(len(exons)-1). 
+            An entry is True iff the exon from "exons" is fully covered in the respective transcript of self.
+            First and last exon are checked to overlap the first and last exon of the ref transcript but do not need to be fully covered'''
+        esm=np.zeros((len(self._tss),len(exons)), np.bool) #the intron support matrix
+        for tr_nr,tss in enumerate(self._tss): #check overlap of first exon
+            for j in range(tss,len(self)):
+                if overlap( self[j],exons[0]):
+                    esm[tr_nr,0]=True
+                elif self[j].suc.get(tr_nr,None)==j+1 and j-1<len(self) and self[j].end == self[j+1].start:
+                    continue
+                break
+        for tr_nr,pas in enumerate(self._pas): #check overlap of last exon
+            for j in range(pas,-1,-1):
+                if overlap( self[j],exons[-1]):
+                    esm[tr_nr,-1]=True
+                elif self[j].pre.get(tr_nr,None)==j-1 and j>0 and self[j].start == self[j-1].end:
+                    continue
+                break
+
+        j2=0        
+        for e_nr,e in enumerate(exons[1:-1]):
+            j1=next((j for j in range(j2,len(self)) if self[j].end > e[0]))
+            #j1: index of first segment ending after exon start (i.e. first overlapping segment)        
+            j2=next((j-1 for j in range(j1,len(self)) if self[j].start >= e[1]),len(self)-1)
+            #j2: index of last segment starting befor exon end (i.e. last overlapping segment)   
+            if self[j1].start<= e[0] and self[j2].end >=e[1]:
+                covered= set.intersection(*(set(self[j].suc) for j in range(j1,j2+1)))
+                if covered:
+                    esm[covered,e_nr+1]=True
+        return esm
+
 
     def get_intersects(self, exons):
         '''Computes the splice junction exonic overlap of a new transcript with the segment graph.

@@ -108,7 +108,7 @@ TESTS={ 'betabinom_lr':betabinom_lr_test,
         'proportions': proportion_test}
 
 
-def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto',padj_method='fdr_bh'):
+def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto',padj_method='fdr_bh', types=None):
     '''Performs the alternative splicing event test.
 
     :param groups: Dict with groupnames as keys and lists of samplenames as values, defining the two groups for the test.
@@ -116,8 +116,9 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
     :param min_alt_fraction: Minimum fraction of reads supporting the alternative (for both groups combined). 
     :param min_n: The minimum coverage of the event for an individual sample to be considered for the min_sa filter.
     :param min_sa: The fraction of samples within each group that must be covered by at least min_n reads.
-    :param test: The name of one of the implemented statistical tests ('betabinom_lr','binom_lr','proportions').'''
-    
+    :param test: The name of one of the implemented statistical tests ('betabinom_lr','binom_lr','proportions').
+    :param padj_method: Specify the method for multiple testing correction.
+    :param types: Restrict the analysis on types of events. If ommited, all types are tested.'''
     assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
     #find groups and sample indices
     if isinstance(groups, dict):
@@ -140,8 +141,8 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
         test_name=test
         try:
             test=TESTS[test]
-        except KeyError:
-            raise ValueError('test must be one of %s', str(list(TESTS)))
+        except KeyError as e:
+            raise ValueError(f'test must be one of {str(list(TESTS))}') from e
     else:
         test_name='custom'
     
@@ -159,7 +160,7 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
         if g.is_annotated and g.n_transcripts: 
             sg=g.ref_segment_graph
             #find annotated alternatives for gene (e.g. known events)
-            for _,_,nX,nY, splice_type in sg.find_splice_bubbles(start_end_events=True):
+            for _,_,nX,nY, splice_type in sg.find_splice_bubbles(types=types):
                 if splice_type in ("TSS","PAS"):
                     if (splice_type=="TSS")==(g.strand=="+"):
                         known.setdefault(splice_type,set()).add((sg[nX].end))
@@ -168,7 +169,7 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
                 else:
                     known.setdefault(splice_type,set()).add((sg[nX].end,sg[nY].start))
         sg=g.segment_graph
-        for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles(start_end_events=True):
+        for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles(types=types):
             
             junction_cov=g.coverage[:,setB].sum(1)
             total_cov=g.coverage[:,setA].sum(1)+junction_cov
@@ -260,7 +261,7 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1,samples
         known={} #check for known events
         if g.is_annotated and g.n_transcripts: 
             sg=g.ref_segment_graph
-            for _,_,nX,nY, splice_type in sg.find_splice_bubbles(start_end_events=True):#find annotated alternatives (known)
+            for _,_,nX,nY, splice_type in sg.find_splice_bubbles():#find annotated alternatives (known)
                 if splice_type in ("TSS","PAS"):
                     if (splice_type=="TSS")==(g.strand=="+"):
                         known.setdefault(splice_type,set()).add((sg[nX].end))
@@ -269,7 +270,7 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1,samples
                 else:
                     known.setdefault(splice_type,set()).add((sg[nX].end,sg[nY].start))
         sg=g.segment_graph
-        for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles(start_end_events=True):
+        for setA,setB,nX, nY, splice_type in sg.find_splice_bubbles():
             junction_cov=g.coverage[np.ix_(sidx,setA)].sum(1)
             total_cov=g.coverage[np.ix_(sidx,setB)].sum(1)+junction_cov
             if total_cov.sum()>=min_total and min_alt_fraction < junction_cov.sum()/total_cov.sum() < 1-min_alt_fraction:

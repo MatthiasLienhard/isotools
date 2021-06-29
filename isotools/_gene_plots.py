@@ -2,7 +2,6 @@
 import matplotlib.colors as plt_col
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
-from matplotlib.ticker import FuncFormatter
 
 import numpy as np
 from math import log10

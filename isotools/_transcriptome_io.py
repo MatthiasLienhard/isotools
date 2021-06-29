@@ -981,7 +981,7 @@ def export_alternative_splicing(self,out_dir,out_format='mats', reference=False,
                 continue
             
             seg_graph=g.ref_segment_graph if reference else g.segment_graph
-            for setA,setB,nodeX,nodeY, splice_type in seg_graph.find_splice_bubbles(start_end_events=False):
+            for setA,setB,nodeX,nodeY, splice_type in seg_graph.find_splice_bubbles(types=('ES','3AS', '5AS','IR', 'ME')):
                 if not reference:
                     junction_cov=g.coverage[np.ix_(sidx,setA)].sum(1)
                     total_cov=g.coverage[np.ix_(sidx,setB)].sum(1)+junction_cov

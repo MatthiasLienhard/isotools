@@ -34,7 +34,7 @@ def basequal_hist(bam_fn,qual_bins=10**(np.linspace(-7,0,30)),len_bins=None,n=10
             stats = align.get_index_statistics()
             n = sum([s.mapped for s in stats])
         with tqdm(total=n, unit=' reads') as pbar:
-            for i,read in enumerate(align.fetch()):
+            for i,read in enumerate(align):
                 l=len(read.query_qualities)
                 if len_bins is not None:
                     len_i=next((i for i,th in enumerate(len_bins) if l<th), len(len_bins))

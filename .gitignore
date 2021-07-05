@@ -1,6 +1,7 @@
 #hidden files
 .*
 !.gitignore
+!.readthedocs.yaml
 # Compiled python modules.
 *.pyc
 

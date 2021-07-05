@@ -1,8 +1,8 @@
 # File: docs/requirements.txt
 
 # Defining the exact version will make sure things don't break
-sphinx==3.5.3
-sphinx_rtd_theme==0.5.1
+sphinx==3.5.4
+sphinx_rtd_theme==0.5.2
 readthedocs-sphinx-search==0.1.0
-myst_parser==0.13.5
-nbsphinx==0.8.2
+myst_parser==0.15.1
+nbsphinx==0.8.6

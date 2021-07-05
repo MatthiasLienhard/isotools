@@ -1,0 +1,24 @@
+#hidden files
+.*
+!.gitignore
+# Compiled python modules.
+*.pyc
+
+# Setuptools distribution folder.
+/dist/
+
+#build directory
+build/
+
+#things to try out locally
+sandbox/
+
+# Python egg metadata, regenerated from source files by setuptools.
+/*.egg-info
+
+# example data files
+/docs/notebooks/*
+!/docs/notebooks/isotools_alzheimer.ipynb
+!/docs/notebooks/ENCODE_S2.ipynb
+!/docs/notebooks/encode_samples.tsv
+/docs/_build

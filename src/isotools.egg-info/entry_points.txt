@@ -1,0 +1,3 @@
+[console_scripts]
+run_isotools = isotools.run_isotools:main
+

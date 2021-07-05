@@ -6,6 +6,10 @@
 * tests are outdated/broken/not automated
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
+
+## [1.2]
+* restructure to meet PyPI recommendations
+
 ## [0.1.5]
 * New feature: restrict tests on provided splice_types
 * New feature: provide position to find given alternative splicing events

@@ -13,7 +13,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath('..'))
-from isotools import __version__
+from src import __version__
 # -- Project information -----------------------------------------------------
 
 project = 'isotools'

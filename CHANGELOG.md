@@ -7,7 +7,7 @@
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
 
-## [1.2]
+## [0.2]
 * restructure to meet PyPI recommendations
 
 ## [0.1.5]

@@ -1,5 +1,8 @@
 
-from importlib.metadata import distribution 
+try:
+    from importlib.metadata import distribution 
+except ModuleNotFoundError:
+    from importlib_metadata import distribution #py3.7
 __version__ = distribution('isotools').version
 from .gene import Gene
 from .transcriptome import Transcriptome

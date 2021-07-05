@@ -14,13 +14,11 @@ Key features:
 
 Installation
 ------------
-To install the package, download the latest version from github and install with pip:
+The package can be installed with pip:
 
 .. code-block:: bash
 
-    git clone https://github.molgen.mpg.de/lienhard/isotools.git
-    cd isotools
-    pip install .
+    python3 -m pip install isotools
 
 Usage
 -----
@@ -46,5 +44,4 @@ Citation and feedback
 * If you run into any issues, please use the github issues report feature. 
 * For feedback, please write me an email to lienhard@molgen.mpg.de.
 * If you use isotools in your publication, please cite the following paper:
-  IsoTools: the python toolbox for characterization,expression quantification, 
-  and differential analysis of isoforms from long read sequencing experiments (in preparation)
+  IsoTools: IsoTools: a python toolbox for long-read transcriptome sequencing (in preparation)

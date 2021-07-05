@@ -7,7 +7,7 @@ http://medips.molgen.mpg.de/isoseq/
 
 
 ## installation:
-Isotools is on pypi, and can be installed with the pip command:
+Isotools is available from PyPI, and can be installed with the pip command:
 ```
 python3 -m pip install isotools
 

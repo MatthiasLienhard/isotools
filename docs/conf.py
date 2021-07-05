@@ -10,9 +10,9 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
-
-with open('../VERSION', 'r') as versionfile: #version string is the first line of this file
-    __version__=versionfile.read()
+import os 
+with open(os.path.join('..', 'VERSION.txt'), 'r') as versionfile: #version string is the first line of this file
+    __version__=versionfile.read().strip()
 
 # -- Project information -----------------------------------------------------
 

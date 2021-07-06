@@ -83,3 +83,4 @@ myst_update_mathjax = False
 todo_include_todos = True
 
 autodoc_member_order = 'bysource'
+autodoc_mock_imports =  ['isotools']

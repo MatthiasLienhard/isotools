@@ -16,7 +16,7 @@ with open(os.path.join('..', 'VERSION.txt'), 'r') as versionfile: #version strin
     __version__=versionfile.read().strip()
 
 #Location of source files
-sys.path.insert(0, os.path.abspath('./../src/'))
+sys.path.insert(0, os.path.abspath('../src'))
 
 # -- Project information -----------------------------------------------------
 

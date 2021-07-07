@@ -1,5 +1,3 @@
-from umap import UMAP # pylint: disable-msg=E0611
-from sklearn.decomposition import PCA
 from scipy.stats import binom,norm, chi2, betabinom, fisher_exact,beta # pylint: disable-msg=E0611
 from scipy.special import gammaln, polygamma,gamma# pylint: disable-msg=E0611
 from scipy.optimize import minimize
@@ -9,7 +7,6 @@ import numpy as np
 import pandas as pd
 import itertools
 from tqdm import tqdm
-import warnings
 from ._utils import overlap
 logger=logging.getLogger('isotools')
 

@@ -4,8 +4,6 @@ from scipy.stats import beta,nbinom
 import seaborn as sns
 import pandas as pd
 import numpy as np
-from umap import UMAP # pylint: disable-msg=E0611
-from sklearn.decomposition import PCA
 import logging
 logger=logging.getLogger('isotools')
 
@@ -99,6 +97,12 @@ def plot_embedding(splice_bubbles, method='PCA',prior_count=3,
 
 
     assert method in ['PCA', 'UMAP'], 'method must be PCA or UMAP'
+    if method=='UMAP':
+        from umap import UMAP as Embedding# pylint: disable-msg=E0611
+    else:
+        from sklearn.decomposition import PCA as Embedding
+
+
     plot_components=np.array(plot_components)
     if isinstance(splice_types, str):
         splice_types=[splice_types]
@@ -145,17 +149,14 @@ def plot_embedding(splice_bubbles, method='PCA',prior_count=3,
     #compute embedding
     kwargs.setdefault('n_components',max(plot_components))
     assert kwargs['n_components']>=max(plot_components), 'n_components is smaller than the largest selected component'
-    if method=='PCA':
+    
         # Linear dimensionality reduction using Singular Value Decomposition of the data to project it to a lower dimensional space. 
         # The input data is centered but not scaled for each feature before applying the SVD.
-        embedding=PCA(**kwargs).fit(topvar)
-        axparams=dict(title= f'PCA ({",".join(splice_types)})', 
-            xlabel =f'PC{plot_components[0]} ({embedding.explained_variance_ratio_[plot_components[0]-1]*100:.2f} %)', 
-            ylabel =f'PC{plot_components[1]} ({embedding.explained_variance_ratio_[plot_components[1]-1]*100:.2f} %)' )
-    elif method=='UMAP':
-        #major parameters for UMAP with defaults n_neighbors=15, min_dist=0.1, n_components=2, metric='euclidean'
-        embedding=UMAP(**kwargs).fit(topvar)
-        axparams={'title': f'UMAP ({",".join(splice_types)})'}
+    embedding=Embedding(**kwargs).fit(topvar)
+    axparams=dict(title= f'{method} ({",".join(splice_types)})')
+    if method=='PCA':
+            axparams['xlabel'] =f'PC{plot_components[0]} ({embedding.explained_variance_ratio_[plot_components[0]-1]*100:.2f} %)' 
+            axparams['ylabel'] =f'PC{plot_components[1]} ({embedding.explained_variance_ratio_[plot_components[1]-1]*100:.2f} %)' 
     transformed=pd.DataFrame(embedding.transform(topvar), index=samples)
 
 

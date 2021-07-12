@@ -98,6 +98,7 @@ def plot_embedding(splice_bubbles, method='PCA',prior_count=3,
 
     assert method in ['PCA', 'UMAP'], 'method must be PCA or UMAP'
     if method=='UMAP':
+        #umap import takes ~15 seconds, hence the lazy import here
         from umap import UMAP as Embedding# pylint: disable-msg=E0611
     else:
         from sklearn.decomposition import PCA as Embedding

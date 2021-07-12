@@ -3,18 +3,17 @@
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
 * avoid the need for add_filters - construct and evaluate lambdas during filtering
 * run_isotools console script is totally outdated and broken
-* tests are outdated/broken/not automated
+* unit tests are outdated/broken/not automated
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
 
-## [0.2]
+## [0.2.0]
 * restructure to meet PyPI recommendations
+* New feature: isoseq.altsplice_test accepts more than 2 groups, and computes ML parameters for all groups
 
 ## [0.1.5]
 * New feature: restrict tests on provided splice_types
 * New feature: provide position to find given alternative splicing events
-
-
 
 ## [0.1.4]
 * Fix: Issue with noncanonical splicing detection introduced in 0.1.3

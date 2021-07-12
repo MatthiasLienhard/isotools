@@ -46,6 +46,39 @@ def loglike_betabinom(params, k,n):
     db= e+polygamma(0,n-k+b)  - polygamma(0,b) 
     return -np.sum(logpdf), np.array((-np.sum(da),-np.sum(db)))
 
+def betabinom_ml(xi,ni):
+    '''Calculate maximum likelihood parameter of beta binomial distribution for a group of samples with xi successes and ni trials. 
+
+    :param xi: number of successes, here coverage of the alternative for all samples of the group as 1d numpy array
+    :param ni: number of trials, here total coverage for the two sample groups for all samples of the group as 1d numpy array
+    '''
+    #x and n must be np arrays
+    if sum(ni)==0:
+        params=params_alt=None,None
+        return params,params_alt, False
+    xi, ni=xi[ni>0], ni[ni>0] #avoid div by 0
+    prob=xi/ni    
+    m=prob.mean() #estimate initial parameters
+    d=prob.var()
+    success=True
+    if d==0: #just one sample? or all exactly the same proportion
+        params=params_alt=m,None # in this case the betabinomial reduces to the binomial
+    else:
+        d=max(d,1e-6)# to avoid division by 0
+        e=(m**2-m+d) #helper          
+        #find ml estimates for a and b
+        mle = minimize(loglike_betabinom, x0=[-m*e/d,((m-1)*e)/d],bounds=((1e-6,None),(1e-6,None)),  args=(xi,ni),options={'maxiter': 250}, method='L-BFGS-B', jac=True)
+        a,b=params=mle.x
+        params_alt=(a/(a+b),  a*b/((a+b)**2*(a+b+1))) #get alternative parametrization (mu and disp)
+        #mle = minimize(loglike_betabinom2, x0=[-d/(m*e),d/((m-1)*e)],bounds=((1e-9,None),(1e-9,None)),  args=(xi,ni),options={'maxiter': 250}, method='L-BFGS-B', tol=1e-6)
+        #params=([1/p for p in mle.x])
+        params_alt=(a/(a+b),  a*b/((a+b)**2*(a+b+1))) #get alternative parametrization (mu and disp)
+
+        if not mle.success:
+            logger.debug(f'no convergence in betabinomial fit: k={xi}\nn={ni}\nparams={params}\nmessage={mle.message}') #should not happen to often, mainly with mu close to boundaries
+            success=False #prevent calculation of p-values based on non optimal parameters
+    return params,params_alt, success
+
 def betabinom_lr_test(x,n):
     ''' Likelihood ratio test with random-effects betabinomial model.
 
@@ -56,42 +89,24 @@ def betabinom_lr_test(x,n):
     :param x: coverage of the alternative for the two sample groups
     :param n: total coverage for the two sample groups'''    
 
-    params=list()
-    success=True
+    
     if any(ni.sum()==0 for ni in n):
         return (np.nan,[None, None]) #one group is not covered at all - no test possible. Checking this to avoid RuntimeWarnings (Mean of empty slice)
     x_all, n_all=(np.concatenate(x),np.concatenate(n))
-    for xi,ni in itertools.chain(zip(x,n),((x_all,n_all),)):
-        xi, ni=xi[ni>0], ni[ni>0] #avoid div by 0
-        #x and n must be np arrays
-        
-        prob=xi/ni    
-        m=prob.mean() #estimate initial parameters
-        d=prob.var()
-        if d==0: #just one sample? or all exactly the same proportion
-            params.append((m,None)) # in this case the betabinomial reduces to the binomial
-        else:
-            d=max(d,1e-6)# to avoid division by 0
-            e=(m**2-m+d) #helper          
-            #find ml estimates for a and b
-            mle = minimize(loglike_betabinom, x0=[-m*e/d,((m-1)*e)/d],bounds=((1e-6,None),(1e-6,None)),  args=(xi,ni),options={'maxiter': 250}, method='L-BFGS-B', jac=True)
-            params.append(mle.x)                
-            #mle = minimize(loglike_betabinom2, x0=[-d/(m*e),d/((m-1)*e)],bounds=((1e-9,None),(1e-9,None)),  args=(xi,ni),options={'maxiter': 250}, method='L-BFGS-B', tol=1e-6)
-            #params.append([1/p for p in mle.x])                
-            if not mle.success:
-                logger.debug(f'no convergence in betabinomial fit: k={xi}\nn={ni}\nparams={params}\nmessage={mle.message}') #should not happen to often, mainly with mu close to boundaries
-                success=False #prevent calculation of p-values based on non optimal parameters
-    # calculate the log likelihoods
-    params_alt=[(a/(a+b),  a*b/((a+b)**2*(a+b+1))) if b is not None else (a,None) for a,b in params ] #get alternative parametrization (mu and disp)
-    if not success:
-        return np.nan, [v for p in params_alt for v in p]
+    #calculate ml parameters
+    ml_1=betabinom_ml(x[0],n[0])
+    ml_2= betabinom_ml(x[1],n[1])
+    ml_all=betabinom_ml(x_all,n_all)
+
+    if not (ml_1[2] and ml_2[2] and ml_all[2]): #check success
+        return np.nan, list(ml_1[1] + ml_2[1] + ml_all[1])
     try:
-        l0 = betabinom_ll(x_all,n_all, *params[2]).sum() 
-        l1 = betabinom_ll(x[0],n[0], *params[0]).sum()+betabinom_ll(x[1],n[1], *params[1]).sum()
+        l0 = betabinom_ll(x_all,n_all, *ml_all[0]).sum() 
+        l1 = betabinom_ll(x[0],n[0], *ml_1[0]).sum()+betabinom_ll(x[1],n[1], *ml_2[0]).sum()
     except (ValueError, TypeError):
-        logger.critical(f'betabinom error: x={x}\nn={n}\nparams={params}')#should not happen
+        logger.critical(f'betabinom error: x={x}\nn={n}\nparams={ml_1[0]}/{ml_2[0]}/{ml_all[0]}')#should not happen
         raise
-    return chi2.sf(2*(l1-l0),2), [v for p in params_alt for v in p] #note that we need two degrees of freedom here as h0 hsa two parameters, h1 has 4
+    return chi2.sf(2*(l1-l0),2), list( ml_1[1] + ml_2[1] + ml_all[1]) #note that we need two degrees of freedom here as h0 hsa two parameters, h1 has 4
 
 def betabinom_ll(x,n,a,b):
     if b is None:
@@ -109,6 +124,8 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
     '''Performs the alternative splicing event test.
 
     :param groups: Dict with groupnames as keys and lists of samplenames as values, defining the two groups for the test.
+        If more then two groups are provided, test is performed between first two groups, but maximum likelihood parameters 
+        (expected PSI and dispersion) will be computet for the other groups as well. 
     :param min_total: Minimum total coverage over all selected samples (for both groups combined).
     :param min_alt_fraction: Minimum fraction of reads supporting the alternative (for both groups combined). 
     :param min_n: The minimum coverage of the event for an individual sample to be considered for the min_sa filter.
@@ -116,7 +133,7 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
     :param test: The name of one of the implemented statistical tests ('betabinom_lr','binom_lr','proportions').
     :param padj_method: Specify the method for multiple testing correction.
     :param types: Restrict the analysis on types of events. If ommited, all types are tested.'''
-    assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
+    #assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
     #find groups and sample indices
     if isinstance(groups, dict):
         groupnames=list(groups)
@@ -125,7 +142,7 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
         groupnames=list(groups)
         groups=[self.groups()[gn] for gn in groupnames]
     elif all( isinstance(grp,list) for grp in groups):
-        groupnames=['group1','group2']
+        groupnames=['group{i+1}' for i in range(len(groups))]
     else:
         raise ValueError('groups not found in dataset')
     notfound=[sa for grp in groups for sa in grp if sa not in self.samples]
@@ -134,7 +151,7 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
 
     if isinstance(test,str):
         if test=='auto':
-            test='betabinom_lr' if min(len(g) for g in groups)>1 else 'proportions'
+            test='betabinom_lr' if min(len(g) for g in groups[:2])>1 else 'proportions'
         test_name=test
         try:
             test=TESTS[test]
@@ -148,7 +165,7 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
     grp_idx=[[sa_idx[sa] for sa in grp] for grp in groups]
     sidx=grp_idx[0]+grp_idx[1]
     if min_sa<1:
-        min_sa*=sum(len(gr) for gr in groups)
+        min_sa*=sum(len(gr) for gr in groups[:2])
     res=[]
     for g in tqdm(self):
         if g.coverage[sidx,:].sum()<min_total:
@@ -177,9 +194,10 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
                 continue
             x=[junction_cov[grp] for grp in grp_idx]
             n=[total_cov[grp] for grp in grp_idx]
-            if sum((ni>=min_n).sum() for ni in n)<min_sa:
+            if sum((ni>=min_n).sum() for ni in n[:2])<min_sa:
                 continue
-            pval, params=test(x,n)
+            pval, params=test(x[:2],n[:2])
+            params_other=tuple(v for xi,ni in zip (x[2:],n[2:]) for v in betabinom_ml(xi,ni)[1]) 
             if splice_type in ['TSS', 'PAS']:
                 start, end=sg[nX].start, sg[nY].end
                 if (splice_type=="TSS")==(g.strand=="+"):
@@ -189,11 +207,11 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
             else:
                 start, end=sg[nX].end, sg[nY].start
                 novel=(start, end) not in known.get(splice_type,set())
-            res.append(tuple(itertools.chain((g.name,g.id,g.chrom,g.strand, start, end,splice_type,novel,pval),params ,
+            res.append(tuple(itertools.chain((g.name,g.id,g.chrom,g.strand, start, end,splice_type,novel,pval),params ,params_other,
                 (val for lists in zip(x,n) for pair in zip(*lists) for val in pair ))))
         
     df=pd.DataFrame(res, columns= (['gene','gene_id','chrom','strand', 'start', 'end','splice_type','novel','pvalue']+ 
-            [gn+part for gn in groupnames+['total'] for part in ['_PSI', '_disp'] ]+  
+            [gn+part for gn in groupnames[:2]+['total']+groupnames[2:] for part in ['_PSI', '_disp'] ]+  
             [f'{sa}_{gn}_{w}' for gn,grp in zip(groupnames, groups) for sa in grp for w in ['in_cov', 'total_cov'] ]))
     try:
         mask = np.isfinite(df['pvalue'])
@@ -202,7 +220,7 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
         padj[mask] = multi.multipletests(df.loc[mask,'pvalue'],method=padj_method)[1]
         df.insert(8,'padj',padj)
     except TypeError as e: #apparently this happens if df is empty...
-        logger.error('unexpected error during calculation of adjusted p-values: {e}' ,e=e)
+        logger.error(f'unexpected error during calculation of adjusted p-values: {e}' )
     return df
 
 def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',region=None):

@@ -77,11 +77,14 @@ def remove_samples(self, sample_names):
         g.data['segment_graph']=None # gets recomputed on next request
         g.data['coverage']=None            
         
-def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=True,chimeric_mincov=2,use_satag=False,   **kwargs):
+def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_junction=5,add_chromosomes=True,chimeric_mincov=2,use_satag=False,   **kwargs):
     '''Imports expressed transcripts from bam and adds it to the 'Transcriptome' object.
     
     :param fn: The bam filename of the new sample
-    :param sample_name: Name of the new sample
+    :param sample_name: Name of the new sample. If specified, all reads are assumed to belong to this sample. 
+    :param barcode_file: For barcoded samples, ath to file with assignment of sequencing barcodes to sample names. 
+        This file should be a tab seperated text file with two columns: the barcode and the sample name
+        Barcodes not listed in this file will be ignored. 
     :param fuzzy_junction: maximum size for fuzzy junction correction
     :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added. 
     :param chimeric_mincov: Minimum number of reads for a chimeric transcript to be considered
@@ -90,9 +93,17 @@ def add_sample_from_bam(self,fn, sample_name,fuzzy_junction=5,add_chromosomes=Tr
     :param kwargs: Additional keyword arugments are added to the sample table.'''
 
     #todo: one alignment may contain several samples - this is not supported at the moment
-    assert sample_name not in self.samples, 'sample %s is already in the data set.' % sample_name
-    logger.info(f'adding sample {sample_name} from file {fn}')
-    kwargs['name']=sample_name
+    if sample_name is not None:
+        assert sample_name not in self.samples, 'sample %s is already in the data set.' % sample_name
+        logger.info(f'adding sample {sample_name} from file {fn}')
+        kwargs['name']=sample_name
+        barcodes={}
+    else:
+        assert barcode_file is not None, 'Neither sample_name nor barcode_file was specified.'
+        #read the barcode file
+        barcodes={}
+        logger.info(f'adding {len(barcodes)} samples specified in {barcode_file} from file {fn}')
+        
     kwargs['file']=fn
     #genome_fh=FastaFile(genome_fn) if genome_fn is not None else None
     with AlignmentFile(fn, "rb") as align:        

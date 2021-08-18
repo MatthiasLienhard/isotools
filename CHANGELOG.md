@@ -6,6 +6,9 @@
 * unit tests are outdated/broken/not automated
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
+## [0.2.1]
+* Fix: import reference from gtf file
+
 
 ## [0.2.0]
 * restructure to meet PyPI recommendations

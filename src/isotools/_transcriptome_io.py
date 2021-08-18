@@ -102,7 +102,7 @@ def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_juncti
         assert barcode_file is not None, 'Neither sample_name nor barcode_file was specified.'
         #read the barcode file
         barcodes={}
-        logger.info(f'adding {len(barcodes)} samples specified in {barcode_file} from file {fn}')
+        logger.info(f'adding {len(set(barcodes.values()))} samples specified in {barcode_file} from file {fn}')
         
     kwargs['file']=fn
     #genome_fh=FastaFile(genome_fn) if genome_fn is not None else None

@@ -8,6 +8,11 @@ from tqdm import tqdm
 cigar='MIDNSHP=XB'
 cigar_lup={c:i for i,c in enumerate(cigar)}
 
+compl={'A':'T','T':'A','C':'G','G':'C'}
+def rc(seq):
+    '''reverse complement of seq'''
+    return ''.join(reversed([compl[c] if c in compl else 'N' for c in seq]))
+
 def get_error_rate(bam_fn, n=1000):
     qual=0
     total_len=0

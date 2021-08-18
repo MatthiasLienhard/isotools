@@ -7,12 +7,8 @@
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
 ## [0.2.1]
-<<<<<<< HEAD
 * Fix: import reference from gtf file
 
-=======
-* Fix: Import reference from gtf file
->>>>>>> master
 
 ## [0.2.0]
 * restructure to meet PyPI recommendations

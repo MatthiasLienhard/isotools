@@ -1,7 +1,7 @@
 import os
 import pickle
 import logging
-from ._transcriptome_io import import_gtf_transcripts, import_gff_transcripts
+from ._transcriptome_io import import_ref_transcripts
 from .gene import Gene
 from intervaltree import IntervalTree #, Interval
 import pandas as pd
@@ -51,11 +51,12 @@ class Transcriptome:
             if file_format=='gz':
                 file_format=os.path.splitext(reference_file[:-3])[1].lstrip('.')
         logger.info(f'importing reference from {file_format} file {reference_file}')
-        if file_format == 'gtf':
-            tr.data= import_gtf_transcripts(reference_file,tr,  **kwargs)
-        elif file_format in ('gff', 'gff3'):            
-            tr.data= import_gff_transcripts(reference_file,tr,  **kwargs)
+        if file_format in ('gff', 'gff3','gtf'):            
+            tr.data= import_ref_transcripts(reference_file,tr,file_format,  **kwargs)
         elif file_format == 'pkl':
+            #warn if kwargs are specified: kwargs are ignored
+            if kwargs:
+                logger.warn("The following parameters are ignored when loading reference from pkl: "+", ".join(kwargs))
             tr= pickle.load(open(reference_file, 'rb'))            
             if [k for k in tr.infos if k!='reference_file']:
                 logger.warning('the pickle file seems to contain additional expression information... extracting refrence')

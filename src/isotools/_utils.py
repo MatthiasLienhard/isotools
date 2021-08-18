@@ -8,7 +8,7 @@ from tqdm import tqdm
 cigar='MIDNSHP=XB'
 cigar_lup={c:i for i,c in enumerate(cigar)}
 
-def error_rate(bam_fn, n=1000):
+def get_error_rate(bam_fn, n=1000):
     qual=0
     total_len=0
     with AlignmentFile(bam_fn, "rb",check_sq=False) as align:     
@@ -35,6 +35,8 @@ def basequal_hist(bam_fn,qual_bins=10**(np.linspace(-7,0,30)),len_bins=None,n=10
             n = sum([s.mapped for s in stats])
         with tqdm(total=n, unit=' reads') as pbar:
             for i,read in enumerate(align):
+                if read.query_qualities is None:
+                    continue
                 l=len(read.query_qualities)
                 if len_bins is not None:
                     len_i=next((i for i,th in enumerate(len_bins) if l<th), len(len_bins))

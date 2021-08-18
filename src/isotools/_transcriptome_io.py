@@ -547,15 +547,14 @@ def _get_intersects(genes_ol, exons):
     #todo: potentially antisense could be considered as well here
     return None, (0,0)
 
-@experimental
-def import_gtf_transcripts(fn,transcriptome, chromosomes=None):
-
-    gtf = TabixFile(fn)   
+def _read_gtf_file(gtf,transcriptome, chromosomes):
     exons = dict()  # transcript id -> exons
     transcripts = dict()  # gene_id -> transcripts
     skipped = set()
     genes=dict()  
-    gene_dict={}
+    gene_set=set()
+    cds_start=dict()
+    cds_stop=dict()
     for line in tqdm(gtf.fetch(), smoothing=.1): 
         ls = line.split(sep="\t")        
         if chromosomes is not None and ls[0] not in chromosomes:
@@ -568,54 +567,146 @@ def import_gtf_transcripts(fn,transcriptome, chromosomes=None):
         if ls[2] == "exon":
             # logger.debug(line)
             try:
-                gtf_id = info['transcript_id']
-                _=exons.setdefault(gtf_id, list()).append((start, end))
+                _=exons.setdefault(info['transcript_id'], list()).append((start, end))
             except KeyError:  # should not happen if GTF is OK
                 logger.warn("gtf format error: exon without transcript_id. Skipping line\n"+line)
         elif ls[2] == 'gene':
             if 'gene_id' not in info:
                 logger.warn("gtf format error: gene without gene_id. Skipping line\n"+line)
             else:
-                info=_prepare_gene_info(info, ls[0], ls[6])
+                info['strand'] =ls[0]
+                info['chr'] =  ls[6]
+                _set_alias(info, {'name':['gene_name','Name'], 'ID':['gene_id']})
+                gene_set.add(info['ID'])
+                ref_info={k:v for k,v in info.items() if k not in Gene.required_infos}
+                info={k:info[k] for k in Gene.required_infos}
+                info['reference']=ref_info
                 new_gene=Gene(start, end, info, transcriptome)
                 genes[ls[0]].add(new_gene)
-                gene_dict[info['gene_id']]=new_gene
         elif ls[2] == 'transcript':
             try:
-                _=transcripts.setdefault(info["gene_id"], list()).append(info["transcript_id"])
+                # keep only transcript related infos (to avoid redundant gene infos)
+                tr_info={k:v for k,v in info.items() if 'transcript' in k and k != 'transcript_id'}
+                _=transcripts.setdefault(info["gene_id"], dict())[info["transcript_id"]]=tr_info
             except KeyError:
                 logger.warn("gtf format errror: transcript must have gene_id and transcript_id, skipping line\n"+line )
-      
+        elif ls[2]  == 'start_codon' and 'transcript_id' in info:
+            cds_start[info['transcript_id']]=end if ls[6]=='-' else start
+        elif ls[2]  == 'stop_codon' and 'transcript_id' in info:
+            cds_stop[info['transcript_id']]=start if ls[6]=='-' else end            
         else:
             skipped.add(ls[2])
-    if len(skipped)>0:
+    return exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped
+                        
+    
+def _read_gff_file(gff,transcriptome, chromosomes):
+    exons = dict()  # transcript id -> exons
+    transcripts = dict()  # gene_id -> transcripts
+    skipped = set()    
+    genes=dict()
+    gene_set=set()
+    cds_start=dict()
+    cds_stop=dict()
+    chrom_ids = get_gff_chrom_dict(gff, chromosomes)    
+    #takes quite some time... add a progress bar?
+    for line in tqdm(gff.fetch(), smoothing=.1):  
+        ls = line.split(sep="\t")
+        if ls[0] not in chrom_ids:
+            continue
+        chrom = chrom_ids[ls[0]]
+        genes.setdefault(chrom, IntervalTree())
+        try:
+            info = dict([pair.split('=', 1) for pair in ls[8].rstrip(';').split(";")]) # some gff lines end with ';' in gencode 36 
+        except ValueError:
+            logger.warning("GFF format error in infos (should be ; seperated key=value pairs). Skipping line:\n"+line)
+        start, end = [int(i) for i in ls[3:5]]
+        start -= 1  # to make 0 based
+        if ls[2] == "exon":
+            try:
+                gff_id = info['Parent']
+                exons.setdefault(gff_id, list()).append((start, end))
+            except KeyError:  # should not happen if GFF is OK
+                logger.warning("GFF format error: no parent found for exon. Skipping line: "+line)
+        elif ls[2] == 'gene' or 'ID' in info and info['ID'].startswith('gene'):
+            info['strand'] = ls[6]
+            info['chr'] = chrom
+            #genes[chrom][start:end] = info
+            _set_alias(info,{'ID':['gene_id'],'name':['Name','gene_name']})
+            gene_set.add(info['ID'])            
+            ref_info={k:v for k,v in info.items() if k not in Gene.required_infos}
+            info={k:info[k] for k in Gene.required_infos}
+            info['reference']=ref_info
+            genes[chrom].add(Gene(start,end,info, transcriptome))
+        elif all([v in info for v in ['Parent', "ID"]]) and (ls[2] == 'transcript' or info['Parent'].startswith('gene')):# those denote transcripts
+            tr_info={k:v for k,v in info.items() if k.startswith('transcript_')}
+            transcripts.setdefault(info["Parent"], {})[info['ID']]=tr_info
+        elif ls[2]  == 'start_codon' and 'Parent' in info:
+            cds_start[info['Parent']]=end if ls[6]=='-' else start
+        elif ls[2]  == 'stop_codon' and 'Parent' in info:
+            cds_stop[info['Parent']]=start if ls[6]=='-' else end            
+        else:
+            skipped.add(ls[2]) #transcript infos?
+    return exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped
+
+def import_ref_transcripts(fn, transcriptome,file_format, chromosomes=None, gene_categories=['gene'], short_exon_th=25):
+    '''import transcripts from gff/gtf file (e.g. for a reference)
+    returns a dict interval trees for the genes'''
+    #file_size=os.path.getsize(fn) # does not help for eat 
+    if file_format == 'gtf':
+        gtf = TabixFile(fn)        
+        exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped=_read_gtf_file(gtf, transcriptome, chromosomes)
+    else: #gff/gff3
+        gff = TabixFile(fn)        
+        exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped=_read_gff_file(gff, transcriptome, chromosomes)
+    
+    if skipped:
         logger.info('skipped the following categories: {}'.format(skipped))
     # sort the exons
-    for tid in exons.keys():
-        exons[tid].sort()    
-    #check for missing gene information
-    missed_genes=0
-    for gid in transcripts:
-        if gid not in gene_dict:
-            missed_genes+=1 #alternativly add a gene with name of transcript
-    if missed_genes:
-        raise ValueError('no specific gene information for {}/{} genes'.format(missed_genes,missed_genes+sum((len(t) for t in genes.values()) )))
-    
-    for chrom in genes:#link transcripts to genes
-        for gene in genes[chrom]:
+    logger.debug('sorting exon positions...')
+    for tid in exons:
+        exons[tid].sort()
+    missed_genes=[gid for gid in transcripts.keys() if gid not in gene_set]
+    if missed_genes:        
+        #logger.debug('/n'.join(gid+str(tr) for gid, tr in missed_genes.items()))
+        notfound=len(missed_genes)
+        found=sum((len(t) for t in genes.values()) )
+        logger.warning('Missing genes! Found gene information in categories {} for {}/{} genes'.format(gene_categories,found, found+notfound))
+    logger.debug('building gene data structure...')
+    # add transcripts to genes
+    for chrom in genes:
+        for gene in genes[chrom]:            
             g_id = gene.id
-            t_ids = transcripts.get(g_id,  g_id)
-            gene.data['reference'].setdefault('transcripts', [])
-            for t_id in t_ids:
+            tr=transcripts.get(g_id,  {g_id:{}})
+            for t_id,tr_info in tr.items():
+                tr_info['transcript_id']=t_id
                 try:
-                    gene.data['reference']['transcripts'] = [{'transcript_id': t_id, 'exons':exons[t_id]}]
+                    tr_info['exons']=exons[t_id]
                 except KeyError:
-                    # genes without transcripts get a single exons transcript
-                    gene.data['reference']['transcripts'] =  [{'transcript_id': t_id,'exons':[tuple(gene[:2])]}]
+                    # genes without exons get a single exons transcript
+                    tr_info['exons']=[tuple(gene[:2])]
+                #add cds
+                if t_id in cds_start and t_id in cds_stop:
+                    tr_info['CDS']=(cds_start[t_id], cds_stop[t_id]) if cds_start[t_id]< cds_stop[t_id] else (cds_stop[t_id],cds_start[t_id])
+                gene.data['reference'].setdefault('transcripts', []).append(tr_info)
+            if short_exon_th is not None:
+                short_exons={e for tr in gene.data['reference']['transcripts'] for e in tr['exons'] if e[1]-e[0]<= short_exon_th }
+                if short_exons:
+                    gene.data['reference']['short_exons']=short_exons
     return genes
 
 
 def collapse_immune_genes(self, maxgap=300000):
+    ''' This function collapses annotation of immune genes (IG and TR) of a loci. 
+
+    As immune genes are so variable, classical annotation as a set of transcripts is not meaningfull for those genes. 
+    In consequence, each component of an immune gene is usually stored as an individual gene. 
+    This can cause issues when comparing transcripts to these genes, which naturally would overlap many of these components. 
+    To avoid these issues, immunoglobulin and T-cell receptor genes of a locus are combined to a single gene, 
+    without specifiying transcripts. 
+    Immune genes are recognized by the gff/gtf property "gene_type" set to "IG*_gene" or "TR*_gene". 
+    Components within the distance of "maxgap" get collapsed to a single gene called TR/IG_locus_X.
+    :param maxgap: Specify maximum distance between components of the same locus. 
+    '''
     assert not self.samples, 'immune gene collapsing has to be called before adding long read samples'
     num={'IG':0, 'TR':0}
     for chrom in self.data:
@@ -642,97 +733,7 @@ def collapse_immune_genes(self, maxgap=300000):
                         num[itype]+=1
                         offset=i+1
     logger.info(f'collapsed {num["IG"]} immunoglobulin loci and  {num["TR"]} T-cell receptor loci')
-                        
-    
 
-
-def import_gff_transcripts(fn, transcriptome, chromosomes=None, gene_categories=['gene'], short_exon_th=25):
-    '''import transcripts from gff file (e.g. for a reference)
-    returns a dict interval trees for the genes'''
-    #file_size=os.path.getsize(fn) # does not help for eat 
-    gff = TabixFile(fn)        
-    chrom_ids = get_gff_chrom_dict(gff, chromosomes)    
-    exons = dict()  # transcript id -> exons
-    transcripts = dict()  # gene_id -> transcripts
-    skipped = set()    
-    genes=dict()
-    gene_set=set()
-    cds_start=dict()
-    cds_stop=dict()
-    #takes quite some time... add a progress bar?
-    for line in tqdm(gff.fetch(), smoothing=.1):  
-        ls = line.split(sep="\t")
-        if ls[0] not in chrom_ids:
-            continue
-        chrom = chrom_ids[ls[0]]
-        genes.setdefault(chrom, IntervalTree())
-        try:
-            info = dict([pair.split('=', 1) for pair in ls[8].rstrip(';').split(";")]) # some gff lines end with ';' in gencode 36 
-        except ValueError:
-            logger.warning("GFF format error in infos (should be ; seperated key=value pairs). Skipping line:\n"+line)
-        start, end = [int(i) for i in ls[3:5]]
-        start -= 1  # to make 0 based
-        if ls[2] == "exon":
-            try:
-                gtf_id = info['Parent']
-                exons.setdefault(gtf_id, list()).append((start, end))
-            except KeyError:  # should not happen if GTF is OK
-                logger.warning("GFF format error: no parent found for exon. Skipping line: "+line)
-        elif ls[2] == 'gene' or 'ID' in info and info['ID'].startswith('gene'):
-            info['strand'] = ls[6]
-            info['chr'] = chrom
-            #genes[chrom][start:end] = info
-            _set_alias(info,{'ID':['gene_id'],'name':['Name','gene_name']})
-            gene_set.add(info['ID'])
-            
-            ref_info={k:v for k,v in info.items() if k not in Gene.required_infos}
-            info={k:info[k] for k in Gene.required_infos}
-            info['reference']=ref_info
-            genes[chrom].add(Gene(start,end,info, transcriptome))
-        elif all([v in info for v in ['Parent', "ID"]]) and (ls[2] == 'transcript' or info['Parent'].startswith('gene')):# those denote transcripts
-            tr_info={k:v for k,v in info.items() if k.startswith('transcript_')}
-            transcripts.setdefault(info["Parent"], {})[info['ID']]=tr_info
-        elif ls[2]  == 'start_codon' and 'Parent' in info:
-            cds_start[info['Parent']]=end if ls[6]=='-' else start
-        elif ls[2]  == 'stop_codon' and 'Parent' in info:
-            cds_stop[info['Parent']]=start if ls[6]=='-' else end            
-        else:
-            skipped.add(ls[2]) #transcript infos?
-    if skipped:
-        logger.info('skipped the following categories: {}'.format(skipped))
-    # sort the exons
-    logger.debug('sorting exon positions...')
-    for tid in exons:
-        exons[tid].sort()
-    missed_genes=[gid for gid in transcripts.keys() if gid not in gene_set]
-    if missed_genes:        
-        #logger.debug('/n'.join(gid+str(tr) for gid, tr in missed_genes.items()))
-        notfound=len(missed_genes)
-        found=sum((len(t) for t in genes.values()) )
-        logger.warning('Missing genes! Found gene information in categories {} for {}/{} genes'.format(gene_categories,found, found+notfound))
-    logger.debug('building gene data structure...')
-    # add transcripts to genes
-    for chrom in genes:
-        for gene in genes[chrom]:
-            
-            g_id = gene.id
-            tr=transcripts.get(g_id,  {g_id:{}})
-            for t_id,tr_info in tr.items():
-                tr_info['transcript_id']=t_id
-                try:
-                    tr_info['exons']=exons[t_id]
-                except KeyError:
-                    # genes without exons get a single exons transcript
-                    tr_info['exons']=[tuple(gene[:2])]
-                #add cds
-                if t_id in cds_start and t_id in cds_stop:
-                    tr_info['CDS']=(cds_start[t_id], cds_stop[t_id]) if cds_start[t_id]< cds_stop[t_id] else (cds_stop[t_id],cds_start[t_id])
-                gene.data['reference'].setdefault('transcripts', []).append(tr_info)
-            if short_exon_th is not None:
-                short_exons={e for tr in gene.data['reference']['transcripts'] for e in tr['exons'] if e[1]-e[0]<= short_exon_th }
-                if short_exons:
-                    gene.data['reference']['short_exons']=short_exons
-    return genes
 
 ## io utility functions
 @experimental
@@ -824,17 +825,6 @@ def _set_alias(d,alias):
             d.pop(a,None)
 
 
-def _prepare_gene_info(info,chrom, strand, modify=True):
-    if not modify:
-        info=copy.deepcopy(info)
-    _set_alias(info, {'name':['Name','gene_id']})
-    assert 'ID' in info
-    info['strand'] =strand
-    info['chr'] = chrom
-    ref_info={k:v for k,v in info.items() if k not in Gene.required_infos}
-    info={k:info[k] for k in Gene.required_infos}
-    info['reference']=ref_info
-    return info
 
 #human readable output
 def gene_table(self, region=None ): #ideas: filter, extra_columns

@@ -110,9 +110,10 @@ class Gene(Interval):
         shifts=self.ref_segment_graph.fuzzy_junction(exons,size)
         if shifts and modify:
             for i,sh in shifts.items():
-                exons[i][1]+=sh
-                exons[i+1][0]+=sh
-                
+                if exons[i][0] <= exons[i][1]+sh and exons[i+1][0]+sh<=exons[i+1][1]:
+                    exons[i][1]+=sh
+                    exons[i+1][0]+=sh
+            trid['exons']=[e for e in exons if e[0]<e[1]] # remove zero length exons                
         return shifts
  
     def _to_gtf(self,trids, source='isoseq', use_gene_name=False):
@@ -174,10 +175,20 @@ class Gene(Interval):
         
         intron_seq={}
         score={}
+        
         for tr in self.transcripts:
             for intron in ((tr['exons'][i][1], tr['exons'][i+1][0]) for i in range(len(tr['exons'])-1)):
                 for pos in intron:
-                    intron_seq.setdefault(pos, genome_fh.fetch(self.chrom, pos-delta, pos+delta))
+                    try:
+                        intron_seq.setdefault(pos, genome_fh.fetch(self.chrom, pos-delta, pos+delta))
+                    except (ValueError, IndexError): # N padding at start/end of the chromosomes
+                        chr_len=genome_fh.get_reference_length(self.chrom)
+                        seq=genome_fh.fetch(self.chrom, max(0,pos-delta), min(chr_len,pos+delta))
+                        if pos-delta<0:
+                            seq=''.join(['N']*(pos-delta))+seq
+                        if pos+delta>chr_len:
+                            seq+= ''.join(['N']*(pos+delta-chr_len))
+                        intron_seq.setdefault(pos, seq)
                 if intron not in score:
                     #align=[pairwise2.align.globalms(seq5, seq3, 1,-1, -1, 0) for seq5, seq3 in intron_seq] 
                     #align=[pairwise2.align.globalxs(seq5, seq3,-1,-1, score_only=True) for seq5, seq3 in intron_seq] # number of equal bases at splice site

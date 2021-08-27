@@ -8,14 +8,16 @@ import logging
 logger=logging.getLogger('isotools')
 
     
-def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5), splice_types=None):
+def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5),min_cov=10, splice_types=None):
     '''Plots differential splicing results.
 
     For the first (e.g. most significant) differential splicing events from result_table
     that pass the checks defined by the parameters, 
     the PSI value of the alternative splicing event, as well as the fitted beta model for the groups, is depicted. 
-
+    :param min_cov: Depict samples where the event is covered by at least min_cov reads
     :param min_support: Minimum number of samples per group supporting the differential event.
+        A sample is considdered to support the differential event if it is covered > min_cov and
+        the PSI is closer to the group mean than to the alternative group mean. 
     :param min_diff: Minimum PSI group difference.
     :param grid_shape: Number of rows and columns for the figure. 
     :param splice_type: Only events from the splecified splice_type(s) are depicted. If omitted, all types are selected. 
@@ -37,7 +39,8 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
         if row.gene in set(plotted.gene):
             continue
         params_alt={gn:(row[f'{gn}_PSI'],row[f'{gn}_disp']) for gn in group_names}
-        psi_gr={gn:[row[f'{sa}_in_cov']/row[f'{sa}_total_cov'] for sa in gr if row[f'{sa}_total_cov']>0] for gn,gr in groups.items()}
+        #select only samples covered >= min_support
+        psi_gr={gn:[row[f'{sa}_in_cov']/row[f'{sa}_total_cov'] for sa in gr if row[f'{sa}_total_cov']>=min_support] for gn,gr in groups.items()} 
         support={s: sum(abs(i-params_alt[s][0]) < abs(i-params_alt[o][0]) for i in psi_gr[s]) for s,o in zip(group_names, reversed(group_names))}
         if any(sup<min_support for sup in support.values()):
             logger.debug(f'skipping {row.gene} with {support} supporters')

@@ -8,6 +8,8 @@
 
 ## [0.2.1]
 * Fix: import reference from gtf file
+* New feature: Import multiple samples from single bam tagged by barcode (e.g. from single cell data)
+* Fix: issue with zero base exons after shifting fuzzy junctions
 
 
 ## [0.2.0]

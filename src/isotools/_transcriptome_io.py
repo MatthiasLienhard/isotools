@@ -85,6 +85,7 @@ def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_juncti
     :param barcode_file: For barcoded samples, ath to file with assignment of sequencing barcodes to sample names. 
         This file should be a tab seperated text file with two columns: the barcode and the sample name
         Barcodes not listed in this file will be ignored. 
+        If sample_name is specified in addition to bacode_file, it will be used as a prefix
     :param fuzzy_junction: maximum size for fuzzy junction correction
     :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added. 
     :param chimeric_mincov: Minimum number of reads for a chimeric transcript to be considered
@@ -93,14 +94,17 @@ def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_juncti
     :param kwargs: Additional keyword arugments are added to the sample table.'''
 
     #todo: one alignment may contain several samples - this is not supported at the moment
-    if sample_name is not None:
+    if barcode_file is None:
+        assert sample_name is not None, 'Neither sample_name nor barcode_file was specified.'
         assert sample_name not in self.samples, 'sample %s is already in the data set.' % sample_name
         logger.info(f'adding sample {sample_name} from file {fn}')
         barcodes={}
-    else:
-        assert barcode_file is not None, 'Neither sample_name nor barcode_file was specified.'
+    else:        
         #read the barcode file
-        barcodes=pd.read_csv(barcode_file, sep='\t', names=['bc','name'], index_col='bc')['name'].to_dict()
+        barcodes=pd.read_csv(barcode_file, sep='\t', names=['bc','name'], index_col='bc')['name']
+        if sample_name is not None:
+            barcodes=barcodes.apply(lambda x: '{}_{}'.format(sample_name, x))
+        barcodes=barcodes.to_dict()
         assert all(sa not in self.samples for sa in barcodes), 'samples %s are already in the data set.' % ', '.join(sa for sa in barcodes if sa in self.samples )
         logger.info(f'adding {len(set(barcodes.keys()))} transcriptomes in {len(set(barcodes.values()))} groups as specified in {barcode_file} from file {fn}')
         barcodes.update({rc(k):v for k,v in barcodes.items()}) # add reverse complement
@@ -255,8 +259,9 @@ def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_juncti
     chimeric_msg='' if sum(n_chimeric.values())==0 else f' and {sum(n_chimeric.values())} chimeric reads with coverage of at least {chimeric_mincov}'
     logger.info(f'imported {sum(sample_nc_reads.values())} nonchimeric reads{chained_msg}{chimeric_msg}.' )
 
-    novel=dict()
+    
     for s_name,non_chim in non_chimeric.items():
+        novel=dict()
         for cov,(chrom,strand,exons,_,_), introns in non_chim:
             try:
                 tss,pas=(exons[0][0],exons[-1][1]) if strand =='+' else (exons[-1][1],exons[0][0])
@@ -477,7 +482,7 @@ def _combine_transcripts(established, new_tr, sample_name):
                 established.setdefault('long_intron_chimeric',{}).setdefault(sample_name, {}).setdefault(introns,0)
                 established['long_intron_chimeric'][sample_name][introns]+=new_tr['long_intron_chimeric'][sample_name][introns]
     except:
-        logger.error(f'error when merging {new_tr} into {established}')
+        logger.error(f'error when merging {new_tr} of sample {sample_name} into {established}')
         raise
 
 def _get_novel_type(genes_ol, genes_ol_strand, ref_ol):
@@ -519,7 +524,7 @@ def _add_novel_genes( self,novel,chrom,sa, spj_iou_th=0, reg_iou_th=.5, gene_pre
         if start>=end:
             logger.error(f'start>=end ({start}>={end}): {trL}')
         for tr in trL:
-            sample_name=sa if sa is not None else tr.pop('bc_group')
+            sample_name=tr.pop('bc_group', sa)
             tr['coverage']={sample_name:tr['coverage']}
             tr['TSS']={sample_name:tr['TSS']}
             tr['PAS']={sample_name:tr['PAS']}
@@ -605,8 +610,8 @@ def _read_gtf_file(gtf,transcriptome, chromosomes):
             if 'gene_id' not in info:
                 logger.warn("gtf format error: gene without gene_id. Skipping line\n"+line)
             else:
-                info['strand'] =ls[0]
-                info['chr'] =  ls[6]
+                info['strand'] =ls[6]
+                info['chr'] =  ls[0]
                 _set_alias(info, {'name':['gene_name','Name'], 'ID':['gene_id']})
                 gene_set.add(info['ID'])
                 ref_info={k:v for k,v in info.items() if k not in Gene.required_infos}

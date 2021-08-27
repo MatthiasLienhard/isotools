@@ -412,25 +412,27 @@ class SegmentGraph():
         if size < 1: #no need to check
             return fuzzy
         j1=0
+        idx=range(j1,len(self))
         for i,e1 in enumerate(exons[:-1]):
             e2=exons[i+1]
             try:
-                j1=next(j for j in range(j1,len(self)) if self[j].end+size >=e1[1] )
-                #j1: first node intersecting size range of e1 end
-            except StopIteration:
+                #find j1: first node intersecting size range of e1 end
+                if self[j1].end+min(size, e1[1]-e1[0]) < e1[1]:
+                    j1=next(j for j in idx if self[j].end+size >=e1[1] ) 
+            except (StopIteration,IndexError): #transcript end - we are done
                 break            
-            shift=None
-            while j1 < len(self) and self[j1].end - e1[1] <= size: # in case there are several nodes starting in the range around e1
+            shift=[]
+            while j1 < len(self) and self[j1].end - e1[1] <= min(size,e1[1]-e1[0]) : # in case there are several nodes starting in the range around e1
                 shift_e1=self[j1].end - e1[1]
                 #print(f'{i} {e1[1]}-{e2[0]} {shift_e1}')
-                if shift_e1==0:
+                if shift_e1==0: # no shift required at this intron
                     break
                 if any( self[j2].start - e2[0] == shift_e1 for j2 in set(self[j1].suc.values()) ):
-                    shift=shift_e1
+                    shift.append(shift_e1)
                 j1+=1
-            else:
-                if shift is not None:
-                    fuzzy[i]=shift
+            else: # junction not found in sg
+                if shift: # but shifted juction is present
+                    fuzzy[i]=sorted(shift, key=abs)[0] # if there are several possible shifts, provide the smallest
         return fuzzy
 
         
@@ -638,7 +640,11 @@ class SegmentGraph():
     def _get_next_spliced(self, trid, node):
         'find the next spliced node for given transcript'
         while node!=self._pas[trid]:
-            next_node=self[node].suc[trid] #raises error if trid not in node
+            try:
+                next_node=self[node].suc[trid] #raises error if trid not in node
+            except KeyError:
+                logger.error(f'trid {trid} seems to be not in node {node}')
+                raise
             if self[next_node].start > self[node].end:
                 return next_node
             node=next_node
@@ -647,7 +653,11 @@ class SegmentGraph():
     def _get_exon_end(self, trid, node):
         'find the end of the exon to which node belongs for given transcript'
         while node!=self._pas[trid]:
-            next_node=self[node].suc[trid] #raises error if trid not in node
+            try:
+                next_node=self[node].suc[trid] #raises error if trid not in node
+            except KeyError:
+                logger.error(f'trid {trid} seems to be not in node {node}')
+                raise
             if self[next_node].start > self[node].end:
                 return node
             node=next_node
@@ -655,7 +665,11 @@ class SegmentGraph():
     def _get_exon_start(self, trid, node):
         'find the start of the exon to which node belongs for given transcript'
         while node!=self._tss[trid]:
-            next_node=self[node].pre[trid] #raises error if trid not in node
+            try:
+                next_node=self[node].pre[trid] #raises error if trid not in node
+            except KeyError:
+                logger.error(f'trid {trid} seems to be not in node {node}')
+                raise
             if self[next_node].end < self[node].start:
                 return node
             node=next_node

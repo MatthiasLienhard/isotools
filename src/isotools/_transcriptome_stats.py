@@ -148,7 +148,7 @@ def altsplice_test(self,groups, min_total=100,min_alt_fraction=.1, min_n=10, min
     notfound=[sa for grp in groups for sa in grp if sa not in self.samples]
     if notfound:
         raise ValueError(f"Cannot find the following samples: {notfound}")    
-
+    assert not (groupnames[0] in groupnames[1] or groupnames[1] in groupnames[0]), 'group names must not be contained in other group names'
     if isinstance(test,str):
         if test=='auto':
             test='betabinom_lr' if min(len(g) for g in groups[:2])>1 else 'proportions'

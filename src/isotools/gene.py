@@ -120,23 +120,23 @@ class Gene(Interval):
         '''Creates the gtf lines of the gene as strings.'''
 
         info={'gene_id':self.name if use_gene_name else self.id}
-        lines=[]
+        lines=[None]
         starts=[]
         ends=[]
         for i in trids:
             tr=self.transcripts[i]
-            info['transcript_id']='{}.{}'.format(info['gene_id'],i)
-            #todo: print only relevant infos
+            info['transcript_id']=f'{info["gene_id"]}_{i}'
             starts.append(tr['exons'][0][0]+1)
             ends.append(tr['exons'][-1][1])
             lines.append((self.chrom, source, 'transcript', tr['exons'][0][0]+1, tr['exons'][-1][1], '.',self.strand, '.', '; '.join(f'{k} "{v}"' for k,v in info.items() if k != 'exon_id')))
             for enr, pos in enumerate(tr['exons']):
-                info['exon_id']='{}.{}_{}'.format(self.id,i, enr)
+                info['exon_id']=f'{info["gene_id"]}_{i}_{enr}'
                 lines.append((self.chrom, source, 'exon', pos[0]+1, pos[1], '.',self.strand, '.', '; '.join(f'{k} "{v}"' for k,v in info.items())))
-        if lines:
+        if len(lines)>1:
             #add gene line
-            lines.append((self.chrom, source, 'gene', min(starts), max(ends), '.',self.strand, '.', '{} "{}"'.format('gene_id',info['gene_id'])))
-        return lines
+            lines[0]=(self.chrom, source, 'gene', min(starts), max(ends), '.',self.strand, '.', '{} "{}"'.format('gene_id',info['gene_id']))
+            return lines
+        return []
  
     def add_noncanonical_splicing(self, genome_fh):
         '''Add information on noncanonical splicing. 

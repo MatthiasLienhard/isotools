@@ -942,22 +942,29 @@ def chimeric_table(self, region=None,  include=None, remove=None):#, star_chimer
     chim_tab=pd.DataFrame(chim_tab, columns=['trid','len', 'gene1','part1','breakpoint1', 'gene2','part2','breakpoint2','total_cov']+[s+'_cov' for s in self.infos['sample_table'].name]+[s+"_shortread_cov" for s in star_chimeric])
     return chim_tab        
 
-def write_gtf(self, fn, source='isotools',use_gene_name=False,  include=None, remove=None):     
+def write_gtf(self, fn, source='isotools',use_gene_name=False, region=None, include=None, remove=None):     
     '''Exports the transcripts in gtf format to a file.
     
     :param fn: The filename to write the gtf.
     :param source: String for the source column of the gtf file.
     :param use_gene_name: Use the gene name instead of the gene id in the for the gene_id descriptor
+    :param region: Splecify genomic region to export to gtf. If omitted, export whole genome.
     :param include: Specify required flags to include transcripts. 
     :param remove: Specify flags to ignore transcripts.'''
-    
+    g_pre=None
+    tr_ids=[]
     with open(fn, 'w') as f:     
         logger.info(f'writing gtf file to {fn}')
-        for gene in tqdm(self):
-            lines=gene.to_gtf(source=source,use_gene_name=use_gene_name, include=include, remove=remove)
-            if lines:
+        for g,trnr,_ in self.iter_transcripts(region=region, include=include, remove=remove):
+            if g!=g_pre and tr_ids:
+                lines=g_pre._to_gtf(trids=tr_ids,source=source,use_gene_name=use_gene_name)
                 _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
-
+                tr_ids=[]
+            g_pre=g
+            tr_ids.append(trnr)
+        if tr_ids:
+            lines=g._to_gtf(trids=tr_ids,source=source,use_gene_name=use_gene_name)
+            _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
 def export_alternative_splicing(self,out_dir,out_format='mats', reference=False, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
     '''Exports alternative splicing events defined by the transcriptome.
     

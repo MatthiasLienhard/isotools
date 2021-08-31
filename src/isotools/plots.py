@@ -13,15 +13,19 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5,5)
 
     For the first (e.g. most significant) differential splicing events from result_table
     that pass the checks defined by the parameters, 
-    the PSI value of the alternative splicing event, as well as the fitted beta model for the groups, is depicted. 
+    the PSI value of the alternative splicing event, 
+    as well as the fitted beta model for the groups, is depicted. 
+    
     :param min_cov: Depict samples where the event is covered by at least min_cov reads
     :param min_support: Minimum number of samples per group supporting the differential event.
         A sample is considdered to support the differential event if it is covered > min_cov and
         the PSI is closer to the group mean than to the alternative group mean. 
     :param min_diff: Minimum PSI group difference.
     :param grid_shape: Number of rows and columns for the figure. 
-    :param splice_type: Only events from the splecified splice_type(s) are depicted. If omitted, all types are selected. 
-    :return: figure, axes and list of plotted events'''
+    :param splice_type: Only events from the splecified splice_type(s) are depicted. 
+        If omitted, all types are selected. 
+    :return: figure, axes and list of plotted events
+    '''
 
     plotted=pd.DataFrame(columns=result_table.columns)
     if isinstance(splice_types, str):

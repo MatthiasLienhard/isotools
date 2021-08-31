@@ -6,6 +6,9 @@
 * unit tests are outdated/broken/not automated
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
+## [0.2.2]
+* Fix: export to gtf with filter features
+
 ## [0.2.1]
 * Fix: import reference from gtf file
 * New feature: Import multiple samples from single bam tagged by barcode (e.g. from single cell data)

@@ -6,6 +6,15 @@
 * unit tests are outdated/broken/not automated
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
+## [0.2.4]
+* New feature: added option to save readnames during bam import
+* new feature: gzip compressed gtf output
+
+## [0.2.3]
+* Changed assignment of transcripts to genes if no splice sites match.
+* Fix: more flexible import of reference files, gene name not required (but id is), introducing "infer_genes" from exon entries of gtf files.
+* New function: Transcriptome.remove_filter(filter=[tags])
+
 ## [0.2.2]
 * Fix: export to gtf with filter features
 

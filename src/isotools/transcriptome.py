@@ -42,7 +42,9 @@ class Transcriptome:
         :param reference_file: Reference file in gff3 format or pickle file to restore previously imported annotation
         :type reference_file: str
         :param file_format: Specify the file format of the provided reference_file. 
-            If set to "auto" the file type is infrered from the extension. '''
+            If set to "auto" the file type is infrered from the extension. 
+        :param chromosome: If reference file is gtf/gff, restrict import on specified chromosomes
+        :param infer_transcrpts: If reference file is gtf, genes and transcripts are infered from "exon" entries, no specific transcript '''
         tr=cls.__new__(cls)
         tr.infos={'reference_file':reference_file}
         tr.chimeric={}
@@ -109,7 +111,7 @@ class Transcriptome:
         idx=dict()
         for g in self:
             if g.id in idx: # at least id should be unique - maybe raise exception?
-                logger.warn(f'{g.id} seems to be ambigous: {str(self[g.id])} vs {str(g)}')
+                logger.warn(f'{g.id} seems to be ambigous: {str(idx[g.id])} vs {str(g)}')
             idx[g.name] = g
             idx[g.id]=g
         self._idx=idx
@@ -155,7 +157,7 @@ class Transcriptome:
         try:
            return self.infos['sample_table']
         except KeyError:
-            return pd.DataFrame(columns=['name','file','group','nonchimeric_reads', 'chimeric_reads'])
+            return pd.DataFrame(columns=['name','file','group','nonchimeric_reads', 'chimeric_reads'], dtype='object')
     
     @property
     def samples(self) -> list:
@@ -218,7 +220,7 @@ class Transcriptome:
     from ._transcriptome_io import gene_table, transcript_table,chimeric_table,write_gtf,export_alternative_splicing
 
     ### filtering functionality and iterators
-    from ._transcriptome_filter import add_qc_metrics, add_filter,iter_genes,iter_transcripts,iter_ref_transcripts
+    from ._transcriptome_filter import add_qc_metrics, add_filter, remove_filter,iter_genes,iter_transcripts,iter_ref_transcripts
 
     ### statistic: differential splicing, alternative_splicing_events
     from ._transcriptome_stats import altsplice_test,splice_dependence_test, alternative_splicing_events

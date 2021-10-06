@@ -18,7 +18,7 @@ DEFAULT_REF_TRANSCRIPT_FILTER={
 DEFAULT_TRANSCRIPT_FILTER={
         #'CLIPPED_ALIGNMENT':'clipping',
         'INTERNAL_PRIMING':'len(exons)==1 and downstream_A_content and downstream_A_content>.5', #more than 50% a
-        'RTTS':'noncanonical_splicing and novel_splice_sites and any(2*i in novel_splice_sites[0] and 2*i+1 in novel_splice_sites[0] for i,_ in noncanonical_splicing)',
+        'RTTS':'noncanonical_splicing and novel_splice_sites and any(2*i in novel_splice_sites and 2*i+1 in novel_splice_sites for i,_ in noncanonical_splicing)',
         'NONCANONICAL_SPLICING':'noncanonical_splicing',
         'NOVEL_TRANSCRIPT':'annotation is None or annotation[0]>0',
         'FRAGMENT':'fragments and any("novel exonic " in a or "fragment" in a for a in annotation[1])' ,
@@ -55,6 +55,43 @@ def add_qc_metrics(self, genome_fn):
                 g.add_threeprime_a_content(genome_fh)
                 
     self.infos['biases']=True # flag to check that the function was called
+def remove_filter(self, tags=None):
+    '''Removes specified filter tags, or all filter tags if no tags are specified. 
+
+    In order to change the definition of a filter tag, apply this function, and than add the filter again using add_filter.
+
+    :param tags: Specify the tags to remove.
+    '''
+    if tags is None:
+        for g in self.iter_genes():
+            _=g.data.pop('filter',None)
+        for _,_,t in self.iter_transcripts():
+            _=t.pop('filter',None)
+        for _,_,t in self.iter_ref_transcripts():
+            _=t.pop('filter',None)
+        _=self.infos.pop('filter', None)
+    else:
+        if 'filter' not in self.infos:
+            raise ValueError('This transcriptome has no filter tags defined')    
+        tags_cat={k:set() for k in self.infos['filter']}
+        for f in tags:
+            for cat in tags_cat:
+                if f in self.infos['filter']:
+                    del self.infos['filter'][f]
+                    tags_cat[cat]=f
+        if tags_cat.get('gene_filter', set()):
+            for g in self.iter_genes():
+                for f in tags_cat['gene_filter']:
+                    _=g.data['filter'].pop(f,None)           
+        if tags_cat.get('transcript_filter', set()):
+            for _,_,t in self.iter_transcripts():            
+                for f in tags_cat['transcript_filter']:
+                    _=t['filter'].pop(f,None)
+        if tags_cat.get('ref_transcript_filter', set()):
+            for _,_,t in self.iter_ref_transcripts():
+                for f in tags_cat['transcript_filter']:
+                    _=t['filter'].pop(f,None)
+        
 
 def add_filter(self, gene_filter=None,transcript_filter=None, ref_transcript_filter=None):
     '''Defines and assigns filter flags, which can be used by iter_transcripts.

@@ -465,23 +465,32 @@ class SegmentGraph():
 
         :param exons: A list of exon tuples representing the transcript
         :type exons: list
-        :return: the overlap'''
+        :return: a tuple: the overlap with the gene, and a list of the overlaps with the transcripts'''
 
         ol=0
         j=0
+        tr_ol=[0 for _ in self._pas]
         for e in exons:
-            while(self[j].end<e[0]):#no overlap
+            while(self[j].end<e[0]):#no overlap, go on
                 j+=1
                 if j==len(self):
-                   return ol
+                   return ol,tr_ol
             while(self[j].start<e[1]):
                 i_end = min(e[1], self[j].end)
                 i_start = max(e[0], self[j].start)
                 ol += (i_end-i_start)
+                for trnr in self[j].suc.keys():
+                    tr_ol[trnr]+= (i_end-i_start)
+                for trnr,pas in enumerate(self._pas):
+                    if pas == j:
+                        tr_ol[trnr]+= (i_end-i_start)
+                if self[j].end>e[1]:
+                    break
                 j+=1
                 if j==len(self):
-                   return ol
-        return ol
+                   return ol,tr_ol
+                   
+        return ol,tr_ol
 
     def get_intron_support_matrix(self, exons):
         '''Check the intron support for the provided transcript w.r.t. transcripts from self.

@@ -21,7 +21,7 @@ def _eval_filter_fun(fun,name,args):
 
 class Gene(Interval):
     'This class stores all gene information and transcripts. It is derived from intervaltree.Interval.'
-    required_infos=['ID','name', 'chr', 'strand']
+    required_infos=['ID','chr', 'strand']
 
     ###initialization
     def __new__(cls,begin, end, data, transcriptome):

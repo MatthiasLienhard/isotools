@@ -622,42 +622,27 @@ def direct_repeat_hist(self, groups=None, bins=10, x_range=(0,10), weight_by_cov
     # find the direct repeat length distribution in FSM transcripts and putative RTTS
     # putative RTTS are identified by introns where both splice sites are novel but within annotated exons
     # TODO: actually no need to check annotation, could simply use filter flags (or the definition from the filter flags, which should be faster)
-    novel_rl=[]
-    known_rl=[]
-    for g,trid,tr in self.iter_transcripts():
+    rl={cat:[] for cat in ('known','novel canonical','novel noncanonical')}
+    for g,trid,tr in self.iter_transcripts(**tr_filter):
         if 'annotation' in tr and tr['annotation'][0]==0: #e.g. FSM
-            known_rl.extend((l,g.coverage[:,trid]) for l in tr['direct_repeat_len'])
-        if g.is_annotated and 'annotation' in tr and "novel 5' splice site" in tr['annotation'][1] and "novel 3' splice site" in tr['annotation'][1]:
-            sg=g.ref_segment_graph #check exonic overlap in the reference annotation
-            novel1=[alt for alt in tr['annotation'][1]["novel 5' splice site"]  if sg.is_exonic(alt[0])]
-            novel2=[alt for alt in tr['annotation'][1]["novel 3' splice site"] if sg.is_exonic(alt[0])]
-            if g.strand=='-':
-                novel1, novel2=novel2,novel1 # sort according to genomic position
-            #find the exon numbers         
-            e1=[next(i for i,e in enumerate(tr['exons']) if e[1]==alt[0]) for alt in novel1]    #alt[0] is the genomic position
-            e2=[next(i for i,e in enumerate(tr['exons']) if e[0]==alt[0]) for alt in novel2]    
-            candidates=[e for e in e1 if e+1 in e2]
-            nc={v[0] for v in tr['noncanonical_splicing']} if 'noncanonical_splicing' in tr else {}
-            #splicesite=dict(tr.get('noncanonical_splicing',[]))
-            #novel_rl.extend((tr['direct_repeat_len'][c],g.coverage[:,trid],splicesite.get(c,'GTAG')) for c in candidates)
-            novel_rl.extend((tr['direct_repeat_len'][c],g.coverage[:,trid]) for c in candidates if c in nc)
+            rl['known'].extend((l,g.coverage[:,trid]) for l in tr['direct_repeat_len'])
+        elif g.is_annotated and 'novel_splice_sites' in tr:
+            novel_junction=[i//2 for i in tr['novel_splice_sites'] if i%2==0 and i+1 in tr['novel_splice_sites']]
+            nc={v[0] for v in tr.get('noncanonical_splicing',[])}
+            rl['novel noncanonical'].extend((tr['direct_repeat_len'][sj],g.coverage[:,trid]) for sj in novel_junction if sj in nc)
+            rl['novel canonical'].extend((tr['direct_repeat_len'][sj],g.coverage[:,trid]) for sj in novel_junction if sj not in nc)
         
 
-    known_rl_cov=pd.DataFrame((v[1] for v in known_rl), columns=self.samples)
-    novel_rl_cov=pd.DataFrame((v[1] for v in novel_rl), columns=self.samples)
+    rl_cov={cat:pd.DataFrame((v[1] for v in rl[cat]), columns=self.samples) for cat in rl}
     if groups is not None:
-        known_rl_cov=pd.DataFrame({grn:known_rl_cov[grp].sum(1) for grn, grp in groups.items()})
-        novel_rl_cov=pd.DataFrame({grn:novel_rl_cov[grp].sum(1) for grn, grp in groups.items()})
-    known_rl_cov[known_rl_cov<min_coverage]=0
-    novel_rl_cov[novel_rl_cov<min_coverage]=0
-    if not weight_by_coverage:        
-        known_rl_cov[known_rl_cov>0]=1
-        novel_rl_cov[novel_rl_cov>0]=1
-    rl={'novel noncanonical':novel_rl, 'known':known_rl}
-    cov={'novel noncanonical':novel_rl_cov, 'known':known_rl_cov}
+        rl_cov={cat:pd.DataFrame({grn:rl_cov[cat][grp].sum(1) for grn, grp in groups.items()}) for cat in rl_cov}
+    for cov_df in rl_cov.values():
+        cov_df[cov_df<min_coverage]=0
+        if not weight_by_coverage:        
+            cov_df[cov_df>0]=1
     if isinstance(bins,int):
         bins=np.linspace(x_range[0]-.5,x_range[1]-.5,bins+1)
-    counts=pd.DataFrame({f'{sa} {k}':np.histogram([val[0] for val in v],weights=cov[k][sa], bins=bins)[0]  for k,v in rl.items() for sa in (self.samples if groups is None else groups)}   )
+    counts=pd.DataFrame({f'{sa} {cat}':np.histogram([val[0] for val in rl_list],weights=rl_cov[cat][sa], bins=bins)[0]  for cat,rl_list in rl.items() for sa in (self.samples if groups is None else groups)}   )
     
 
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})

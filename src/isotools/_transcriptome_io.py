@@ -78,7 +78,7 @@ def remove_samples(self, sample_names):
         g.data['segment_graph']=None # gets recomputed on next request
         g.data['coverage']=None            
         
-def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_junction=5,add_chromosomes=True,chimeric_mincov=2,use_satag=False, save_readnames=False,  **kwargs):
+def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_junction=5,add_chromosomes=True,min_align_fraction=.75,chimeric_mincov=2,use_satag=False, save_readnames=False, **kwargs):
     '''Imports expressed transcripts from bam and adds it to the 'Transcriptome' object.
     
     :param fn: The bam filename of the new sample
@@ -89,6 +89,7 @@ def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_juncti
         If sample_name is specified in addition to bacode_file, it will be used as a prefix
     :param fuzzy_junction: maximum size for fuzzy junction correction
     :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added. 
+    :param min_align_fraction: Minimum fraction of the read sequence matching the reference.
     :param chimeric_mincov: Minimum number of reads for a chimeric transcript to be considered
     :param use_satag: If True, import secondary alignments (of chimeric alignments) from the SA tag. 
         This should only be specified if the secondary alignment is not reported in a seperate bam entry. 
@@ -114,6 +115,7 @@ def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_juncti
         
     kwargs['file']=fn
     skip_bc=0
+    partial_count=0
     #genome_fh=FastaFile(genome_fn) if genome_fn is not None else None
     with AlignmentFile(fn, "rb") as align:        
         if add_chromosomes:
@@ -176,6 +178,9 @@ def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_juncti
                                     snd_exons=junctions_from_cigar(snd_cigartuples,int(snd_align[1]))
                                     chimeric[s_name][read.query_name][1].append([snd_align[0],snd_align[2],snd_exons, aligned_part(snd_cigartuples, snd_align[2]=='-'),None]) 
                                     #logging.debug(chimeric[read.query_name])
+                        continue
+                    if min_align_fraction>0 and (1-tags['NM']/read.query_length) < min_align_fraction: #if edit distance becomes large relative to read length, skip the alignment
+                        partial_count+=1
                         continue
                     total_nc_reads_chr[chrom].setdefault(s_name,0)
                     total_nc_reads_chr[chrom][s_name]+=cov
@@ -241,6 +246,8 @@ def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_juncti
                 #logger.debug(f'imported {total_nc_reads_chr[chrom]} nonchimeric reads for {chrom}')
                 for sa, nc_reads in total_nc_reads_chr[chrom].items():
                     sample_nc_reads[sa]=sample_nc_reads.get(sa,0)+nc_reads
+    if partial_count:
+        logger.warn(f'skipped {partial_count} reads aligned fraction of less than {min_align_fraction}.')
     if skip_bc:
         logger.warn(f'skipped {skip_bc} reads with barcodes not found in the provided list.')
     if n_secondary>0:
@@ -287,8 +294,8 @@ def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_juncti
         if 'coverage' in g.data and g.data['coverage'] is not None: # still valid splice graphs no new transcripts - add a row of zeros to coveage
             g._set_coverage()
     for s_name in sample_nc_reads:
-        kwargs['chimeric_reads']=n_chimeric[s_name]
-        kwargs['nonchimeric_reads']=sample_nc_reads[s_name]
+        kwargs['chimeric_reads']=n_chimeric.get(s_name,0)
+        kwargs['nonchimeric_reads']=sample_nc_reads.get(s_name,0)
         kwargs['name']=s_name
         self.infos['sample_table']=self.sample_table.append(kwargs, ignore_index=True)
 

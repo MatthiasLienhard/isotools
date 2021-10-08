@@ -7,6 +7,10 @@
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
 ## [0.2.4]
+* New feature: distinguish noncanonical and canonical novel splice sites for direct repeat hist
+
+
+## [0.2.4]
 * New feature: added option to save readnames during bam import
 * new feature: gzip compressed gtf output
 

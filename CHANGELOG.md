@@ -6,8 +6,13 @@
 * unit tests are outdated/broken/not automated
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
-## [0.2.4]
+## [0.2.6]
+* new feature: rarefaction analysis
+
+
+## [0.2.5]
 * New feature: distinguish noncanonical and canonical novel splice sites for direct repeat hist
+* New feature: option to drop partially aligned reads with the 
 
 
 ## [0.2.4]

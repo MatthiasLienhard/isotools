@@ -649,3 +649,39 @@ def direct_repeat_hist(self, groups=None, bins=10, x_range=(0,10), weight_by_cov
     params=dict( title='direct repeat length',xlabel='length of direct repeats at splice junctons', ylabel='# transcripts')
     
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
+
+
+def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
+    '''Rarefaction analysis
+    
+    Reads are subsampled according to the provided fractions, to estimate saturation of the transcriptome. 
+
+    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param fractions: the fractions of reads to be subsampled. 
+        Either a list of floats between 0 and 1, or a integer number, specifying the number of equally spaced fractions. 
+    :param min_coverage: Number of reads per transcript required to consider the transcriped discovered.
+    :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
+    :return: Table with number of discovered transcripts, for each subsampling fraction and each sample / sample group.'''
+
+    cov=[]
+    current=None
+    if isinstance(fractions,int):
+        fractions=np.linspace(1/fractions,1,fractions)
+    for g,trid,_ in self.iter_transcripts(**tr_filter):
+        if g!=current:
+            current=g
+            current_cov=g.coverage        
+        cov.append(current_cov[:,trid])
+    cov=pd.DataFrame(cov, columns=self.samples) 
+    if groups is not None:
+        cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
+    curves={}
+    for sa in tqdm(cov):        
+        r=np.random.uniform(size=cov[sa].sum())
+        curves[sa]=np.zeros(len(fractions))
+        offset=0
+        for t in cov[sa]:
+            n=np.array([sum(r[offset:offset+t]<th) for th in fractions])
+            curves[sa]+=n>min_coverage
+            offset+=t
+    return pd.DataFrame(curves, index=fractions)

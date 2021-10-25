@@ -179,9 +179,14 @@ def add_sample_from_bam(self,fn, sample_name=None,barcode_file=None,fuzzy_juncti
                                     chimeric[s_name][read.query_name][1].append([snd_align[0],snd_align[2],snd_exons, aligned_part(snd_cigartuples, snd_align[2]=='-'),None]) 
                                     #logging.debug(chimeric[read.query_name])
                         continue
-                    if min_align_fraction>0 and (1-tags['NM']/read.query_length) < min_align_fraction: #if edit distance becomes large relative to read length, skip the alignment
-                        partial_count+=1
-                        continue
+                    try:
+                        if min_align_fraction>0 and (1-tags['NM']/read.query_length) < min_align_fraction: #if edit distance becomes large relative to read length, skip the alignment
+                            partial_count+=1
+                            continue
+                    except KeyError:
+                        logging.warn(f'min_align_fraction set > 0 ({min_align_fraction}), but reads found without "NM" tag. Setting min_align_fraction to 0')
+                        min_align_fraction=0
+
                     total_nc_reads_chr[chrom].setdefault(s_name,0)
                     total_nc_reads_chr[chrom][s_name]+=cov
                     for tr_interval in transcripts.overlap(*tr_range):    #did we see this transcript already?

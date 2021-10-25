@@ -29,17 +29,18 @@ def get_error_rate(bam_fn, n=1000):
                     break
     return (qual/total_len)*100
 
-def basequal_hist(bam_fn,qual_bins=10**(np.linspace(-7,0,30)),len_bins=None,n=1000 ):
+def basequal_hist(bam_fn,qual_bins=10**(np.linspace(-7,0,30)),len_bins=None,n=10000 ):
     '''compute summary base quality statistics from base file, optionally dependent on read length'''
     n_len_bins=1 if len_bins is None else len(len_bins)+1
     qual=np.zeros((len(qual_bins)+1, n_len_bins), dtype=int)
     len_i=0
+    i=0
     with AlignmentFile(bam_fn, "rb") as align:     
         if n is None:
             stats = align.get_index_statistics()
             n = sum([s.mapped for s in stats])
         with tqdm(total=n, unit=' reads') as pbar:
-            for i,read in enumerate(align):
+            for read in align:
                 if read.query_qualities is None:
                     continue
                 l=len(read.query_qualities)
@@ -49,6 +50,7 @@ def basequal_hist(bam_fn,qual_bins=10**(np.linspace(-7,0,30)),len_bins=None,n=10
                 q_i=next((i for i,th in enumerate(qual_bins) if error_rate<th), len(qual_bins))
                 qual[q_i, len_i]+=1
                 pbar.update(1)
+                i+=1
                 if i+1>=n:
                     break
     idx=[f'<{th:.2E} %' for th in qual_bins]+[f'>={qual_bins[-1]:.2E} %']

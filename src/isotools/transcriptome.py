@@ -223,7 +223,7 @@ class Transcriptome:
     from ._transcriptome_filter import add_qc_metrics, add_filter, remove_filter,iter_genes,iter_transcripts,iter_ref_transcripts
 
     ### statistic: differential splicing, alternative_splicing_events
-    from ._transcriptome_stats import altsplice_test,splice_dependence_test, alternative_splicing_events
+    from ._transcriptome_stats import altsplice_test,splice_dependence_test, alternative_splicing_events, rarefaction
 
     # statistic: summary tables (can be used as input to plot_bar / plot_dist)
     from ._transcriptome_stats import altsplice_stats,filter_stats,transcript_length_hist,transcript_coverage_hist,transcripts_per_gene_hist,exons_per_transcript_hist,downstream_a_hist, direct_repeat_hist

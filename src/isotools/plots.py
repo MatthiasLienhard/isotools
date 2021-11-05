@@ -299,3 +299,24 @@ def plot_saturation(isoseq=None,ax=None,cov_th=2,expr_th=[.5,1,2,5,10],x_range=(
     if legend:
         ax.legend()
     return ax
+
+
+def plot_rarefaction(rarefaction,ax=None,legend=True, **axparams):
+    
+    for sa in rarefaction.columns:
+        total=rarefaction.loc['total_reads', sa]
+        ax.plot([float(f)*total/1e6 for f in rarefraction.index if f!='total_reads'],rarefraction[sa], label=sa)
+    if ax is None:
+        _, ax=  plt.subplots()
+    axparams.setdefault('title','Rarefaction Analysis') #[nr],{'fontsize':20}, loc='left', pad=10)
+    axparams.setdefault('ylabel',f'Number of discovered Transcripts')
+    axparams.setdefault('xlabel','Number of subsampled reads [million]')
+    ax.set()
+    if legend:
+        ax.legend(**axparams)
+    return ax
+
+    
+    
+
+

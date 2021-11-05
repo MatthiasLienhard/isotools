@@ -8,6 +8,9 @@ import pandas as pd
 import itertools
 from tqdm import tqdm
 from ._utils import overlap
+from .decorators import deprecated, debug,experimental
+from ._utils import _filter_function
+
 logger=logging.getLogger('isotools')
 
 # differential splicing
@@ -247,20 +250,19 @@ def splice_dependence_test(self,samples=None, min_cov=20,padj_method='fdr_bh',re
         logger.error('unexpected error during calculation of adjusted p-values: {e}' ,e=e)
     return df            
         
-def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
+def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1,samples=None, region=None,query=None):
     '''Finds alternative splicing events. 
 
     Finds alternative splicing events and potential transcription start sites/polyA sites
     by searching for splice bubbles in the Segment Graph. 
-    Genes may be specified by genomic "region", and/or by filter flags / novelity class using the "include" / "remove" parameters.
+    Genes may be specified by genomic "region", and/or by filter tags / novelity class using the "query" parameters.
     
     :param min_total: Minimum total coverage over all selected samples.
     :param min_alt_fraction: Minimum fraction of reads supporting the alternative.
     :param samples: Specify the samples to consider. If omitted, all samples are selected.    
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. 
         If omitted, the complete genome is searched.
-    :param include: Specify required flags to include genes. 
-    :param remove: Specify flags to ignore genes.    
+    :param query: Specify gene filter query. 
     :return: Table with alternative splicing events.'''
     bubbles=[]
     if samples is None:
@@ -270,7 +272,7 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1,samples
     sidx=np.array([sa_dict[sa] for sa in samples])
 
     assert 0<min_alt_fraction<.5, 'min_alt_fraction must be > 0 and < 0.5'
-    for g in self.iter_genes(region, include, remove):
+    for g in self.iter_genes(region=region, query=query):
         if g.coverage[sidx,:].sum()<min_total:
             continue
         known={} #check for known events
@@ -349,21 +351,25 @@ def altsplice_stats(self, groups=None , weight_by_coverage=True, min_coverage=2,
 
     return df, {'ylabel':ylab,'title':title}
     #
-    
-def filter_stats(self, groups=None, weight_by_coverage=True, min_coverage=2,consider=None, tr_filter={}):   
+
+def filter_stats(self,tags=None, groups=None, weight_by_coverage=True, min_coverage=2, tr_filter={}):   
     '''Summary statistics for filter flags.
     
-    This function counts the number of transcripts flagged by a filter flag. 
+    This function counts the number of transcripts correspondign to filter tags. 
     The result can be depicted by isotools.plots.plot_bar.
 
+    :param tags: The filter tags to be evaluated. If omitted, all transcript tags are selected. 
     :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
-    :param weight_by_coverage: If True, each transcript is weighted by the coverage. 
-    :param min_coverage: Threshold to ignore poorly covered transcripts.
-    :param consider: Flags to consider. If omitted all flags are used. 
-    :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
-    :return: Table with numbers of transcripts featuring a filter flag, and suggested parameters for isotools.plots.plot_bar().'''
+    :param weight_by_coverage: If True, each transcript is weighted by the number of supporting reads. 
+    :param min_coverage: Coverage threshold per sample to ignore poorly covered transcripts.
+    :param tr_filter: Only transcripts that pass this filter are evaluated. Filter is provided as dict of parameters, passed to self.iter_transcripts().
+    :return: Table with numbers of transcripts featuring the filter tag, and suggested parameters for isotools.plots.plot_bar().'''
 
     weights=dict()
+    if tags is None:
+        tags=list(self.filter['transcript'])
+    assert all( t in self.filter['transcript'] for t in tags), '"Tags" contains invalid tags'
+    filterfun={t:_filter_function(self.filter['transcript'][t])[0] for t in tags}
     if groups is not None:
         sidx={sa:i for i,sa in enumerate(self.samples)} #idx
         groups={gn:[sidx[sa] for sa in gr] for gn,gr in groups.items()}
@@ -375,7 +381,8 @@ def filter_stats(self, groups=None, weight_by_coverage=True, min_coverage=2,cons
             w[w<min_coverage]=0
             if not weight_by_coverage:
                 w[w>0]=1
-        relevant_filter=[f for f in tr['filter'] if  consider is None or f in consider]
+        #relevant_filter=[f for f in tr['filter'] if  consider is None or f in consider]
+        relevant_filter= [t for t in tags if filterfun[t](g=g,trid=trid, **tr)] 
         for f in relevant_filter:
             weights[f]=weights.get(f,np.zeros(w.shape[0]))+w[:,trid]
         if not relevant_filter:
@@ -511,10 +518,8 @@ def transcripts_per_gene_hist(self,   groups=None, add_reference=False, bins=49,
         counts['reference']=np.histogram(ref_ntr, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     sub=f'counting transcripts covered by >= {min_coverage} reads'
-    if 'include' in tr_filter:
-        sub+=f', only including {", ".join(tr_filter["include"])}'
-    if 'remove' in tr_filter:
-        sub+=f', excluding {", ".join(tr_filter["remove"])}'
+    if 'query' in tr_filter:
+        sub+=f', filter query: {tr_filter["query"]}'
     params=dict(yscale='log',title='transcript per gene\n'+sub,xlabel='transcript per gene')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
     
@@ -557,10 +562,8 @@ def exons_per_transcript_hist(self,  groups=None, add_reference=False, bins=34,x
         counts['reference']=np.histogram(ref_n_exons, bins=bins)[0]
     bin_df=pd.DataFrame({'from':bins[:-1],'to':bins[1:]})
     sub=f'counting transcripts covered by >= {min_coverage} reads'
-    if 'include' in tr_filter:
-        sub+=f', only including {", ".join(tr_filter["include"])}'
-    if 'remove' in tr_filter:
-        sub+=f', excluding {", ".join(tr_filter["remove"])}'
+    if 'query' in tr_filter:
+        sub+=f', filter query: {tr_filter["query"]}'
     params=dict(yscale='log', title='exons per transcript\n'+sub,xlabel='number of exons per transcript')
     return pd.concat([bin_df,counts], axis=1).set_index(['from', 'to']),params
 
@@ -676,12 +679,6 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
     if groups is not None:
         cov=pd.DataFrame({grn:cov[grp].sum(1) for grn, grp in groups.items()})
     curves={}
-    for sa in tqdm(cov):        
-        r=np.random.uniform(size=cov[sa].sum())
-        curves[sa]=np.zeros(len(fractions))
-        offset=0
-        for t in cov[sa]:
-            n=np.array([sum(r[offset:offset+t]<th) for th in fractions])
-            curves[sa]+=n>min_coverage
-            offset+=t
+    for sa in cov:        
+        curves[sa]=[(np.random.binomial(n=cov[sa], p=th)>=min_coverage).sum() for th in fractions]        
     return pd.DataFrame(curves, index=fractions)

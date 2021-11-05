@@ -356,22 +356,25 @@ class SegmentGraph():
         j4=next((j-1 for j in range(j3,len(self)) if self[j].start >= e2[1]),len(self)-1)
         if j3==len(self) or  self[j3].start> e2[1]:     
             return j3,j4,altsplice # no overlap with e2
+        if e[1]==self[j2].end and e2[0]==self[j3].start and j3 in self[j2].suc.values():
+            return j3,j4, altsplice #found direct junction
+        #find skipped exons within e1-e2 intron
         exon_skipping=set()
         for j in range(j1,j2+1):
             for tr,j_suc in self[j].suc.items():
-                if j_suc<=j2 or j_suc>j4: #those are not interesting
-                    continue 
+                if j_suc<=j2 or j_suc>j4: #befor junction or exceding it 
+                    continue #-> no exon skipping 
+                if self._pas[tr]<j4: #transcripts ends within e1-e2 intron
+                    continue #-> no exon skipping 
                 j_spliced=self._get_next_spliced(tr,j)
-                if j_spliced is None:
-                    continue
+                if j_spliced is None: #end of transcript
+                    continue #-> no exon skipping 
                 if j_spliced<j3: #found splice junction from e1 into e1-e2 intron
                     j_spliced_end=self._get_exon_end(tr,j_spliced)
-                    if j_spliced_end<j3:
-                        exon_skipping.add(tr)        
-                        continue
-                return j3,j4, altsplice #found direct path
+                    if j_spliced_end<j3: # ref exon ends within e1-e2 intron
+                        exon_skipping.add(tr) # found exon skipping
         if exon_skipping: #path from e1 over another exon e_skip to e2 present
-            #intron_reg=[i for i in range(j2,j3) if self[i].end<self[i+1].start and any(self[i].suc[p]==i+1 for p in paths)]
+            # now we need to find the exon boundaries of the skipped exon
             exons=[]
             e_start=e[1]-1
             e_end=e[1]
@@ -392,8 +395,7 @@ class SegmentGraph():
             altsplice.setdefault('novel junction',[]).append([e[1],e2[0]]) #for example mutually exclusive exons spliced togeter                
         
         logger.debug(f'check junction {e[1]} - {e2[0]} resulted in {altsplice}')
-        #find last node overlapping e2
-                
+               
         return j3,j4, altsplice
             
     def fuzzy_junction(self,exons,size):
@@ -479,11 +481,11 @@ class SegmentGraph():
                 i_end = min(e[1], self[j].end)
                 i_start = max(e[0], self[j].start)
                 ol += (i_end-i_start)
-                for trnr in self[j].suc.keys():
-                    tr_ol[trnr]+= (i_end-i_start)
-                for trnr,pas in enumerate(self._pas):
+                for trid in self[j].suc.keys():
+                    tr_ol[trid]+= (i_end-i_start)
+                for trid,pas in enumerate(self._pas):
                     if pas == j:
-                        tr_ol[trnr]+= (i_end-i_start)
+                        tr_ol[trid]+= (i_end-i_start)
                 if self[j].end>e[1]:
                     break
                 j+=1
@@ -598,45 +600,7 @@ class SegmentGraph():
                         raise
                     yield gnode.end, self[target].start,w, longer_weight,  idx
 
-    @deprecated    
-    def _splice_dependence(self, sidx,min_cov,coverage, ignore_unspliced=True):
-        # Along the lines of Tilgner Nat.Biot.2015 https://www.nature.com/articles/nbt.3242
-        # TODO - outdated - remove when replaced by splice bubble version (keep fisher test?)'
-        tr_cov=coverage[sidx,:].sum(0)
-        if tr_cov.sum()<2* min_cov:
-            return #no chance of getting above the coverage
-        jumps={}
-        for i,n in enumerate(self):
-            for trid,suc_i in n.suc.items():
-                if suc_i>i+1:
-                    jumps.setdefault((i,suc_i),set()).add(trid)
-        nonjumps={}
-        for j in jumps:
-            if tr_cov[list(jumps[j])].sum()<min_cov:
-                continue
-            jstart={trid for trid,suc_i in self[j[0]].suc.items() if suc_i<j[1]}
-            jend={trid for trid,pre_i in self[j[1]].pre.items() if pre_i>j[0]}
-            if ignore_unspliced:
-                nojump_ids= {trid for trid in jstart.intersection(jend) if self._is_spliced(trid,j[0], j[1])}
-            else:
-                nojump_ids=jstart.intersection(jend)
-            if tr_cov[list(nojump_ids)].sum()>=min_cov:
-                nonjumps[j]=nojump_ids
-        for j1 in nonjumps:
-            for j2 in (j for j in nonjumps if j[0]>j1[1]):
-                double_negative=list(nonjumps[j1].intersection(nonjumps[j2]))
-                #if ignore_unspliced:
-                #    double_negative=[trid for trid in double_negative if self._is_spliced(trid,j1[0], j2[1])]
-                ma=np.array([
-                    tr_cov[list(jumps[j1].intersection(jumps[j2]))].sum(),
-                    tr_cov[list(jumps[j1].intersection(nonjumps[j2]))].sum(),
-                    tr_cov[list(nonjumps[j1].intersection(jumps[j2]))].sum(),
-                    tr_cov[double_negative].sum()]).reshape((2,2))
-                if any(ma.sum(0)<min_cov) or any(ma.sum(1)<min_cov):
-                    continue
-                #oddsratio, pvalue = fisher_exact(ma)                
-                #log.debug('j1={}, j2={}, ma={}, or={}, p={}'.format(j1,j2,list(ma),oddsratio, pvalue))
-                yield ma,(self[j1[0]].end, self[j1[1]].start), (self[j2[0]].end, self[j2[1]].start)
+
 
     def _is_spliced(self,trid,ni1,ni2):
         'checks if transcript is spliced (e.g. has an intron) between nodes ni1 and ni2'

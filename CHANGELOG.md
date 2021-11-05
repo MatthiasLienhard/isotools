@@ -6,17 +6,23 @@
 * unit tests are outdated/broken/not automated
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
-## [0.2.6]
-* new feature: rarefaction analysis
 
+
+## [0.2.6]
+* Added unit tests
+* Fixed bug in novel splicing subcategory assignment
+* new feature: rarefaction analysis
+* Changed filtering: expressions get evaluated during iteration
+    * Predefined filters are added automatically
+    * Add / remove filters one by one
+    * added optional progress bar to iter_genes/transcripts
 
 ## [0.2.5]
 * New feature: distinguish noncanonical and canonical novel splice sites for direct repeat hist
-* New feature: option to drop partially aligned reads with the 
-
+* New feature: option to drop partially aligned reads with the min_align_fraction parameter in add_sample_from_bam
 
 ## [0.2.4]
-* New feature: added option to save readnames during bam import
+* New feature: added option to save read names during bam import
 * new feature: gzip compressed gtf output
 
 ## [0.2.3]

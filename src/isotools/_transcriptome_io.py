@@ -12,10 +12,10 @@ from .decorators import deprecated, debug,experimental
 import copy
 import logging
 import gzip as gziplib
+from ._transcriptome_filter import SPLICE_CATEGORY
 logger=logging.getLogger('isotools')
 
 #### io functions for the transcriptome class
-SPLICE_CATEGORY=['FSM','ISM','NIC','NNC','NOVEL']
 
 def add_short_read_coverage(self, bam_files,names=None, load=False):
     '''Adds short read coverage to the genes.
@@ -590,7 +590,7 @@ def _find_matching_gene(genes_ol, exons, min_exon_coverage=.5):
         # else return best novel (also >50% ol, but in both directions
         else:
             ol_both=[(0,[]) if g.is_annotated else g.segment_graph.get_overlap(exons) for  g in genes_ol ]
-            max_other=[0 if ol[0] is 0 else max(ol_tr/sum(e[1]-e[0] for e in tr["exons"]) for ol_tr, tr in zip(ol[1],g.transcripts) ) for g,ol in zip(genes_ol, ol_both)]
+            max_other=[0 if ol[0] == 0 else max(ol_tr/sum(e[1]-e[0] for e in tr["exons"]) for ol_tr, tr in zip(ol[1],g.transcripts) ) for g,ol in zip(genes_ol, ol_both)]
             ol=np.array([max(ol[0]/sum(e[1]-e[0] for e in exons), other ) for ol, other in zip(ol_both, max_other)])
             best_idx=ol.argmax()
             if ol[best_idx]>=min_exon_coverage:
@@ -940,15 +940,14 @@ def gene_table(self, region=None ): #ideas: filter, extra_columns
     df = pd.DataFrame(rows, columns=colnames)
     return(df)
 
-def transcript_table(self, region=None, extra_columns=None,  include=None, remove=None, min_coverage=None, max_coverage=None): 
+def transcript_table(self, region=None, extra_columns=None,  query=None, min_coverage=None, max_coverage=None): 
     '''Creates a transcript table.
     
     Exports all transcript isoforms within region to a table.
 
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. If omitted specify the complete genome.
     :param extra_columns: Specify the additional information added to the table. Valid examples are "annotation", "coverage", or any other transcrit property as defined by the key in the transcript dict. 
-    :param include: Specify required flags to include transcripts. 
-    :param remove: Specify flags to ignore transcripts.
+    :param query: Specify transcript filter query.
     :param min_coverage: minimum required total coverage.
     :params max_coverage: maximal allowed total coverage.'''
 
@@ -960,19 +959,19 @@ def transcript_table(self, region=None, extra_columns=None,  include=None, remov
 
     colnames=['chr', 'transcript_start', 'transcript_end','strand', 'gene_id','gene_name' ,'transcript_nr']  + [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
     rows=[]
-    for g,trid, tr in self.iter_transcripts(region, include,remove, min_coverage, max_coverage):                
+    for g,trid, tr in self.iter_transcripts(region,query, min_coverage, max_coverage):                
         rows.append([g.chrom, tr['exons'][0][0], tr['exons'][-1][1], g.strand,g.id, g.name, trid]+g.get_infos(trid,extra_columns))
     df = pd.DataFrame(rows, columns=colnames)
     return(df)
 
-def chimeric_table(self, region=None,  include=None, remove=None):#, star_chimeric=None, illu_len=200):
+@experimental
+def chimeric_table(self, region=None,  query=None):#, star_chimeric=None, illu_len=200):
     '''Creates a chimeric table
     
     This table contains relevant infos about breakpoints and coverage for chimeric genes.
 
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. If omitted specify the complete genome.
-    :param include: Specify required flags to include transcripts. 
-    :param remove: Specify flags to ignore transcripts.
+    :param query: Specify transcript filter query.
     '''
     #todo: correct handeling of three part fusion events not yet implemented
     #todo: ambiguous alignment handling not yet implemented
@@ -1007,15 +1006,14 @@ def chimeric_table(self, region=None,  include=None, remove=None):#, star_chimer
     chim_tab=pd.DataFrame(chim_tab, columns=['trid','len', 'gene1','part1','breakpoint1', 'gene2','part2','breakpoint2','total_cov']+[s+'_cov' for s in self.infos['sample_table'].name]+[s+"_shortread_cov" for s in star_chimeric])
     return chim_tab        
 
-def write_gtf(self, fn, source='isotools',use_gene_name=False, region=None, include=None, remove=None, gzip=False):     
+def write_gtf(self, fn, source='isotools',use_gene_name=False, region=None, query=None, min_coverage=2, gzip=False):     
     '''Exports the transcripts in gtf format to a file.
     
     :param fn: The filename to write the gtf.
     :param source: String for the source column of the gtf file.
     :param use_gene_name: Use the gene name instead of the gene id in the for the gene_id descriptor
     :param region: Splecify genomic region to export to gtf. If omitted, export whole genome.
-    :param include: Specify required flags to include transcripts. 
-    :param remove: Specify flags to ignore transcripts.
+    :param query: Specify transcript filter query.
     :param gzip: compress the output as gzip.'''
     g_pre=None
     tr_ids=[]
@@ -1027,17 +1025,17 @@ def write_gtf(self, fn, source='isotools',use_gene_name=False, region=None, incl
 
     with openfile(fn) as f:     
         logger.info(f'writing {"gzip compressed" if gzip else ""} gtf file to {fn}')
-        for g,trnr,_ in self.iter_transcripts(region=region, include=include, remove=remove):
+        for g,trid,_ in self.iter_transcripts(region=region, query=query, min_coverage=min_coverage):
             if g!=g_pre and tr_ids:
                 lines=g_pre._to_gtf(trids=tr_ids,source=source,use_gene_name=use_gene_name)
                 _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
                 tr_ids=[]
             g_pre=g
-            tr_ids.append(trnr)
+            tr_ids.append(trid)
         if tr_ids:
             lines=g._to_gtf(trids=tr_ids,source=source,use_gene_name=use_gene_name)
             _=f.write('\n'.join( ('\t'.join(str(field) for field in line) for line in lines) )+'\n')
-def export_alternative_splicing(self,out_dir,out_format='mats', reference=False, min_total=100, min_alt_fraction=.1,samples=None, region=None,include=None, remove=None):
+def export_alternative_splicing(self,out_dir,out_format='mats', reference=False, min_total=100, min_alt_fraction=.1,samples=None, region=None,query=None):
     '''Exports alternative splicing events defined by the transcriptome.
     
     This is intended to integrate splicing event analysis from short read data. 
@@ -1051,8 +1049,8 @@ def export_alternative_splicing(self,out_dir,out_format='mats', reference=False,
     :param min_total: Minimum total coverage over all selected samples.
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. 
         If omitted specify the complete genome.
-    :param include: Specify required flags to include genes. 
-    :param remove: Specify flags to ignore genes.
+    :param query: Specify gene filter query.
+
     :param reference: If set to True, the LRTS data is ignored and the events are called from the reference. 
         In this case the following parameters are ignored
     :param samples: Specify the samples to consider
@@ -1090,7 +1088,7 @@ def export_alternative_splicing(self,out_dir,out_format='mats', reference=False,
                         'A5SS':['longExonStart_0base','longExonEnd','shortES','shortEE','flankingES','flankingEE']}
             for st in fh:
                 fh[st].write('\t'.join(base_header+add_header[st])+'\n')
-        for g in self.iter_genes(region, include, remove):
+        for g in self.iter_genes(region, query):
             if reference and not g.is_annotated:
                 continue
             elif not reference and g.coverage[sidx,:].sum()<min_total:

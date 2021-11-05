@@ -4,6 +4,9 @@ import pandas as pd
 import itertools
 import re
 from tqdm import tqdm
+import builtins
+import logging
+logger=logging.getLogger('isotools')
 
 cigar='MIDNSHP=XB'
 cigar_lup={c:i for i,c in enumerate(cigar)}
@@ -151,3 +154,14 @@ def get_intersects(tr1, tr2):
                 return sjintersect, intersect
     # tr2 is at end
     return sjintersect, intersect
+
+
+def _filter_function(expression):
+    'converts a string e.g. "all(x[0]/x[1]>3) " into a function'
+    #extract argument names
+    f=eval(f'lambda: {expression}')
+    args=[n for n in f.__code__.co_names if n not in dir(builtins)]
+    
+    #potential issue: g.coverage gets detected as ["g", "coverage"], e.g. coverage is added. Probably not causing trubble
+    return eval(f'lambda {",".join([arg+"=None" for arg in args]+["**kwargs"])}: bool({expression})\n',{},{}), args
+    

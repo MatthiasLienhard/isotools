@@ -1,31 +1,37 @@
 from pysam import TabixFile, AlignmentFile, FastaFile
 from tqdm import tqdm
 import logging
-logger=logging.getLogger('isotools')
+import re
+from ._utils import _filter_function
 
+logger=logging.getLogger('isotools')
+BOOL_OP={'and','or','not','is'}
 DEFAULT_GENE_FILTER={'NOVEL_GENE':'not reference',
                     'EXPRESSED':'transcripts',
                     'CHIMERIC':'chimeric'}
 '''Default definitions for gene filter, as used in iosotools.Transcriptome.add_filters().'''
 
 DEFAULT_REF_TRANSCRIPT_FILTER={
-        'UNSPLICED':'len(exons)==1',
-        'MULTIEXON':'len(exons)>1',
-        'INTERNAL_PRIMING':'downstream_A_content and downstream_A_content>.5'}
+        'REF_UNSPLICED':'len(exons)==1',
+        'REF_MULTIEXON':'len(exons)>1',
+        'REF_INTERNAL_PRIMING':'downstream_A_content>.5'}
 '''Default definitions for reference transcript filter, as used in iosotools.Transcriptome.add_filters().'''
 
 #:Default definitions for transcript filter, as used in iosotools.Transcriptome.add_filters()
 DEFAULT_TRANSCRIPT_FILTER={
         #'CLIPPED_ALIGNMENT':'clipping',
         'INTERNAL_PRIMING':'len(exons)==1 and downstream_A_content and downstream_A_content>.5', #more than 50% a
-        'RTTS':'noncanonical_splicing and novel_splice_sites and any(2*i in novel_splice_sites and 2*i+1 in novel_splice_sites for i,_ in noncanonical_splicing)',
+        'RTTS':'noncanonical_splicing is not None and novel_splice_sites is not None and any(2*i in novel_splice_sites and 2*i+1 in novel_splice_sites for i,_ in noncanonical_splicing)',
         'NONCANONICAL_SPLICING':'noncanonical_splicing',
-        'NOVEL_TRANSCRIPT':'annotation is None or annotation[0]>0',
+        'NOVEL_TRANSCRIPT':'annotation[0]>0',
         'FRAGMENT':'fragments and any("novel exonic " in a or "fragment" in a for a in annotation[1])' ,
-        'NOVEL':'not annotation or annotation[0]==4',
         'UNSPLICED':'len(exons)==1',
-        'MULTIEXON':'len(exons)>1'}
+        'MULTIEXON':'len(exons)>1',
+        'SUBSTANTIAL':'g.coverage.sum() * .05 < g.coverage[:,trid].sum()'
+        }
 
+SPLICE_CATEGORY=['FSM','ISM','NIC','NNC','NOVEL']
+'''Controlled vocabulary for filtering by novel alternative splicing.'''
 
 ANNOTATION_VOCABULARY=['antisense', 'intergenic', 'genic genomic', 'novel exonic PAS','novel intronic PAS', 'readthrough fusion', 
 'novel exon', "novel 3' splice site", 'intron retention', "novel 5' splice site", 'exon skipping', 'novel combination', 
@@ -55,170 +61,159 @@ def add_qc_metrics(self, genome_fn):
                 g.add_threeprime_a_content(genome_fh)
                 
     self.infos['biases']=True # flag to check that the function was called
-def remove_filter(self, tags=None):
-    '''Removes specified filter tags, or all filter tags if no tags are specified. 
+def remove_filter(self, tag):
+    '''Removes definition of filter tag.
 
-    In order to change the definition of a filter tag, apply this function, and than add the filter again using add_filter.
+    :param tag: Specify the tag of the filter definition to remove.'''
+    old=[f.pop(tag,None) for f in self.filter.values()]
+    if not any(old):
+        logger.error(f'filter tag {tag} not found')
 
-    :param tags: Specify the tags to remove.
-    '''
-    if tags is None:
-        for g in self.iter_genes():
-            _=g.data.pop('filter',None)
-        for _,_,t in self.iter_transcripts():
-            _=t.pop('filter',None)
-        for _,_,t in self.iter_ref_transcripts():
-            _=t.pop('filter',None)
-        _=self.infos.pop('filter', None)
-    else:
-        if 'filter' not in self.infos:
-            raise ValueError('This transcriptome has no filter tags defined')    
-        tags_cat={k:set() for k in self.infos['filter']}
-        for f in tags:
-            for cat in tags_cat:
-                if f in self.infos['filter']:
-                    del self.infos['filter'][f]
-                    tags_cat[cat]=f
-        if tags_cat.get('gene_filter', set()):
-            for g in self.iter_genes():
-                for f in tags_cat['gene_filter']:
-                    _=g.data['filter'].pop(f,None)           
-        if tags_cat.get('transcript_filter', set()):
-            for _,_,t in self.iter_transcripts():            
-                for f in tags_cat['transcript_filter']:
-                    _=t['filter'].pop(f,None)
-        if tags_cat.get('ref_transcript_filter', set()):
-            for _,_,t in self.iter_ref_transcripts():
-                for f in tags_cat['transcript_filter']:
-                    _=t['filter'].pop(f,None)
-        
-
-def add_filter(self, gene_filter=None,transcript_filter=None, ref_transcript_filter=None):
-    '''Defines and assigns filter flags, which can be used by iter_transcripts.
     
-    Filters are defined as dict, where the key is a filter identifier, and the value is an expression, 
-    which gets evaluated on the gene/transcript. For examples, see the default filter definitions 
-    isotools.DEFAULT_GENE_FILTER, isotools.DEFAULT_TRANSCRIPT_FILTER and isotools.DEFAULT_REF_TRANSCRIPT_FILTER.
+        
+def add_filter(self, tag, expression, context='transcript', update=False):   
+    '''Defines a new filter for gene, transcripts and reference transcripts.
+    
+    The provided expressions is evaluated during filtering in the provided context.
+    For examples, see the default filter definitions 
+        isotools.DEFAULT_GENE_FILTER, isotools.DEFAULT_TRANSCRIPT_FILTER and isotools.DEFAULT_REF_TRANSCRIPT_FILTER.
 
-    :param gene_filter: dict of gene filters. If omitted the default gene filters apply.
-    :param transcript_filter: dict of gene filters. If omitted the default reference filters apply.
-    :param ref_transcript_filter: dict of gene filters. If omitted the default transcript filters apply.
-    '''
-    gene_attributes={k for g in self for k in g.data.keys() if k.isidentifier()}
-    tr_attributes={k for g in self for tr in g.transcripts for k in tr.keys() if k.isidentifier()}
-    ref_tr_attributes={k for g in self if g.is_annotated for tr in g.ref_transcripts for k in tr.keys() if k.isidentifier()}
-    tr_attributes.add('filter')
-    ref_tr_attributes.add('filter')
-    if  gene_filter is None:
-        gene_filter=DEFAULT_GENE_FILTER
-    if transcript_filter is None:
-        transcript_filter=DEFAULT_TRANSCRIPT_FILTER
-    if ref_transcript_filter is None:
-        ref_transcript_filter=DEFAULT_REF_TRANSCRIPT_FILTER
-    gene_ffun={label:_filter_function(gene_attributes, fun) for label,fun in gene_filter.items()}
-    tr_ffun={label:_filter_function(tr_attributes, fun) for label,fun in transcript_filter.items()}
-    reftr_ffun={label:_filter_function(ref_tr_attributes, fun) for label,fun in ref_transcript_filter.items()}
-    for g in tqdm(self):
-            g.add_filter(gene_ffun,tr_ffun,reftr_ffun)
-    self.infos['filter']={'gene_filter':gene_filter, 'transcript_filter':transcript_filter, 'ref_transcript_filter':ref_transcript_filter}
+    :param tag: Unique tag identifer for this filter. Must be a single word
+    :param expression: Expression to be evaluated on gene, transcript, or reference transcript. 
+    :param context: The context for the filter expression: 'gene', 'transcript' or 'reference'. 
+    ;param update: If set, the already present definition of the provided tag gets overwritten.'''
 
-def iter_genes(self, region=None,include=None, remove=None):
+    
+    assert context in ['gene', 'transcript', 'reference'], "filter context must be 'gene', 'transcript' or 'reference'"
+    assert tag == re.findall(r'\b\w+\b',tag)[0], '"tag" must be a single word'
+    if not update:
+        assert tag not in [f for f in self.filter.values()], "Filter tag is already present. Set update=True to re-define."
+    if context=='gene':
+        attributes={k for g in self for k in g.data.keys() if k.isidentifier()}
+    else:
+        attributes={'g','trid'}
+        if context=='transcript':
+            attributes.update({k for g in self for tr in g.transcripts for k in tr.keys() if k.isidentifier()})
+        elif context=='reference':
+            attributes.update({k for g in self if g.is_annotated for tr in g.ref_transcripts for k in tr.keys() if k.isidentifier()})
+    #used=re.findall(r'\b\w+\b', expression)
+    
+    try: #test whether the expression can be evaluated
+        f, f_args=_filter_function(expression)
+        #_=f() # this would fail for many default expressions - can be avoided by checking if used attributes are None - but not ideal
+        # Could be extended by dummy gene/transcript argument
+    except:
+        logger.error('expression cannot be evaluated:\n'+expression)
+        raise
+    unknown_attr=[ attr for attr in f_args if attr not in attributes]
+    if unknown_attr:
+        logger.warn( f"Some attributes not present in {context} context, please make sure there is no typo: {','.join(unknown_attr)}")
+    if update: #avoid the same tag in different context
+        for old_context,filter_dict in self.filter.items():
+            if filter_dict.pop(tag,None) is not None:
+                logger.info('replaced existing filter rule {tag} in {old_context} context')
+    self.filter[context][tag]=expression
+
+def iter_genes(self, region=None,query=None, progress_bar=False):
     '''Iterates over the genes of a region, optionally applying filters.
     
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional. 
-    :param include: If provided, only genes featuring at least one of these flags are considered.
-    :param remove: If provided, genes featuring one of at least these flags are ignored.'''
+    :param query: If provided, query string is evaluated on all genes for filtering'''
 
-    if include or remove:
-        assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
-        assert not include or all(f in self.infos['filter']['gene_filter'] for f in include), 'not all filters to include found'
-        assert not remove or all(f in self.infos['filter']['gene_filter'] for f in remove), 'not all filters to remove found'
+    if query:
+        query_fun, used_tags=_filter_function(query)
+        #used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}        
+        all_filter=list(self.filter['gene'])
+        msg='did not find the following filter rules: {}\nvalid rules are: {}'
+        assert all(f in all_filter for f in used_tags), msg.format( 
+            ', '.join(f for f in used_tags if f not in all_filter), ', '.join(all_filter) )        
+        filter_fun={tag:_filter_function(self.filter['gene'][tag])[0] for tag in used_tags}
+        
+        try: #test the filter expression with dummy tags
+            query_fun(**{tag:True for tag in used_tags})
+        except:
+            logger.error("Error in query string: \n{query}")
+            raise
     if region is None:
         genes=self
-    elif isinstance(region, str):
-        if region in self.data:
-            genes=self.data[region] #provide chromosome
-        else:
-            try:
-                chrom, pos=region.split(':')
-                if chrom in self.data:
-                    start, end=[int(v) for v in pos.split('-')]
-                else:
-                    raise ValueError('specified chromosome {} not found'.format(chrom))
-            except:
-                raise ValueError('incorrect region {} - specify as string "chr:start-end" or tuple ("chr",start,end)'.format(region))
-            if chrom in self.data:
-                genes=self.data[chrom][int(start):int(end)]
+    else:
+        if isinstance(region, str):
+            if region in self.data:
+                genes=self.data[region] #provide chromosome
             else:
-                raise ValueError('specified chromosome {} not found'.format(chrom))
-    elif isinstance(region,tuple):
-        chrom,start,end=region
+                try:
+                    chrom, pos=region.split(':')
+                    if chrom in self.data:
+                        start, end=[int(v) for v in pos.split('-')]
+                    else:
+                        raise ValueError('specified chromosome {} not found'.format(chrom))
+                except:
+                    raise ValueError('incorrect region {} - specify as string "chr" or "chr:start-end" or tuple ("chr",start,end)'.format(region))
+        elif isinstance(region,tuple):
+            chrom,start,end=region
         if chrom in self.data:
             genes=self.data[chrom][int(start):int(end)]
         else:
             raise ValueError('specified chromosome {} not found'.format(chrom))
-    for g in genes:
-        if not include or any(f in include for f in g.data['filter']):
-            if not remove or all(f not in remove for f in g.data['filter']):        
-                yield g
+    for g in tqdm(genes, disable=not progress_bar):
+        if query is None or query_fun({tag:fun(**g.data) for tag,fun in filter_fun.items()}):
+            yield g
 
-def iter_transcripts(self,region=None,include=None, remove=None, min_coverage=None, max_coverage=None):
+def iter_transcripts(self,region=None,query=None, min_coverage=None, max_coverage=None, progress_bar=False):
     '''Iterates over the transcripts of a region, optionally applying filters.
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional. 
-    :param include: If provided, only transcripts featuring at least one of these flags are considered.
-    :param remove: If provided, transcripts featuring one of at least these flags are ignored.
-    :param min_coverage: The minimum coverage threshold. Transcripts with less reads are ignored. 
-    :param max_coverage: The maximum coverage threshold. Transcripts with more reads are ignored. '''
-    if include or remove:
-        valid_filters=ANNOTATION_VOCABULARY
-        if isinstance(include, str):
-            include=[include]
-        if isinstance(remove, str):
-            remove=[remove]
-        if 'filter' in self.infos:
-            all_filter=self.infos['filter']
-        else:
-            all_filter={'transcript_filter':{}, 'gene_filter':{}}
-        valid_filters=valid_filters+list(all_filter['transcript_filter'])+list(all_filter['gene_filter'] )
-        msg='did not find the following filter flags for {}: {}\nvalid filters are: {}'
-        assert not include or all(f in valid_filters for f in include), msg.format( 
-            'inclusion', ', '.join(f for f in include if f not in valid_filters), ', '.join(valid_filters) )
-        assert not remove or all(f in valid_filters for f in remove), msg.format(
-            'removal', ', '.join(f for f in remove if f not in valid_filters), ', '.join(valid_filters) )
+    :param query: If provided, query string is evaluated on all transcripts for filtering
+    :param min_coverage: The minimum coverage threshold. Transcripts with less reads in total are ignored. 
+    :param max_coverage: The maximum coverage threshold. Transcripts with more reads in total are ignored. '''
 
-    anno_include=[f for f in include if f in ANNOTATION_VOCABULARY] if include else []
-    anno_remove=[f for f in remove if f in ANNOTATION_VOCABULARY] if remove else []
-    g_include=[f for f in include if f in all_filter['gene_filter']] if include else []
-    g_remove=[f for f in remove if f in all_filter['gene_filter']] if remove else []
-    t_include=[f for f in include if f in all_filter['transcript_filter']] if include else []
-    t_remove=[f for f in remove if f in all_filter['transcript_filter']] if remove else []
-    
-    for g in self.iter_genes(region, g_include, g_remove):
-        for i,tr in g.filter_transcripts(t_include, t_remove, anno_include, anno_remove, min_coverage, max_coverage):
+    if query:
+        #used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}        
+        all_filter=list(self.filter['transcript'])+list(self.filter['gene'] )
+        query_fun, used_tags=_filter_function(query)
+        msg='did not find the following filter rules: {}\nvalid rules are: {}'
+        assert all(f in all_filter for f in used_tags), msg.format( 
+            ', '.join(f for f in used_tags if f not in all_filter), ', '.join(all_filter) )
+        tr_filter_fun={tag:_filter_function(self.filter['transcript'][tag])[0] for tag in used_tags if tag in self.filter['transcript']}
+        g_filter_fun={tag:_filter_function(self.filter['gene'][tag])[0] for tag in used_tags if tag in self.filter['gene']}
+        
+        try: #test the filter expression with dummy tags
+            _=query_fun(**{tag:True for tag in used_tags})
+        except:
+            logger.error(f"Error in query string: \n{query}")
+            raise
+    else:
+        tr_filter_fun=query_fun=None
+        g_filter_fun={}
+
+    for g in self.iter_genes(region=region, progress_bar= progress_bar):
+        g_filter_eval={tag:fun(**g.data) for tag,fun in g_filter_fun.items()}
+        for i,tr in g._filter_transcripts(query_fun, tr_filter_fun,g_filter_eval, min_coverage, max_coverage):
             yield g,i,tr
 
-def iter_ref_transcripts(self,region=None,include=None, remove=None):
+def iter_ref_transcripts(self,region=None,query=None, progress_bar=False):
     '''Iterates over the referemce transcripts of a region, optionally applying filters.
     
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional. 
-    :param include: If provided, only genes featuring at least one of these flags are considered.
-    :param remove: If provided, genes featuring one of at least these flags are ignored.'''
-    if include or remove:
-        assert 'filter' in self.infos, 'no filter flags found - run .add_filter() method first'
-        all_filter=self.infos['filter']
-    g_include=[f for f in include if f in all_filter['gene_filter']] if include else []
-    g_remove=[f for f in remove if f in all_filter['gene_filter']] if remove else []
-    t_include=[f for f in include if f not in all_filter['gene_filter']] if include else []
-    t_remove=[f for f in remove if f not in all_filter['gene_filter']] if remove else []
-    assert all(f in all_filter['ref_transcript_filter'] for f in t_include), 'not all reference filters to include found'
-    assert all(f in all_filter['ref_transcript_filter'] for f in t_remove), 'not all  reference filters to remove found'
-    for g in self.iter_genes(region, g_include, g_remove):
+    :param query: If provided, query string is evaluated on all transcripts for filtering'''
+    if query:
+        #used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}        
+        all_filter=list(self.filter['reference'])+list(self.filter['gene'] )
+        query_fun, used_tags=_filter_function(query)
+        msg='did not find the following filter rules: {}\nvalid rules are: {}'
+        ref_filter_fun={tag:_filter_function(self.filter['reference'][tag])[0] for tag in used_tags if tag in self.filter['reference']}
+        g_filter_fun={tag:_filter_function(self.filter['gene'][tag])[0] for tag in used_tags if tag in self.filter['gene']}
+        assert all(f in all_filter for f in used_tags), msg.format( 
+            ', '.join(f for f in used_tags if f not in all_filter), ', '.join(all_filter) )      
+        try: #test the filter expression with dummy tags
+            _=query_fun(**{tag:True for tag in used_tags})
+        except:
+            logger.error("Error in query string: \n{query}")
+            raise
+    else:
+        ref_filter_fun=query_fun=None
+        g_filter_fun={}
+    for g in self.iter_genes(region=region, progress_bar= progress_bar):
         if g.is_annotated:
-            for i,tr in g.filter_ref_transcripts(t_include, t_remove):
+            g_filter_eval={tag:fun(**g.data) for tag,fun in g_filter_fun.items()}        
+            for i,tr in g._filter_ref_transcripts(query_fun, ref_filter_fun,g_filter_eval):
                 yield g,i,tr
-
-
-def _filter_function(argnames, expression):
-    'converts a string e.g. "all x[0]/x[1]>3" into a function'
-    return eval (f'lambda {",".join(arg+"=None" for arg in argnames)}: bool({expression})\n',{},{})
-    

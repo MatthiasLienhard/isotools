@@ -1,11 +1,17 @@
 import os
 import pickle
 import logging
-from ._transcriptome_io import import_ref_transcripts
-from .gene import Gene
+import re
 from intervaltree import IntervalTree #, Interval
 import pandas as pd
+from ._transcriptome_io import import_ref_transcripts
+from .gene import Gene
+from ._transcriptome_filter import DEFAULT_GENE_FILTER, DEFAULT_TRANSCRIPT_FILTER, DEFAULT_REF_TRANSCRIPT_FILTER, ANNOTATION_VOCABULARY, SPLICE_CATEGORY
+from . import __version__
+from ._utils import  _filter_function
 logger=logging.getLogger('isotools')
+
+
 
 # as this class has diverse functionality, its split among:
 # transcriptome.py (this file- initialization and user level basic functions)
@@ -29,7 +35,7 @@ class Transcriptome:
     def __init__(self, pickle_file=None,**kwargs ):   
         '''Constructor method'''  
         if 'data' in kwargs:
-            self.data,self.infos, self.chimeric=kwargs['data'],kwargs.get('infos',dict()),kwargs.get('chimeric',{})
+            self.data,self.infos, self.chimeric, self.filter=kwargs['data'],kwargs.get('infos',dict()),kwargs.get('chimeric',{}),kwargs.get('filter',{})
             assert 'reference_file' in self.infos 
             self.make_index()
         
@@ -46,7 +52,17 @@ class Transcriptome:
         :param chromosome: If reference file is gtf/gff, restrict import on specified chromosomes
         :param infer_transcrpts: If reference file is gtf, genes and transcripts are infered from "exon" entries, no specific transcript '''
         tr=cls.__new__(cls)
-        tr.infos={'reference_file':reference_file}
+        tr.infos={'reference_file':reference_file, 'isotools_version':__version__}
+        tr.filter={'gene': DEFAULT_GENE_FILTER.copy(),
+            'transcript':DEFAULT_TRANSCRIPT_FILTER.copy(), 
+            'reference':DEFAULT_REF_TRANSCRIPT_FILTER.copy()}
+
+        for subcat in ANNOTATION_VOCABULARY:
+            tag='_'.join(re.findall(r'\b\w+\b',subcat)).upper()
+            tr.filter['transcript'][tag]=f'"{subcat}" in annotation[1]'
+        for i,cat in enumerate(SPLICE_CATEGORY):
+            tr.filter['transcript'][cat]=f'annotation[0]=={i}'
+
         tr.chimeric={}
         if file_format=='auto':        
             file_format=os.path.splitext(reference_file)[1].lstrip('.')
@@ -60,8 +76,8 @@ class Transcriptome:
             if kwargs:
                 logger.warn("The following parameters are ignored when loading reference from pkl: "+", ".join(kwargs))
             tr= pickle.load(open(reference_file, 'rb'))            
-            if [k for k in tr.infos if k!='reference_file']:
-                logger.warning('the pickle file seems to contain additional expression information... extracting refrence')
+            if 'sample_table' in tr.infos:
+                logger.warning('the pickle file seems to contain sample information... extracting refrence')
                 tr=tr._extract_reference()
         else: logger.error('unknown file format %s',file_format)
         return tr
@@ -82,7 +98,11 @@ class Transcriptome:
         :param pickle_file: Filename to restore data'''
 
         logger.info('loading transcriptome from '+pickle_file)
-        return pickle.load(open(pickle_file, 'rb'))
+        tr=pickle.load(open(pickle_file, 'rb'))
+        pickled_version=tr.infos.get('isotools_version','<0.2.6')
+        if pickled_version != __version__:
+            logger.warn(f'This is isotools version {__version__}, but data has been pickled with version {pickled_version}, which may be incompatible')
+        return tr
         
 
     def save_reference(self, pickle_file=None):    
@@ -99,7 +119,7 @@ class Transcriptome:
         if not [k for k in self.infos if k!='reference_file']:
             return self #only reference info - assume that self.data only contains reference data
         #make a new transcriptome
-        ref_tr=type(self)(data={} ,infos={'reference_file':self.infos['reference_file']})
+        ref_tr=type(self)(data={} ,infos={'reference_file':self.infos['reference_file']}, filter=self.filter)
         # extract the reference genes and link them to the new ref_tr
         for chrom,tree in self.data.items():
             ref_tr.data[chrom]=IntervalTree(Gene(g.start,g.end,{k:g.data[k] for k in Gene.required_infos+['reference']}, ref_tr) for g in tree if g.is_annotated)

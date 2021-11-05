@@ -4,11 +4,12 @@ import numpy as np
 import copy
 from .splice_graph import SegmentGraph
 from .short_read import Coverage
+from ._utils import _filter_function
 
 import logging
 logger=logging.getLogger('isotools')
 
-def _eval_filter_fun(fun,name,args):
+def _eval_filter_fun(fun,name,**args):
     '''Decorator for the filter functions, which are lambdas and thus cannot have normal decorators.
     On exceptions the provided parameters are reported. This is helpfull for debugging.'''
     try:
@@ -52,49 +53,37 @@ class Gene(Interval):
                 self.data['short_reads'].append(Coverage.from_bam(srdf.file[i],self))
         return self.data['short_reads'][idx]
 
-    def add_filter(self, gene_filter,transcript_filter,ref_transcript_filter):   
-        '''Adds the filter flags to the gene, transcripts and reference transcripts.
-        
-        This evaluates the provided expressions on the gene, transcripts and reference transcripts and adds the appropriate filter flags.
+    
 
-        :param gene_filter: Flag expressions for the gene level information. 
-        :param transcript_filter: Flag expressions to be evalutated on the transcripts. 
-        :param ref_transcript_filter: Flag expressions to be evalutated on the reference transcripts. '''
-        self.data['filter']=[name for name,fun in gene_filter.items() if  _eval_filter_fun(fun,name,self.data)]
-        for tr in self.transcripts:
-            tr['filter']=[name for name,fun in transcript_filter.items() if _eval_filter_fun(fun,name,tr)]
-        for tr in self.ref_transcripts:
-            tr['filter']=[name for name,fun in ref_transcript_filter.items() if _eval_filter_fun(fun,name,tr)]
 
-    def filter_transcripts(self, include, remove, anno_include, anno_remove, mincoverage=None, maxcoverage=None):
+    def _filter_transcripts(self, query_fun, filter_fun,g_filter_eval, mincoverage=None, maxcoverage=None):
         ''' Iterator over the transcripts of the gene. 
         
         Transcrips are specified by lists of flags submitted to the parameters.
         
-        :param include: transcripts must have at least one of the flags
-        :param remove: transcripts must not have one of the flags'''
+        :param query_fun: function to be evaluated on tags
+        :param filter_fun: tags to be evalutated on transcripts'''
         for i,tr in enumerate(self.transcripts):
             if mincoverage and self.coverage[:,i].sum()< mincoverage:
                 continue
             if maxcoverage and self.coverage[:,i].sum()> maxcoverage:
                 continue
-            if not include or any(f in tr['filter'] for f in include):
-                if not anno_include or any(f in tr['annotation'][1] for f in anno_include):
-                    if not remove or all(f not in tr['filter'] for f in remove):
-                        if not anno_remove or all(f not in tr['annotation'][1] for f in anno_remove):
-                            yield i,tr 
+            query_result=query_fun is None or query_fun(**g_filter_eval,**{tag:_eval_filter_fun(f,tag,g=self, trid=i, **tr) for tag,f in filter_fun.items()})
+            if query_result:                
+                yield i,tr 
 
-    def filter_ref_transcripts(self, include, remove):
+    def _filter_ref_transcripts(self, query_fun, filter_fun,g_filter_eval):
         ''' Iterator over the refernce transcripts of the gene. 
         
         Transcrips are specified by lists of flags submitted to the parameters.
 
-        :param include: Transcripts must have at least one of the flags.
-        :param remove: Transcripts must not have one of the flags.'''
+        :param query_fun: function to be evaluated on tags
+        :param filter_fun: tags to be evalutated on transcripts'''
         for i,tr in enumerate(self.ref_transcripts):
-            if not include or any(f in tr['filter'] for f in include):
-                if not remove or all(f not in tr['filter'] for f in remove):
-                    yield i,tr
+             #query_result=query_fun is None or query_fun(**{tag:f(g=self, trid=i,**g_filter_eval, **tr) for tag,f in filter_fun.items()})
+            query_result=query_fun is None or query_fun(**g_filter_eval,**{tag:_eval_filter_fun(f,tag,g=self, trid=i, **tr) for tag,f in filter_fun.items()})
+            if query_result:                
+                yield i,tr 
         
     def correct_fuzzy_junctions(self,trid, size, modify=True):
         '''Corrects for splicing shifts.
@@ -264,11 +253,6 @@ class Gene(Interval):
         #returns tuples (as some keys return multiple values)
         if key=='length':
             return sum((e-b for b,e in self.transcripts[trid]['exons'])),
-        if key=='filter':
-            if self.transcripts[trid]['filter']:
-                return ','.join(self.transcripts[trid]['filter']),
-            else:
-                return 'PASS',
         elif key=='n_exons':
             return len(self.transcripts[trid]['exons']),
         elif key=='exon_starts':

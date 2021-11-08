@@ -2,6 +2,7 @@
 .*
 !.gitignore
 !.readthedocs.yaml
+!.github
 # Compiled python modules.
 *.pyc
 

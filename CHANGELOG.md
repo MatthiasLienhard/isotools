@@ -1,11 +1,10 @@
 # Change Log
 
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
-* avoid the need for add_filters - construct and evaluate lambdas during filtering
-* run_isotools console script is totally outdated and broken
-* unit tests are outdated/broken/not automated
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
+## [0.2.7]
+* added command line script run_isotools.py
 
 
 ## [0.2.6]

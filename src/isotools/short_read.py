@@ -1,12 +1,10 @@
 # methods and classes for the integration of short read data
+from typing import Dict, Tuple
 from pysam import AlignmentFile
 from ._utils import junctions_from_cigar
 import numpy as np
 import logging
 logger = logging.getLogger('isotools')
-
-
-from typing import Dict, List, Tuple, Any
 
 
 class Coverage:
@@ -46,9 +44,9 @@ class Coverage:
         return obj
 
     @classmethod  # this is slow - called only if coverage is requested
-    def _import_coverage(cls, align_fh, reg):
+    def _import_coverage(cls, align_fh, reg: Tuple[str, int, int]):
         delta = np.zeros(reg[2]-reg[1])
-        junctions:Dict[Tuple[int, int], int] = {}
+        junctions: Dict[Tuple[int, int], int] = {}
         for read in align_fh.fetch(*reg):
             exons = junctions_from_cigar(read.cigartuples, read.reference_start)
             # alternative: read.get_blocks() should be more efficient.. -todo: is it different?
@@ -68,7 +66,8 @@ class Coverage:
 
     def load(self):
         'load the coverage from bam file'
-        with AlignmentFile(self.bam_fn, 'rb') as align:
+        assert self.reg is not None, 'Coverage not initialized'
+        with AlignmentFile(self.bam_fn, 'rb') as align:            
             logger.debug(f'Illumina coverage of region {self.reg[0]}:{self.reg[1]}-{self.reg[2]} is loaded from {self.bam_fn}')  # info or debug?
             self._cov, self._junctions = type(self)._import_coverage(align, self.reg)
 
@@ -85,6 +84,7 @@ class Coverage:
         return self._cov  # todo: implement rle?
 
     def __getitem__(self, subscript):
+        assert self.reg is not None, 'Coverage not initialized'
         if isinstance(subscript, slice):
             return self.profile[slice(None if subscript.start is None else subscript.start-self.reg[1],
                                       None if subscript.stop is None else subscript.stop-self.reg[1],

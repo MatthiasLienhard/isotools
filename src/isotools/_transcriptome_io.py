@@ -1,4 +1,4 @@
-from typing import Set, Dict, List, Tuple, Any, Optional, Sequence, Generator, ItemsView, Union, Iterable
+from typing import Set, Dict, List, Tuple, Any, Optional, Sequence, Union
 import numpy as np
 # from numpy.lib.function_base import percentile, quantile
 import pandas as pd
@@ -8,14 +8,12 @@ from tqdm import tqdm
 from contextlib import ExitStack
 from .short_read import Coverage
 from ._utils import junctions_from_cigar, splice_identical, is_same_gene, overlap, pairwise, cigar_string2tuples, rc
-from .gene import Gene
+from .gene import Gene, exon_t, transcript_t
 from .decorators import deprecated, experimental
 import logging
 import gzip as gziplib
 logger = logging.getLogger('isotools')
 
-exon_t = Tuple[int, int]
-transcript_t = Dict[str, Any]  # transcript properties
 breakpoint_t = Tuple[str, str, int, str, str, int]
 numeric = Union[int, float, np.number]
 # io functions for the transcriptome class
@@ -867,9 +865,9 @@ def get_mutations_from_bam(bam_file, genome_file, region, min_cov=.05) -> Tuple[
     '''not very efficient function to fetch mutations within a region from a bam file
     not exported so far'''
 
-    mut:Dict[int, Dict[str, List[Any]]] = dict()  # {pos:{alternative sequence:(count, ref, [qual])}}
-    
-    exons:List[List[exon_t]] = []
+    mut: Dict[int, Dict[str, List[Any]]] = dict()  # {pos:{alternative sequence:(count, ref, [qual])}}
+
+    exons: List[List[exon_t]] = []
     n = 0
     with AlignmentFile(bam_file, "rb") as align:
         for read in align.fetch(*region):
@@ -886,7 +884,7 @@ def get_mutations_from_bam(bam_file, genome_file, region, min_cov=.05) -> Tuple[
         min_cov = n * min_cov
 
     mut = {pos: v for pos, v in mut.items() if sum(v[alt][0] for alt in v) > min_cov}
-    cov:Dict[int, int]={}
+    cov: Dict[int, int] = {}
     with FastaFile(genome_file) as genome_fh:
         for pos, v in mut.items():
             for alt, (_, ref_len, _) in v.items():
@@ -1054,8 +1052,8 @@ def write_gtf(self, fn, source='isotools', use_gene_name=False, region=None, que
     :param region: Splecify genomic region to export to gtf. If omitted, export whole genome.
     :param query: Specify transcript filter query.
     :param gzip: compress the output as gzip.'''
-    g_pre:Gene=None
-    tr_ids:List[int] = []
+    g_pre: Gene = None
+    tr_ids: List[int] = []
 
     def openfile(fn):
         if gzip:
@@ -1114,11 +1112,11 @@ def export_alternative_splicing(self, out_dir, out_format='mats', reference=Fals
     if samples is None:
         samples = self.samples
     assert all(s in self.samples for s in samples), 'not all specified samples found'
-    sa_dict= {sa: i for i, sa in enumerate(self.samples)}
-    sidx= np.array([sa_dict[sa] for sa in samples])
+    sa_dict = {sa: i for i, sa in enumerate(self.samples)}
+    sidx = np.array([sa_dict[sa] for sa in samples])
 
     assert 0 < min_alt_fraction < .5, 'min_alt_fraction must be > 0 and < 0.5'
-    count= {st: 0 for st in types.values()}
+    count = {st: 0 for st in types.values()}
     with ExitStack() as stack:
         fh = {st: stack.enter_context(open(out_file[st], 'w')) for st in out_file}
         if out_format == 'mats':  # prepare mats header
@@ -1190,7 +1188,7 @@ def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
         chrom = 'chr' + g.chrom
     else:
         chrom = g.chrom
-    exonsA:Tuple[exon_t,...] = ((seg_graph[nodeX].start, seg_graph[nodeX].end), (seg_graph[nodeY].start, seg_graph[nodeY].end))
+    exonsA: Tuple[exon_t, ...] = ((seg_graph[nodeX].start, seg_graph[nodeX].end), (seg_graph[nodeY].start, seg_graph[nodeY].end))
     for exonsB in {tuple(seg_graph._get_all_exons(nodeX, nodeY, b_tr)) for b_tr in setB}:
         exons_sel = None
         if st in ['A3SS', 'A5SS'] and len(exonsB) == 2:
@@ -1201,8 +1199,8 @@ def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
         elif st == 'SE' and len(exonsB) == 3:
             assert exonsA[0] == exonsB[0] and exonsA[1] == exonsB[2], f'invalid exon skipping {exonsA} vs {exonsB}'  # just to be sure everything is consistent
             # e_order=(1,0,2) if g.strand=='+' else (1,2,0)
-            e_order= (1, 0, 2)
-            exons_sel= [exonsB[i] for i in e_order]
+            e_order = (1, 0, 2)
+            exons_sel = [exonsB[i] for i in e_order]
         elif st == 'RI' and len(exonsB) == 1:
             exons_sel = [exonsB[0], exonsA[0], exonsA[1]]  # if g.strand=='+' else [exonsB[0], exonsA[1], exonsA[0]]
         elif st == 'MXE' and len(exonsB) == 3:
@@ -1243,7 +1241,7 @@ class IntervalArray:
 
     def __init__(self, total_size, bin_size=1e4):
         self.obj = {}
-        self.data: List[Set[int]] = [set() for _ in range(int((total_size) // bin_size) + 1)] # set of all ids of the stored objects
+        self.data: List[Set[int]] = [set() for _ in range(int((total_size) // bin_size) + 1)]  # set of all ids of the stored objects
         self.bin_size = bin_size
 
     def overlap(self, begin, end):

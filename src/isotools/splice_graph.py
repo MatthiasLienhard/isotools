@@ -4,7 +4,7 @@ import logging
 from sortedcontainers import SortedDict  # for SpliceGraph
 from ._utils import pairwise, overlap
 from .decorators import deprecated, experimental
-from typing import Union
+from dataclasses import dataclass, field
 
 logger = logging.getLogger('isotools')
 
@@ -78,7 +78,7 @@ class SegmentGraph():
                 exons.append([self._graph[idx].start, self._graph[idx].end])
             # print(exons)
 
-        return [tuple(e) for e in exons]
+        return [(e[0], e[1]) for e in exons]
 
     def _restore_reverse(self, i: int) -> List[exon_t]:  # mainly for testing
         ''' Restore the ith transcript from the Segment graph by traversing from 3' to 5'
@@ -97,10 +97,9 @@ class SegmentGraph():
                 exons[-1][0] = self._graph[idx].start
             else:
                 exons.append([self._graph[idx].start, self._graph[idx].end])
-            # print(exons)
 
         exons.reverse()
-        return [tuple(e) for e in exons]
+        return [(e[0], e[1]) for e in exons]
 
     def search_transcript(self, exons: List[exon_t]) -> List[int]:
         '''Tests if a transcript (provided as list of exons) is contained in self and return the corresponding transcript indices.
@@ -270,7 +269,7 @@ class SegmentGraph():
 
         return category, altsplice
 
-    def _check_exon(self, j1, j2, is_first, is_reverse, e, e2=None):
+    def _check_exon(self, j1: int, j2: int, is_first: bool, is_reverse: bool, e: exon_t, e2: Optional[exon_t] = None) -> Tuple[Dict[str, Any], int]:
         '''checks whether exon is supported by splice graph between nodes j1 and j2
 
         :param j1: index of first segment ending after exon start (i.e. first overlapping segment)
@@ -291,28 +290,28 @@ class SegmentGraph():
             altsplice['mono-exon'] = []
             category = 1
         else:  # check splice sites
-            if self[j1][0] != e[0]:  # first splice site missmatch
+            if self[j1].start != e[0]:  # first splice site missmatch
                 if not is_first:
                     # pos="intronic" if self[j1][0]>e[0] else "exonic"
                     kind = '5' if is_reverse else '3'
-                    dist = min((self[j][0] - e[0] for j in range(j1, j2 + 1)), key=lambda x: abs(x))  # the distance to next junction
+                    dist = min((self[j].start - e[0] for j in range(j1, j2 + 1)), key=abs)  # the distance to next junction
                     altsplice[f"novel {kind}' splice site"] = [(e[0], dist)]
                     category = 3
-                elif self[j1][0] > e[0] and not any(j in self._tss for j in range(j1, j2 + 1)):  # exon start is intronic in ref
+                elif self[j1].start > e[0] and not any(j in self._tss for j in range(j1, j2 + 1)):  # exon start is intronic in ref
                     site = 'PAS' if is_reverse else 'TSS'
-                    altsplice.setdefault(f'novel exonic {site}', []).append((e[0], self[j1][0]))
+                    altsplice.setdefault(f'novel exonic {site}', []).append((e[0], self[j1].start))
                     category = max(2, category)
-            if self[j2][1] != e[1]:  # second splice site missmatch
+            if self[j2].end != e[1]:  # second splice site missmatch
                 if not is_last:
                     # pos="intronic" if self[j2][1]<e[1] else "exonic"
                     # TODO: could also be a "novel intron", if the next "first" splice site is also novel.
                     kind = '3' if is_reverse else '5'
-                    dist = min((self[j][1] - e[1] for j in range(j1, j2 + 1)), key=lambda x: abs(x))  # the distance to next junction
+                    dist = min((self[j].end - e[1] for j in range(j1, j2 + 1)), key=abs)  # the distance to next junction
                     altsplice.setdefault(f"novel {kind}' splice site", []).append((e[1], dist))
                     category = 3
-                elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1, j2 + 1)):  # exon end is intronic in ref & not overlapping tss
+                elif self[j2].end < e[1] and not any(j in self._pas for j in range(j1, j2 + 1)):  # exon end is intronic in ref & not overlapping tss
                     site = 'TSS' if is_reverse else 'PAS'
-                    altsplice.setdefault(f'novel exonic {site}', []).append((self[j2][1], e[1]))
+                    altsplice.setdefault(f'novel exonic {site}', []).append((self[j2].end, e[1]))
                     category = max(2, category)
 
         # find intron retentions
@@ -336,7 +335,7 @@ class SegmentGraph():
         logger.debug(f'check exon {e} resulted in {altsplice}')
         return altsplice, category
 
-    def _check_junction(self, j1: int, j2: int, e: exon, e2: exon) -> Tuple[int, int, Any]:
+    def _check_junction(self, j1: int, j2: int, e: exon_t, e2: exon_t) -> Tuple[int, int, Any]:
         ''' check a junction in the segment graph
 
         * check presence e1-e2 junction in ref (-> if not exon skipping or novel junction)
@@ -346,7 +345,7 @@ class SegmentGraph():
             * j3: first node ending after e2 start, or len(self)
             * j4: last node starting before e2 end (assuming there is such a node)'''
         altsplice: Dict[str, List[Any]] = {}
-        j3 = next((j for j in range(j2 + 1, len(self)) if self[j][1] > e2[0]), len(self))
+        j3 = next((j for j in range(j2 + 1, len(self)) if self[j].end > e2[0]), len(self))
         j4 = next((j - 1 for j in range(j3, len(self)) if self[j].start >= e2[1]), len(self) - 1)
         if j3 == len(self) or self[j3].start > e2[1]:
             return j3, j4, altsplice  # no overlap with e2
@@ -547,28 +546,28 @@ class SegmentGraph():
                     esm[covered, e_nr + 1] = True
         return esm
 
-    def get_intersects(self, exons):
+    def get_intersects(self, exons:List[exon_t])->Tuple[int, int]:
         '''Computes the splice junction exonic overlap of a new transcript with the segment graph.
 
         :param exons: A list of exon tuples representing the transcript
         :type exons: list
         :return: the splice junction overlap and exonic overlap'''
 
-        intersect = [0, 0]
+        sji,exi = 0, 0
         i = j = 0
         while True:
-            if self[j][0] == exons[i][0] and any(self[k][1] < self[j][0] for k in self[j].pre.values()):
-                intersect[0] += 1  # same position and actual splice junction(not just tss or pas and internal junction)
-            if self[j][1] == exons[i][1] and any(self[k][0] > self[j][1] for k in self[j].suc.values()):
-                intersect[0] += 1
-            if self[j][1] > exons[i][0] and exons[i][1] > self[j][0]:  # overlap
-                intersect[1] += min(self[j][1], exons[i][1]) - max(self[j][0], exons[i][0])
-            if exons[i][1] < self[j][1]:
+            if self[j].start == exons[i][0] and any(self[k].end < self[j].start for k in self[j].pre.values()):
+                sji += 1  # same position and actual splice junction(not just tss or pas and internal junction)
+            if self[j].end == exons[i][1] and any(self[k].start > self[j].end for k in self[j].suc.values()):
+                sji += 1
+            if self[j].end > exons[i][0] and exons[i][1] > self[j].start:  # overlap
+                exi += min(self[j].end, exons[i][1]) - max(self[j].start, exons[i][0])
+            if exons[i][1] < self[j].end:
                 i += 1
             else:
                 j += 1
             if i == len(exons) or j == len(self):
-                return(intersect)
+                return sji,exi
 
     @deprecated
     def _find_ts_candidates(self, coverage):
@@ -648,7 +647,6 @@ class SegmentGraph():
         If both functions yield same results, there is a good chance that the compex code is actually right.'''
 
         if any(t < 5 for t in tids):
-
             try:
                 i, nA = next((idx, n) for idx, n in enumerate(self) if n.end == pos[0])
                 if len(pos) == 3:
@@ -661,7 +659,7 @@ class SegmentGraph():
                 raise ValueError(f"cannot find segments at {pos} in segment graph") from e
 
             direct: Set[int] = set()  # primary
-            indirect: Tuple[Set[int], Set[int], Set[int], Set[int]] = set(), set(), set(), set()  # for es, as at start, as at end, ir
+            indirect: Tuple[Set[int], Set[int], Set[int], Set[int]] = (set(), set(), set(), set())  # for es, as at start, as at end, ir
             for tr, node_id in nA.suc.items():
                 type_id = 0
                 if tr not in nB.pre:
@@ -756,14 +754,15 @@ class SegmentGraph():
                 for tr, node_id in nA.suc.items():
                     outA_sets.setdefault(node_id, set()).add(tr)
                 unspliced = nA.end == self[junctions[0]].start
-                alternative:Tuple[Set[int], Set[int]] = (set(), outA_sets[junctions[0]]) if unspliced else (outA_sets[junctions[0]], set())
+                alternative: Tuple[Set[int], Set[int]] = (set(), outA_sets[junctions[0]]) if unspliced else (outA_sets[junctions[0]], set())
                 # nC_dict aims to avoid recalculation of nC for ME events
                 # tr -> node at start of 2nd exon C for tr such that there is one exon (B) (and both flanking introns) between nA and C; None if transcript ends
-                nC_dict:Dict[int, Any] = {}
+                nC_dict: Dict[int, Any] = {}
                 me_alt_seen: Set[int] = set()  # ensure that only ME events with novel tr are reported
                 logger.debug(f'checking node {i}: {nA} ({list(zip(junctions,[outA_sets[j] for j in junctions]))})')
                 for j_idx, joi in enumerate(junctions[1:]):  # start from second, as first does not have an alternative
-                    alternative = ({tr for tr in alternative[0] if self._pas[tr] > joi},{tr for tr in alternative[1] if self._pas[tr] > joi} )  # check that transcripts extend beyond nB
+                    alternative = ({tr for tr in alternative[0] if self._pas[tr] > joi}, {tr for tr in alternative[1]
+                                   if self._pas[tr] > joi})  # check that transcripts extend beyond nB
                     logger.debug(alternative)
                     found = [trL1.intersection(trL2) for trL1 in alternative for trL2 in inB_sets[joi]]  # alternative transcript sets for the 4 types
                     #  5th type: mutually exclusive (outdated handling of ME for reference)
@@ -781,7 +780,7 @@ class SegmentGraph():
                                 nC_dict.setdefault(tr, self._get_next_spliced(tr, nA.suc[tr]))
                                 if nC_dict[tr] is None:  # transcript end in nB, no node C
                                     me_alt_seen.add(tr)  # those are not of interest for ME
-                            inC_sets :Dict[int, Set[int]]= {}  # dict of nC indices to sets of nA-intron-nB-intron-nC transcripts, where nB >= joi
+                            inC_sets: Dict[int, Set[int]] = {}  # dict of nC indices to sets of nA-intron-nB-intron-nC transcripts, where nB >= joi
                             for nB_i in junctions[j_idx + 1:]:  # all primary junctions
                                 for tr in outA_sets[nB_i]:  # primary transcripts
                                     nC_dict.setdefault(tr, self._get_next_spliced(tr, nB_i))  # find nC
@@ -811,10 +810,10 @@ class SegmentGraph():
 
         :return: Tuple with 1) transcript ids sharing common start exon and 2) alternative transcript ids respectivly,
             as well as 3) start and 4) end node ids of the exon and 5) type of alternative event ("TSS" or "PAS")'''
-        tss: Dict[int,Set[int]] = {}
-        pas: Dict[int,Set[int]] = {}
-        tss_start: Dict[int,int] = {}
-        pas_end: Dict[int,int] = {}
+        tss: Dict[int, Set[int]] = {}
+        pas: Dict[int, Set[int]] = {}
+        tss_start: Dict[int, int] = {}
+        pas_end: Dict[int, int] = {}
         for tr, (start1, end1) in enumerate(zip(self._tss, self._pas)):
             start2 = self._get_exon_end(tr, start1)
             if start2 != end1:  # skip single exon transcripts
@@ -842,11 +841,11 @@ class SegmentGraph():
         :param position: The genomic position to check.
         :return: True, if the position overlaps with an exon, else False.'''
         for n in self:
-            if n[0] <= position and n[1] >= position:
+            if n.start <= position and n.end >= position:
                 return True
         return False
 
-    def _get_all_exons(self, nodeX, nodeY, tr)->List[exon_t]:
+    def _get_all_exons(self, nodeX, nodeY, tr) -> List[exon_t]:
         'get all exons from nodeX to nodeY for transcripts tr'
         # TODO: add option to extend first and last exons
         n = max(nodeX, self._tss[tr])  # if tss>nodeX start there
@@ -869,9 +868,9 @@ class SegmentGraph():
                 exons[-1][1] = self[n].end
             else:
                 exons.append([self[n].start, self[n].end])
-        return [tuple(e) for e in exons]
+        return [(e[0], e[1]) for e in exons]
 
-    def __getitem__(self, key) -> 'SegGraphNode':
+    def __getitem__(self, key):
         return self._graph[key]
 
     def __len__(self) -> int:
@@ -881,37 +880,13 @@ class SegmentGraph():
         return self._graph.__iter__()
 
 
-class SegGraphNode(tuple):
+@dataclass
+class SegGraphNode:
     '''A node in a segment graph represents an exonic segment.'''
-    def __new__(cls, start:int, end:int, pre:Optional[ Dict[int,int]]=None, suc: Optional[ Dict[int,int]]=None):
-        if pre is None:
-            pre = dict()
-        if suc is None:
-            suc = dict()
-        return super(SegGraphNode, cls).__new__(cls, (start, end, pre, suc))
-
-    def __getnewargs__(self):
-        return tuple(self)
-
-    @property
-    def start(self) -> int:
-        '''the (genomic 5') start of the segment'''
-        return self.__getitem__(0)
-
-    @property
-    def end(self) -> int:
-        '''the (genomic 3') end of the segment'''
-        return self.__getitem__(1)
-
-    @property
-    def pre(self) -> Dict[int,int]:
-        '''the predecessor segments of the segment (linked nodes downstream)'''
-        return self.__getitem__(2)
-
-    @property
-    def suc(self) -> Dict[int,int]:
-        '''the successor  segments of the segment (linked nodes downstream)'''
-        return self.__getitem__(3)
+    start: int
+    end: int
+    pre: Dict[int, int] = field(default_factory=dict)
+    suc: Dict[int, int] = field(default_factory=dict)
 
 
 class SpliceGraph():
@@ -922,11 +897,12 @@ class SpliceGraph():
     Nodes are kept sorted, so iteration over splicegraph returns all nodes in genomic order
     Edges are assessed with SpliceGraph.pre(node, [tr_nr]) and SpliceGraph.suc(node, [tr_nr]) functions.
     If no tr_nr is provided, a dict with all incoming/outgoing edges is returned'''
-    def __init__(self, is_reverse, graph,fwd_starts, rev_starts ):
-        self.is_reverse=is_reverse
-        self._graph=graph
-        self._fwd_starts=fwd_starts
-        self._rev_starts=rev_starts
+
+    def __init__(self, is_reverse, graph, fwd_starts, rev_starts):
+        self.is_reverse = is_reverse
+        self._graph = graph
+        self._fwd_starts = fwd_starts
+        self._rev_starts = rev_starts
 
     @classmethod
     def from_transcript_list(cls, transcripts, strand) -> 'SpliceGraph':
@@ -939,7 +915,6 @@ class SpliceGraph():
         :rtype: SpliceGraph'''
 
         assert strand in '+-', 'strand must be either "+" or "-"'
-        #sg = cls()
         is_reverse = strand == '-'
         graph = SortedDict()
 
@@ -989,7 +964,7 @@ class SpliceGraph():
             return edges
         return edges[tr_nr]
 
-    def pre(self, node, tr_nr=None) :
+    def pre(self, node, tr_nr=None):
         '''get index of predesessor node (next genomic downstream node) of transcript, or, if tr_nr is omitted, a dict with predesessors for all transcripts.
 
         :param node: index of the originating node

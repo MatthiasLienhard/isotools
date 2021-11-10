@@ -1,19 +1,18 @@
+from typing import Dict, List, Tuple, Set, Any, Optional
 from intervaltree import Interval
 from Bio.Seq import Seq
 import numpy as np
-import numpy.typing as npt
 import copy
 from pysam import FastaFile
-
-from isotools.transcriptome import Transcriptome
+from dataclasses import dataclass, field
 from .splice_graph import SegmentGraph
 from .short_read import Coverage
 import logging
 logger = logging.getLogger('isotools')
 
 
-from typing import Dict, List, Tuple, Any,Optional
-exon = Tuple[int, int]
+exon_t = Tuple[int, int]
+transcript_t = Dict[str, Any]  # transcript properties
 
 
 def _eval_filter_fun(fun, name, **args):
@@ -27,15 +26,38 @@ def _eval_filter_fun(fun, name, **args):
         # return False   #or continue
 
 
+@dataclass
+class Transcript:
+    exons: List[exon_t]
+    annotation: Optional[Tuple[int, Dict[str, List[Any]]]] = None
+    tmp: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # contains TSS, PAS, coverage, read_names - per sample
+    a_content: Optional[int] = None
+    cds: Optional[Tuple[int, int]] = None
+
+
+@dataclass
+class GeneAttributes:
+    id: str
+    name: str
+    chrom: str
+    strand: str
+    _coverage: Optional[np.ndarray] = None  # gets computed on request
+    _seg_graph: Optional[SegmentGraph] = None  # gets computed on request
+    _short_reads: List[Coverage] = field(default_factory=list) # gets computed on request
+    transcripts: List[Transcript] = field(default_factory=list)
+    ref_transcripts: Optional[Tuple[List[Transcript], Dict[str, str], SegmentGraph, Set[exon_t]]] = None
+    infos: Dict[str, str] = field(default_factory=dict)  # all other infos
+
+
 class Gene(Interval):
     'This class stores all gene information and transcripts. It is derived from intervaltree.Interval.'
     required_infos = ['ID', 'chr', 'strand']
 
     # initialization
-    def __new__(cls, begin: int, end: int, data: Dict[str, Any], transcriptome: Transcriptome):
+    def __new__(cls, begin: int, end: int, data: Dict[str, Any], transcriptome):
         return super().__new__(cls, begin, end, data)  # required as Interval (and Gene) is immutable
 
-    def __init__(self, begin: int, end: int, data: Dict[str, Any], transcriptome: Transcriptome):
+    def __init__(self, begin: int, end: int, data: Dict[str, Any], transcriptome):
         self._transcriptome = transcriptome
 
     def __str__(self):
@@ -134,7 +156,7 @@ class Gene(Interval):
             return lines
         return []
 
-    def add_noncanonical_splicing(self, genome_fh:FastaFile):
+    def add_noncanonical_splicing(self, genome_fh: FastaFile):
         '''Add information on noncanonical splicing.
 
         For all transcripts of the gene, scan for noncanonical (i.e. not GT-AG) splice sites.
@@ -159,7 +181,7 @@ class Gene(Interval):
             if nc:
                 tr['noncanonical_splicing'] = nc
 
-    def add_direct_repeat_len(self, genome_fh:FastaFile, delta=10):
+    def add_direct_repeat_len(self, genome_fh: FastaFile, delta=10):
         '''Computes direct repeat length.
 
         This function counts the number of consequtive equal bases at donor and acceptor sites of the splice junctions.
@@ -169,7 +191,7 @@ class Gene(Interval):
         :param genome_fh: The file handle to the genome fasta.
         :param delta: The maximum length of direct repeats that can be found. '''
 
-        intron_seq :Dict[int,str] = {}
+        intron_seq: Dict[int, str] = {}
         score = {}
 
         for tr in self.transcripts:
@@ -430,7 +452,7 @@ class Gene(Interval):
         return self.__copy__()
 
 
-def _coding_len(exons: List[exon], cds: Tuple[int, int]) -> List[int]:
+def _coding_len(exons: List[exon_t], cds: Tuple[int, int]) -> List[int]:
     coding_len = [0, 0, 0]
     state = 0
     for e in exons:

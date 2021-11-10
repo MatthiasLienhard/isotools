@@ -1,3 +1,4 @@
+from typing import Dict, Tuple, Set, List, Union
 from scipy.stats import binom, norm, chi2, betabinom  # pylint: disable-msg=E0611
 from scipy.special import gammaln, polygamma  # pylint: disable-msg=E0611
 from scipy.optimize import minimize
@@ -13,8 +14,7 @@ from ._utils import _filter_function
 
 logger = logging.getLogger('isotools')
 
-from typing import Dict, List, Tuple, Set, Any, Union
-exon = Tuple[int, int]
+exon_t = Tuple[int, int]
 
 # differential splicing
 
@@ -185,7 +185,7 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
     for g in tqdm(self):
         if g.coverage[sidx, :].sum() < min_total:
             continue
-        known:Dict[str,Set[Union[int, Tuple[int, int]]]] = {}  # check for known events
+        known: Dict[str, Set[Union[int, Tuple[int, int]]]] = {}  # check for known events
         if g.is_annotated and g.n_transcripts:
             sg = g.ref_segment_graph
             # find annotated alternatives for gene (e.g. known events)
@@ -264,7 +264,7 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1, sample
     for g in self.iter_genes(region=region, query=query):
         if g.coverage[sidx, :].sum() < min_total:
             continue
-        known:Dict[str,Set[Union[int, Tuple[int, int]]]] = {}  # check for known events
+        known: Dict[str, Set[Union[int, Tuple[int, int]]]] = {}  # check for known events
         if g.is_annotated and g.n_transcripts:
             sg = g.ref_segment_graph
             for _, _, nX, nY, splice_type in sg.find_splice_bubbles():  # find annotated alternatives (known)
@@ -307,7 +307,7 @@ def altsplice_stats(self, groups=None, weight_by_coverage=True, min_coverage=2, 
     :param min_coverage: Threshold to ignore poorly covered transcripts.
     :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
     :return: Table with numbers of novel alternative splicing events, and suggested parameters for isotools.plots.plot_bar().'''
-    weights: Dict[str, np.ndarray]= dict()
+    weights: Dict[str, np.ndarray] = dict()
     # if groups is not None:
     #    gi={r:i for i,r in enumerate(runs)}
     #    groups={gn:[gi[r] for r in gr] for gn,gr in groups.items()}
@@ -358,7 +358,7 @@ def filter_stats(self, tags=None, groups=None, weight_by_coverage=True, min_cove
     :param tr_filter: Only transcripts that pass this filter are evaluated. Filter is provided as dict of parameters, passed to self.iter_transcripts().
     :return: Table with numbers of transcripts featuring the filter tag, and suggested parameters for isotools.plots.plot_bar().'''
 
-    weights: Dict[str, np.ndarray]= dict()
+    weights: Dict[str, np.ndarray] = dict()
 
     if tags is None:
         tags = list(self.filter['transcript'])
@@ -506,10 +506,10 @@ def transcripts_per_gene_hist(self, groups=None, add_reference=False, bins=49, x
             ntr.append(np.zeros(n_sa))
         ntr[-1] += current_cov[:, trid] >= min_coverage
 
-    ntr = pd.DataFrame((n for n in ntr if n.sum() > 0), columns=group_names)
+    ntr_df = pd.DataFrame((n for n in ntr if n.sum() > 0), columns=group_names)
     if isinstance(bins, int):
         bins = np.linspace(x_range[0] - .5, x_range[1] - .5, bins + 1)
-    counts = pd.DataFrame({gn: np.histogram(n, bins=bins)[0] for gn, n in ntr.items()})
+    counts = pd.DataFrame({gn: np.histogram(n, bins=bins)[0] for gn, n in ntr_df.items()})
     if add_reference:
         if ref_filter:
             logger.warning('reference filter not implemented')
@@ -549,15 +549,16 @@ def exons_per_transcript_hist(self, groups=None, add_reference=False, bins=34, x
             current_cov = g.coverage
         cov.append(current_cov[:, trid])
         n_exons.append(len(tr['exons']))
-    cov = pd.DataFrame(cov, columns=self.samples)
+    cov_df = pd.DataFrame(cov, columns=self.samples)
+    del cov
     if groups is not None:
-        cov = pd.DataFrame({grn: cov[grp].sum(1) for grn, grp in groups.items()})
+        cov_df = pd.DataFrame({grn: cov_df[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins, int):
         bins = np.linspace(x_range[0] - .5, x_range[1] - .5, bins + 1)
-    cov[cov < min_coverage] = 0
+    cov_df[cov_df < min_coverage] = 0
     if not weight_by_coverage:
-        cov[cov > 0] = 1
-    counts = pd.DataFrame({gn: np.histogram(n_exons, weights=g_cov, bins=bins)[0] for gn, g_cov in cov.items()})
+        cov_df[cov_df > 0] = 1
+    counts = pd.DataFrame({gn: np.histogram(n_exons, weights=g_cov, bins=bins)[0] for gn, g_cov in cov_df.items()})
     if add_reference:
         ref_n_exons = [len(tr['exons']) for _, _, tr in self.iter_ref_transcripts(**ref_filter)]
         counts['reference'] = np.histogram(ref_n_exons, bins=bins)[0]
@@ -595,15 +596,16 @@ def downstream_a_hist(self, groups=None, add_reference=False, bins=30, x_range=(
             acontent.append(tr['downstream_A_content'])
         except KeyError:
             acontent.append(-1)
-    cov = pd.DataFrame(cov, columns=self.samples)
+    cov_df = pd.DataFrame(cov, columns=self.samples)
+    del cov
     if groups is not None:
-        cov = pd.DataFrame({grn: cov[grp].sum(1) for grn, grp in groups.items()})
+        cov_df = pd.DataFrame({grn: cov_df[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins, int):
         bins = np.linspace(x_range[0], x_range[1], bins + 1)
-    cov[cov <= min_coverage] = 0
+    cov_df[cov_df <= min_coverage] = 0
     if not weight_by_coverage:
-        cov[cov > 0] = 1
-    counts = pd.DataFrame({gn: np.histogram(acontent, weights=g_cov, bins=bins)[0] for gn, g_cov in cov.items()})
+        cov_df[cov_df > 0] = 1
+    counts = pd.DataFrame({gn: np.histogram(acontent, weights=g_cov, bins=bins)[0] for gn, g_cov in cov_df.items()})
     if add_reference:
         ref_acontent = [tr['downstream_A_content'] for _, _, tr in self.iter_ref_transcripts(**ref_filter) if 'downstream_A_content' in tr]
         counts['reference'] = np.histogram(ref_acontent, bins=bins)[0]
@@ -627,7 +629,7 @@ def direct_repeat_hist(self, groups=None, bins=10, x_range=(0, 10), weight_by_co
     # find the direct repeat length distribution in FSM transcripts and putative RTTS
     # putative RTTS are identified by introns where both splice sites are novel but within annotated exons
     # TODO: actually no need to check annotation, could simply use filter flags (or the definition from the filter flags, which should be faster)
-    rl = {cat: [] for cat in ('known', 'novel canonical', 'novel noncanonical')}
+    rl: Dict[str, List[Tuple[int, int]]]= {cat: [] for cat in ('known', 'novel canonical', 'novel noncanonical')} # read lengths and coverage
     for g, trid, tr in self.iter_transcripts(**tr_filter):
         if 'annotation' in tr and tr['annotation'][0] == 0:  # e.g. FSM
             rl['known'].extend((drl, g.coverage[:, trid]) for drl in tr['direct_repeat_len'])
@@ -676,10 +678,11 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
             current = g
             current_cov = g.coverage
         cov.append(current_cov[:, trid])
-    cov = pd.DataFrame(cov, columns=self.samples)
+    cov_df = pd.DataFrame(cov, columns=self.samples)
+    del cov
     if groups is not None:
-        cov = pd.DataFrame({grn: cov[grp].sum(1) for grn, grp in groups.items()})
+        cov_df = pd.DataFrame({grn: cov_df[grp].sum(1) for grn, grp in groups.items()})
     curves = {}
-    for sa in cov:
-        curves[sa] = [(np.random.binomial(n=cov[sa], p=th) >= min_coverage).sum() for th in fractions]
+    for sa in cov_df:
+        curves[sa] = [(np.random.binomial(n=cov_df[sa], p=th) >= min_coverage).sum() for th in fractions]
     return pd.DataFrame(curves, index=fractions)

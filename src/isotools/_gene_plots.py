@@ -1,4 +1,5 @@
 
+from typing import Dict, List, Tuple, Optional
 import matplotlib.colors as plt_col
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
@@ -6,10 +7,8 @@ from matplotlib.ticker import FuncFormatter
 import numpy as np
 from math import log10
 import logging
+from .gene import Gene, exon_t, transcript_t
 logger = logging.getLogger('isotools')
-
-from typing import Dict, List, Tuple, Any, Optional
-exon = Tuple[int, int]
 
 
 def _label_overlap(pos1, pos2, width, height):
@@ -102,8 +101,8 @@ def sashimi_figure(self, samples=None, short_read_samples=None, draw_gene_track=
     return f, axes
 
 
-def sashimi_plot_short_reads(self, samples=None, title='short read coverage', ax=None, junctions_of_interest:Optional[List[Tuple[int,int]]]=None, x_range=None,
-                             jparams=None, min_cov_th=.001, high_cov_th=.05, text_width=.02, arc_type='both', text_height=1,
+def sashimi_plot_short_reads(self, samples=None, title='short read coverage', ax=None, junctions_of_interest: Optional[List[Tuple[int, int]]] = None,
+                             x_range=None, jparams=None, min_cov_th=.001, high_cov_th=.05, text_width=.02, arc_type='both', text_height=1,
                              exon_color='green'):
     '''Draws short read Sashimi plot of the gene.
 
@@ -140,7 +139,7 @@ def sashimi_plot_short_reads(self, samples=None, title='short read coverage', ax
     end = short_reads[0].reg[2]
     # delta=np.zeros(end-start)
     cov = np.zeros(end - start)
-    junctions : Dict[Tuple[int, int], int]= {}
+    junctions: Dict[Tuple[int, int], int] = {}
     for sr_cov in short_reads:
         cov += sr_cov.profile
         for k, v in sr_cov.junctions.items():
@@ -154,7 +153,7 @@ def sashimi_plot_short_reads(self, samples=None, title='short read coverage', ax
         _, ax = plt.subplots()
     ax.fill_between(range(start, end), 0, np.log10(cov, where=cov > 0, out=np.nan * cov), facecolor=exon_color)
     # junctions
-    textpositions:List[Tuple[float, float]] = []
+    textpositions: List[Tuple[float, float]] = []
     for (x1, x2), w in junctions.items():
         if junctions_of_interest is not None and (x1, x2) in junctions_of_interest:
             priority = 2
@@ -262,7 +261,7 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
     # idx=list(range(len(sg)))
     arcs = []
     for i, (_, ee, _, suc) in enumerate(sg):
-        weights :Dict[int,int]= {}
+        weights: Dict[int, int] = {}
         for tr, next_i in suc.items():
             if select_transcripts is not None and tr not in select_transcripts:
                 continue
@@ -278,7 +277,7 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
         if h > 0:
             rect = patches.Rectangle((st, 0), (end - st), log10(h), linewidth=1, edgecolor=exon_color, facecolor=exon_color, zorder=5)
             ax.add_patch(rect)
-    textpositions:List[Tuple[float, float]] = []
+    textpositions: List[Tuple[float, float]] = []
     for x1, y1, x2, y2, w in arcs:
         if junctions_of_interest is not None and (x1, x2) in junctions_of_interest:
             priority = 2
@@ -367,7 +366,7 @@ def gene_track(self, ax=None, title=None, reference=True, select_transcripts=Non
         _, ax = plt.subplots(1)
     if x_range is None:
         x_range = (self.start - 100, self.end + 100)
-    blocked:List[int] = []
+    blocked: List[int] = []
     if draw_other_genes:
         if isinstance(draw_other_genes, list):
             ol_genes = {self._transcriptome[g] for g in draw_other_genes}
@@ -376,7 +375,7 @@ def gene_track(self, ax=None, title=None, reference=True, select_transcripts=Non
             ol_genes = self._transcriptome.data[self.chrom].overlap(*x_range)
     else:
         ol_genes = {self}
-    transcript_list = []
+    transcript_list: List[Tuple[Gene, int, transcript_t]] = []
     for g in ol_genes:
         select_tr = select_transcripts.get(g.name, None)
         if reference:  # select transcripts and sort by start

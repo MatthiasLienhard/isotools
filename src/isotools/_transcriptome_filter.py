@@ -1,3 +1,4 @@
+from typing import Dict, Tuple, Set, List, Union, Optional, Any
 from pysam import FastaFile
 from tqdm import tqdm
 import logging
@@ -179,8 +180,8 @@ def iter_transcripts(self, region=None, query=None, min_coverage=None, max_cover
         msg = 'did not find the following filter rules: {}\nvalid rules are: {}'
         assert all(f in all_filter for f in used_tags), msg.format(
             ', '.join(f for f in used_tags if f not in all_filter), ', '.join(all_filter))
-        tr_filter_fun = {tag: _filter_function(self.filter['transcript'][tag])[0] for tag in used_tags if tag in self.filter['transcript']}
-        g_filter_fun = {tag: _filter_function(self.filter['gene'][tag])[0] for tag in used_tags if tag in self.filter['gene']}
+        tr_filter_fun: Optional[Dict[str, Any]] = {tag: _filter_function(self.filter['transcript'][tag])[0] for tag in used_tags if tag in self.filter['transcript']}
+        g_filter_fun: Dict[str, Any] = {tag: _filter_function(self.filter['gene'][tag])[0] for tag in used_tags if tag in self.filter['gene']}
 
         try:  # test the filter expression with dummy tags
             _ = query_fun(**{tag: True for tag in used_tags})
@@ -207,8 +208,8 @@ def iter_ref_transcripts(self, region=None, query=None, progress_bar=False):
         all_filter = list(self.filter['reference']) + list(self.filter['gene'])
         query_fun, used_tags = _filter_function(query)
         msg = 'did not find the following filter rules: {}\nvalid rules are: {}'
-        ref_filter_fun = {tag: _filter_function(self.filter['reference'][tag])[0] for tag in used_tags if tag in self.filter['reference']}
-        g_filter_fun = {tag: _filter_function(self.filter['gene'][tag])[0] for tag in used_tags if tag in self.filter['gene']}
+        ref_filter_fun: Optional[Dict[str, Any]] = {tag: _filter_function(self.filter['reference'][tag])[0] for tag in used_tags if tag in self.filter['reference']}
+        g_filter_fun: Dict[str, Any] = {tag: _filter_function(self.filter['gene'][tag])[0] for tag in used_tags if tag in self.filter['gene']}
         assert all(f in all_filter for f in used_tags), msg.format(
             ', '.join(f for f in used_tags if f not in all_filter), ', '.join(all_filter))
         try:  # test the filter expression with dummy tags

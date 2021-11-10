@@ -3,6 +3,11 @@
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
+## [0.3.0]
+* added type hints
+* [TODO] redesinged Gene and Transcript representations to allow for type hints
+
+
 ## [0.2.7]
 * added command line script run_isotools.py
 

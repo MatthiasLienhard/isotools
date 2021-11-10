@@ -13,6 +13,9 @@ from ._utils import _filter_function
 
 logger = logging.getLogger('isotools')
 
+from typing import Dict, List, Tuple, Set, Any, Union
+exon = Tuple[int, int]
+
 # differential splicing
 
 
@@ -182,7 +185,7 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
     for g in tqdm(self):
         if g.coverage[sidx, :].sum() < min_total:
             continue
-        known = {}  # check for known events
+        known:Dict[str,Set[Union[int, Tuple[int, int]]]] = {}  # check for known events
         if g.is_annotated and g.n_transcripts:
             sg = g.ref_segment_graph
             # find annotated alternatives for gene (e.g. known events)
@@ -261,7 +264,7 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1, sample
     for g in self.iter_genes(region=region, query=query):
         if g.coverage[sidx, :].sum() < min_total:
             continue
-        known = {}  # check for known events
+        known:Dict[str,Set[Union[int, Tuple[int, int]]]] = {}  # check for known events
         if g.is_annotated and g.n_transcripts:
             sg = g.ref_segment_graph
             for _, _, nX, nY, splice_type in sg.find_splice_bubbles():  # find annotated alternatives (known)
@@ -304,7 +307,7 @@ def altsplice_stats(self, groups=None, weight_by_coverage=True, min_coverage=2, 
     :param min_coverage: Threshold to ignore poorly covered transcripts.
     :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
     :return: Table with numbers of novel alternative splicing events, and suggested parameters for isotools.plots.plot_bar().'''
-    weights = dict()
+    weights: Dict[str, np.ndarray]= dict()
     # if groups is not None:
     #    gi={r:i for i,r in enumerate(runs)}
     #    groups={gn:[gi[r] for r in gr] for gn,gr in groups.items()}
@@ -355,7 +358,8 @@ def filter_stats(self, tags=None, groups=None, weight_by_coverage=True, min_cove
     :param tr_filter: Only transcripts that pass this filter are evaluated. Filter is provided as dict of parameters, passed to self.iter_transcripts().
     :return: Table with numbers of transcripts featuring the filter tag, and suggested parameters for isotools.plots.plot_bar().'''
 
-    weights = dict()
+    weights: Dict[str, np.ndarray]= dict()
+
     if tags is None:
         tags = list(self.filter['transcript'])
     assert all(t in self.filter['transcript'] for t in tags), '"Tags" contains invalid tags'
@@ -411,15 +415,15 @@ def transcript_length_hist(self=None, groups=None, add_reference=False, bins=50,
     :return: Table with numbers of transcripts within the length intervals, and suggested parameters for isotools.plots.plot_distr().'''
 
     trlen = []
-    cov = []
+    covL = []
     current = None
     for g, trid, tr in self.iter_transcripts(**tr_filter):
         if g != current:
             current = g
             current_cov = g.coverage
-        cov.append(current_cov[:, trid])
+        covL.append(current_cov[:, trid])
         trlen.append(sum(e[1] - e[0] for e in tr['exons']) if use_alignment else tr['source_len'])  # source_len is not set in the current version
-    cov = pd.DataFrame(cov, columns=self.samples)
+    cov = pd.DataFrame(covL, columns=self.samples)
     if groups is not None:
         cov = pd.DataFrame({grn: cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins, int):
@@ -449,14 +453,14 @@ def transcript_coverage_hist(self, groups=None, bins=50, x_range=(1, 1001), tr_f
     :return: Table with numbers of transcripts within the coverage intervals, and suggested parameters for isotools.plots.plot_distr().'''
     # get the transcript coverage in bins for groups
     # return count dataframe and suggested default parameters for plot_distr
-    cov = []
+    covL = []
     current = None
     for g, trid, _ in self.iter_transcripts(**tr_filter):
         if g != current:
             current = g
             current_cov = g.coverage
-        cov.append(current_cov[:, trid])
-    cov = pd.DataFrame(cov, columns=self.samples)
+        covL.append(current_cov[:, trid])
+    cov = pd.DataFrame(covL, columns=self.samples)
     if groups is not None:
         cov = pd.DataFrame({grn: cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins, int):

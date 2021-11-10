@@ -1,12 +1,19 @@
 from intervaltree import Interval
 from Bio.Seq import Seq
 import numpy as np
+import numpy.typing as npt
 import copy
+from pysam import FastaFile
+
+from isotools.transcriptome import Transcriptome
 from .splice_graph import SegmentGraph
 from .short_read import Coverage
-
 import logging
 logger = logging.getLogger('isotools')
+
+
+from typing import Dict, List, Tuple, Any,Optional
+exon = Tuple[int, int]
 
 
 def _eval_filter_fun(fun, name, **args):
@@ -25,10 +32,10 @@ class Gene(Interval):
     required_infos = ['ID', 'chr', 'strand']
 
     # initialization
-    def __new__(cls, begin, end, data, transcriptome):
+    def __new__(cls, begin: int, end: int, data: Dict[str, Any], transcriptome: Transcriptome):
         return super().__new__(cls, begin, end, data)  # required as Interval (and Gene) is immutable
 
-    def __init__(self, begin, end, data, transcriptome):
+    def __init__(self, begin: int, end: int, data: Dict[str, Any], transcriptome: Transcriptome):
         self._transcriptome = transcriptome
 
     def __str__(self):
@@ -40,7 +47,7 @@ class Gene(Interval):
 
     from ._gene_plots import sashimi_plot, gene_track, sashimi_plot_short_reads, sashimi_figure
 
-    def short_reads(self, idx):
+    def short_reads(self, idx: int) -> Coverage:
         '''Returns the short read coverage profile for a short read sample.
 
         :param idx: The index of the short read sample. '''
@@ -107,9 +114,8 @@ class Gene(Interval):
 
     def _to_gtf(self, trids, source='isoseq', use_gene_name=False):
         '''Creates the gtf lines of the gene as strings.'''
-
         info = {'gene_id': self.name if use_gene_name else self.id}
-        lines = [None]
+        lines: List[Optional[Tuple[str, str, str, str, str, str, str, str, str]]] = [None]
         starts = []
         ends = []
         for i in trids:
@@ -128,7 +134,7 @@ class Gene(Interval):
             return lines
         return []
 
-    def add_noncanonical_splicing(self, genome_fh):
+    def add_noncanonical_splicing(self, genome_fh:FastaFile):
         '''Add information on noncanonical splicing.
 
         For all transcripts of the gene, scan for noncanonical (i.e. not GT-AG) splice sites.
@@ -153,7 +159,7 @@ class Gene(Interval):
             if nc:
                 tr['noncanonical_splicing'] = nc
 
-    def add_direct_repeat_len(self, genome_fh, delta=10):
+    def add_direct_repeat_len(self, genome_fh:FastaFile, delta=10):
         '''Computes direct repeat length.
 
         This function counts the number of consequtive equal bases at donor and acceptor sites of the splice junctions.
@@ -163,7 +169,7 @@ class Gene(Interval):
         :param genome_fh: The file handle to the genome fasta.
         :param delta: The maximum length of direct repeats that can be found. '''
 
-        intron_seq = {}
+        intron_seq :Dict[int,str] = {}
         score = {}
 
         for tr in self.transcripts:
@@ -299,7 +305,7 @@ class Gene(Interval):
         self.data['segment_graph'] = None
 
     @property
-    def coverage(self):
+    def coverage(self) -> np.ndarray:
         '''Returns the transcript coverage.
 
         Coverage is returned as a numpy array, with samples in columns and transcript isoforms in the rows.'''
@@ -310,7 +316,7 @@ class Gene(Interval):
         return self.data['coverage']
 
     @property
-    def gene_coverage(self):
+    def gene_coverage(self) -> np.ndarray:
         '''Returns the gene coverage.
 
         Total Coverage of the gene for each sample.'''
@@ -318,16 +324,16 @@ class Gene(Interval):
         return self.coverage.sum(1)
 
     @property
-    def chrom(self):
+    def chrom(self) -> str:
         '''Returns the genes chromosome.'''
         return self.data['chr']
 
     @property
-    def start(self):  # alias for begin
+    def start(self) -> int:  # alias for begin
         return self.begin
 
     @property
-    def region(self):
+    def region(self) -> str:
         '''Returns the region of the gene as a string in the format "chr:start-end".'''
         try:
             return '{}:{}-{}'.format(self.chrom, self.start, self.end)
@@ -335,7 +341,7 @@ class Gene(Interval):
             raise
 
     @property
-    def id(self):
+    def id(self) -> str:
         '''Returns the gene id'''
         try:
             return self.data['ID']
@@ -344,7 +350,7 @@ class Gene(Interval):
             raise
 
     @property
-    def name(self):
+    def name(self) -> str:
         '''Returns the gene name'''
         try:
             return self.data['name']
@@ -352,22 +358,22 @@ class Gene(Interval):
             return self.id  # e.g. novel genes do not have a name (but id)
 
     @property
-    def is_annotated(self):
+    def is_annotated(self) -> bool:
         '''Returns "True" iff reference annotation is present for the gene.'''
         return 'reference' in self.data
 
     @property
-    def is_expressed(self):
+    def is_expressed(self) -> bool:
         '''Returns "True" iff gene is covered by at least one long read in at least one sample.'''
         return bool(self.transcripts)
 
     @property
-    def strand(self):
+    def strand(self) -> str:
         '''Returns the strand of the gene, e.g. "+" or "-"'''
         return self.data['strand']
 
     @property
-    def transcripts(self):
+    def transcripts(self) -> List[Dict[str, Any]]:
         '''Returns the list of transcripts of the gene, as found by LRTS.'''
         try:
             return self.data['transcripts']
@@ -375,7 +381,7 @@ class Gene(Interval):
             return []
 
     @property
-    def ref_transcripts(self):
+    def ref_transcripts(self) -> List[Dict[str, Any]]:
         '''Returns the list of reference transcripts of the gene.'''
         try:
             return self.data['reference']['transcripts']
@@ -383,17 +389,17 @@ class Gene(Interval):
             return []
 
     @property
-    def n_transcripts(self):
+    def n_transcripts(self) -> int:
         '''Returns number of transcripts of the gene, as found by LRTS.'''
         return len(self.transcripts)
 
     @property
-    def n_ref_transcripts(self):
+    def n_ref_transcripts(self) -> int:
         '''Returns number of reference transcripts of the gene.'''
         return len(self.ref_transcripts)
 
     @property
-    def ref_segment_graph(self):  # raises key error if not self.is_annotated
+    def ref_segment_graph(self) -> SegmentGraph:  # raises key error if not self.is_annotated
         '''Returns the segment graph of the reference transcripts for the gene'''
 
         assert self.is_annotated, "reference segment graph requested on novel gene"
@@ -403,7 +409,7 @@ class Gene(Interval):
         return self.data['reference']['segment_graph']
 
     @property
-    def segment_graph(self):
+    def segment_graph(self) -> SegmentGraph:
         '''Returns the segment graph of the LRTS transcripts for the gene'''
         if 'segment_graph' not in self.data or self.data['segment_graph'] is None:
             exons = [tr['exons'] for tr in self.transcripts]
@@ -424,7 +430,7 @@ class Gene(Interval):
         return self.__copy__()
 
 
-def _coding_len(exons, cds):
+def _coding_len(exons: List[exon], cds: Tuple[int, int]) -> List[int]:
     coding_len = [0, 0, 0]
     state = 0
     for e in exons:

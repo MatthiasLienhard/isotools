@@ -1,3 +1,4 @@
+from typing import Set, Dict, List, Tuple, Any, Optional, Sequence, Generator, ItemsView, Union, Iterable
 import numpy as np
 # from numpy.lib.function_base import percentile, quantile
 import pandas as pd
@@ -13,7 +14,12 @@ import logging
 import gzip as gziplib
 logger = logging.getLogger('isotools')
 
+exon_t = Tuple[int, int]
+transcript_t = Dict[str, Any]  # transcript properties
+breakpoint_t = Tuple[str, str, int, str, str, int]
+numeric = Union[int, float, np.number]
 # io functions for the transcriptome class
+chimeric_t = List[Any]  # actually a tuple: (snd_align[0], snd_align[2], snd_exons, aligned_part(snd_cigartuples, snd_align[2] == '-'), None)
 
 
 def add_short_read_coverage(self, bam_files, load=False):
@@ -106,10 +112,10 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         barcodes = {}
     else:
         # read the barcode file
-        barcodes = pd.read_csv(barcode_file, sep='\t', names=['bc', 'name'], index_col='bc')['name']
+        barcodes_df = pd.read_csv(barcode_file, sep='\t', names=['bc', 'name'], index_col='bc')['name']
         if sample_name is not None:
-            barcodes = barcodes.apply(lambda x: '{}_{}'.format(sample_name, x))
-        barcodes = barcodes.to_dict()
+            barcodes_df = barcodes_df.apply(lambda x: '{}_{}'.format(sample_name, x))
+        barcodes = barcodes_df.to_dict()
         assert all(sa not in self.samples for sa in barcodes), \
             'samples %s are already in the data set.' % ', '.join(sa for sa in barcodes if sa in self.samples)
         logger.info('adding {} transcriptomes in {} groups as specified in {} from file {}'.format(
@@ -128,10 +134,10 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         stats = align.get_index_statistics()
         # try catch if sam/ no index /not pacbio?
         total_alignments = sum([s.mapped for s in stats if s.contig in chromosomes])
-        sample_nc_reads = dict()
+        sample_nc_reads: Dict[str, int] = dict()
         unmapped = n_secondary = 0
-        total_nc_reads_chr = {}
-        chimeric = dict()
+        total_nc_reads_chr: Dict[str, Dict[str, int]] = {}
+        chimeric: Dict[str, Dict[str, List[chimeric_t]]] = dict()  # {sample:{readname : list of alignments}}
 
         with tqdm(total=total_alignments, unit='reads') as pbar:
 
@@ -175,7 +181,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                             chimeric.setdefault(s_name, dict()).setdefault(read.query_name, [cov, []])
                             assert chimeric[s_name][read.query_name][0] == cov, \
                                 'error in bam: parts of chimeric alignment for read {} has different coverage information {} != {}'.format(
-                                    read.query_name, chimeric[read.query_name][0], cov)
+                                    read.query_name, chimeric[s_name][read.query_name][0], cov)
                             chimeric[s_name][read.query_name][1].append([chrom, strand, exons, aligned_part(read.cigartuples, read.is_reverse), None])
                             if use_satag and 'SA' in tags:
                                 for snd_align in (sa.split(',') for sa in tags['SA'].split(';') if sa):
@@ -230,7 +236,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                     tr = tr_interval.data
                     tr_ranges = tr.pop('range')
                     # tr_ranges=tr['range']
-                    starts, ends = {}, {}
+                    starts: Dict[int, int] = {}
+                    ends: Dict[int, int] = {}
                     for r, cov in tr_ranges.items():
                         starts[r[0]] = starts.get(r[0], 0) + cov
                         ends[r[1]] = ends.get(r[1], 0) + cov
@@ -238,8 +245,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                     tr['PAS'] = starts if tr['strand'] == '-' else ends
                     # tr['exons'][0][0]=min(r[0] for r in tr_ranges) # todo - instead of extremas take the median?
                     # tr['exons'][-1][1]=max(r[1] for r in tr_ranges)
-                    tr['exons'][0][0] = get_quantile(starts.items(), 0.5)
-                    tr['exons'][-1][1] = get_quantile(ends.items(), 0.5)
+                    tr['exons'][0][0] = get_quantile([(pos, cov) for pos, cov in starts.items()], 0.5)
+                    tr['exons'][-1][1] = get_quantile([(pos, cov) for pos, cov in ends.items()], 0.5)
                     cov = sum(tr_ranges.values())
                     tr['coverage'] = cov
                     s_name = tr.get('bc_group', sample_name)
@@ -284,7 +291,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
     logger.info(f'imported {sum(sample_nc_reads.values())} nonchimeric reads{chained_msg}{chimeric_msg}.')
 
     for s_name, non_chim in non_chimeric.items():
-        novel = dict()
+        novel_dict: Dict[str, List[transcript_t]] = dict()
         for readname, (cov, (chrom, strand, exons, _, _), introns) in non_chim.items():
             try:
                 tss, pas = (exons[0][0], exons[-1][1]) if strand == '+' else (exons[-1][1], exons[0][0])
@@ -297,9 +304,9 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                 raise
             gene = self._add_sample_transcript(tr, chrom, s_name, fuzzy_junction)  # tr is not updated
             if gene is None:
-                novel.setdefault(chrom, []).append(tr)
-        for chrom in novel:
-            self._add_novel_genes(IntervalTree(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr) for tr in novel[chrom]), chrom, s_name)
+                novel_dict.setdefault(chrom, []).append(tr)
+        for chrom in novel_dict:
+            self._add_novel_genes(IntervalTree(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr) for tr in novel_dict[chrom]), chrom, s_name)
         # self.infos.setdefault('chimeric',{})[s_name]=chimeric # save all chimeric reads (for debugging)
     for g in self:
         if 'coverage' in g.data and g.data['coverage'] is not None:  # still valid splice graphs no new transcripts - add a row of zeros to coveage
@@ -355,7 +362,7 @@ def _add_chimeric(self, new_chimeric, min_cov, sa):
     return total
 
 
-def get_quantile(pos, percentile=.5):
+def get_quantile(pos: List[Tuple[int, int]], percentile=.5):
     '''provided a list of (positions,coverage) pairs, return the median position'''
     total = sum(cov for _, cov in pos)
     n = 0
@@ -366,7 +373,7 @@ def get_quantile(pos, percentile=.5):
     raise ValueError(f'cannot find {percentile} percentile of {pos}')
 
 
-def _breakpoints(chimeric):
+def _breakpoints(chimeric) -> Tuple[breakpoint_t, ...]:
     ''' gets chimeric aligment as a list and returns list of breakpoints.
         each breakpoint is a tuple of (chr1, strand1, pos1,  chr2,strand2,pos2)
     '''
@@ -385,7 +392,7 @@ def _check_chimeric(chimeric):
         chimeric[0] is the coverage
         chimeric[1] is a list of tuples: chrom,strand,exons,[aligned start, end] '''
 
-    chimeric_dict = {}
+    chimeric_dict: Dict[Tuple[breakpoint_t, ...], Dict[str, chimeric_t]] = {}
     non_chimeric = {}
     skip = 0
     for readname, new_chim in chimeric.items():
@@ -618,7 +625,7 @@ def _find_matching_gene(genes_ol, exons, min_exon_coverage=.5):
 
 
 @deprecated
-def _get_intersects(genes_ol, exons):
+def _get_intersects(genes_ol: Sequence[Gene], exons) -> Tuple[Optional[Gene], Tuple[int, int]]:
     'calculate the intersects of all overlapping genes and return the best'
     # todo: in order to detect readthrough fusion genes, report all overlapping reference genes? or exon/junction wise?
     # prefer annotated genes
@@ -638,8 +645,8 @@ def _get_intersects(genes_ol, exons):
 
 
 def _read_gtf_file(gtf, transcriptome, chromosomes, infer_genes=False):
-    exons = dict()  # transcript id -> exons
-    transcripts = dict()  # gene_id -> transcripts
+    exons: Dict[str, List[exon_t]] = dict()  # transcript id -> exons
+    transcripts: Dict[str, Dict[str, transcript_t]] = dict()  # gene_id -> transcripts
     skipped = set()
     gene_infos = dict()  # 4 tuple: info_dict, gene_start, gene_end, fixed_flag==True if start/end are fixed
     cds_start = dict()
@@ -657,7 +664,7 @@ def _read_gtf_file(gtf, transcriptome, chromosomes, infer_genes=False):
         if ls[2] == "exon":
             # logger.debug(line)
             try:
-                _ = exons.setdefault(info['transcript_id'], list()).append((start, end))
+                exons.setdefault(info['transcript_id'], list()).append((start, end))
                 if infer_genes and 'gene_id' in info:
                     if info['gene_id'] not in gene_infos:  # new gene
                         info['strand'] = ls[6]
@@ -675,7 +682,7 @@ def _read_gtf_file(gtf, transcriptome, chromosomes, infer_genes=False):
                         if 'transcript_id' in info and info['transcript_id'] not in transcripts.get(info['gene_id'], {}):
                             # new transcript
                             tr_info = {k: v for k, v in info.items() if 'transcript' in k and k != 'transcript_id'}
-                            _ = transcripts.setdefault(info["gene_id"], dict())[info["transcript_id"]] = tr_info
+                            _ = transcripts.setdefault(info["gene_id"], {})[info["transcript_id"]] = tr_info
             except KeyError:  # should not happen if GTF is OK
                 logger.error("gtf format error: exon without transcript_id\n" + line)
                 raise
@@ -714,11 +721,11 @@ def _read_gtf_file(gtf, transcriptome, chromosomes, infer_genes=False):
     return exons, transcripts, genes, set(gene_infos), cds_start, cds_stop, skipped
 
 
-def _read_gff_file(gff, transcriptome, chromosomes):
-    exons = dict()  # transcript id -> exons
-    transcripts = dict()  # gene_id -> transcripts
+def _read_gff_file(gff: TabixFile, transcriptome, chromosomes: List[str]):
+    exons: Dict[str, List[exon_t]] = dict()  # transcript id -> exons
+    transcripts: Dict[str, Dict[str, transcript_t]] = dict()  # gene_id -> transcripts
     skipped = set()
-    genes = dict()
+    genes: Dict[str, IntervalTree] = dict()
     gene_set = set()
     cds_start = dict()
     cds_stop = dict()
@@ -774,7 +781,9 @@ def import_ref_transcripts(fn, transcriptome, file_format, chromosomes=None, gen
         exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gtf_file(gtf, transcriptome, chromosomes, **kwargs)
     else:  # gff/gff3
         gff = TabixFile(fn)
-        exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gff_file(gff, transcriptome, chromosomes, **kwargs)
+        if kwargs:
+            raise TypeError(f'_read_gff_file got unexpected keyword arguments: {", ".join(kwargs)}')
+        exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gff_file(gff, transcriptome, chromosomes)
 
     if skipped:
         logger.info('skipped the following categories: {}'.format(skipped))
@@ -828,7 +837,7 @@ def collapse_immune_genes(self, maxgap=300000):
     num = {'IG': 0, 'TR': 0}
     for chrom in self.data:
         for strand in ('+', '-'):
-            immune = {'IG': [], 'TR': []}
+            immune: Dict[str, List[Gene]] = {'IG': [], 'TR': []}
             for g in self.data[chrom]:
                 if g.strand != strand or not g.is_annotated or 'gene_type' not in g.data['reference']:
                     continue
@@ -854,11 +863,13 @@ def collapse_immune_genes(self, maxgap=300000):
 
 # io utility functions
 @experimental
-def get_mutations_from_bam(bam_file, genome_file, region, min_cov=.05):
+def get_mutations_from_bam(bam_file, genome_file, region, min_cov=.05) -> Tuple[Dict[int, Dict[str, List[Any]]], Dict[int, int]]:
     '''not very efficient function to fetch mutations within a region from a bam file
     not exported so far'''
-    mut = dict()
-    exons = []
+
+    mut:Dict[int, Dict[str, List[Any]]] = dict()  # {pos:{alternative sequence:(count, ref, [qual])}}
+    
+    exons:List[List[exon_t]] = []
     n = 0
     with AlignmentFile(bam_file, "rb") as align:
         for read in align.fetch(*region):
@@ -875,18 +886,19 @@ def get_mutations_from_bam(bam_file, genome_file, region, min_cov=.05):
         min_cov = n * min_cov
 
     mut = {pos: v for pos, v in mut.items() if sum(v[alt][0] for alt in v) > min_cov}
+    cov:Dict[int, int]={}
     with FastaFile(genome_file) as genome_fh:
         for pos, v in mut.items():
-            for alt in v.values():
-                alt[1] = '' if alt[1] < 0 else genome_fh.fetch(read.reference_name, pos, pos + alt[1])
+            for alt, (_, ref_len, _) in v.items():
+                mut[pos][alt][1] = '' if ref_len < 0 else genome_fh.fetch(read.reference_name, pos, pos + ref_len)
             for tr in exons:
                 for e in tr:
                     if pos >= e[0] and pos <= e[1]:
-                        mut[pos]['cov'] = mut[pos].get('cov', 0) + 1
-    return mut
+                        cov[pos] = cov.get(pos, 0) + 1
+    return mut, cov
 
 
-def get_mutations(cigartuples, seq, ref_start, qual):
+def get_mutations(cigartuples, seq, ref_start, qual) -> List[Tuple[int, int, str, Optional[int]]]:
     'look up the bases affected by mutations as reported in the cigar string'
     # cigar numbers:
     # 012345678
@@ -988,7 +1000,7 @@ def transcript_table(self, region=None, extra_columns=None, query=None, min_cove
     return(df)
 
 
-@experimental
+@ experimental
 def chimeric_table(self, region=None, query=None):  # , star_chimeric=None, illu_len=200):
     '''Creates a chimeric table
 
@@ -1042,8 +1054,8 @@ def write_gtf(self, fn, source='isotools', use_gene_name=False, region=None, que
     :param region: Splecify genomic region to export to gtf. If omitted, export whole genome.
     :param query: Specify transcript filter query.
     :param gzip: compress the output as gzip.'''
-    g_pre = None
-    tr_ids = []
+    g_pre:Gene=None
+    tr_ids:List[int] = []
 
     def openfile(fn):
         if gzip:
@@ -1102,11 +1114,11 @@ def export_alternative_splicing(self, out_dir, out_format='mats', reference=Fals
     if samples is None:
         samples = self.samples
     assert all(s in self.samples for s in samples), 'not all specified samples found'
-    sa_dict = {sa: i for i, sa in enumerate(self.samples)}
-    sidx = np.array([sa_dict[sa] for sa in samples])
+    sa_dict= {sa: i for i, sa in enumerate(self.samples)}
+    sidx= np.array([sa_dict[sa] for sa in samples])
 
     assert 0 < min_alt_fraction < .5, 'min_alt_fraction must be > 0 and < 0.5'
-    count = {st: 0 for st in types.values()}
+    count= {st: 0 for st in types.values()}
     with ExitStack() as stack:
         fh = {st: stack.enter_context(open(out_file[st], 'w')) for st in out_file}
         if out_format == 'mats':  # prepare mats header
@@ -1151,17 +1163,17 @@ def _miso_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
     # lines.append((g.chrom, st, 'exon', seg_graph[nodeX].start, seg_graph[nodeX].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.up'))
     # lines.append((g.chrom, st, 'exon', seg_graph[nodeY].start, seg_graph[nodeY].end, '.',g.strand, '.', f'Parent={event_id}.A;ID={event_id}.A.down'))
     for i, exons in enumerate({tuple(seg_graph._get_all_exons(nodeX, nodeY, tr)) for tr in setA}):
-        lines.append((g.chrom, st, 'mRNA', exons[0][0], exons[-1][1], '.', g.strand, '.', f'Parent={event_id};ID={event_id}.A{i}'))
+        lines.append([g.chrom, st, 'mRNA', exons[0][0], exons[-1][1], '.', g.strand, '.', f'Parent={event_id};ID={event_id}.A{i}'])
         lines[0][3] = min(lines[0][3], lines[-1][3])
         lines[0][4] = max(lines[0][4], lines[-1][4])
         for j, e in enumerate(exons):
-            lines.append((g.chrom, st, 'exon', e[0], e[1], '.', g.strand, '.', f'Parent={event_id}.A{i};ID={event_id}.A{i}.{j}'))
+            lines.append([g.chrom, st, 'exon', e[0], e[1], '.', g.strand, '.', f'Parent={event_id}.A{i};ID={event_id}.A{i}.{j}'])
     for i, exons in enumerate({tuple(seg_graph._get_all_exons(nodeX, nodeY, tr)) for tr in setB}):
-        lines.append((g.chrom, st, 'mRNA', exons[0][0], exons[-1][1], '.', g.strand, '.', f'Parent={event_id};ID={event_id}.B{i}'))
+        lines.append([g.chrom, st, 'mRNA', exons[0][0], exons[-1][1], '.', g.strand, '.', f'Parent={event_id};ID={event_id}.B{i}'])
         lines[0][3] = min(lines[0][3], lines[-1][3])
         lines[0][4] = max(lines[0][4], lines[-1][4])
         for j, e in enumerate(exons):
-            lines.append((g.chrom, st, 'exon', e[0], e[1], '.', g.strand, '.', f'Parent={event_id}.B{i};ID={event_id}.B{i}.{j}'))
+            lines.append([g.chrom, st, 'exon', e[0], e[1], '.', g.strand, '.', f'Parent={event_id}.B{i};ID={event_id}.B{i}.{j}'])
     return lines
 
 
@@ -1178,7 +1190,7 @@ def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
         chrom = 'chr' + g.chrom
     else:
         chrom = g.chrom
-    exonsA = ((seg_graph[nodeX].start, seg_graph[nodeX].end), (seg_graph[nodeY].start, seg_graph[nodeY].end))
+    exonsA:Tuple[exon_t,...] = ((seg_graph[nodeX].start, seg_graph[nodeX].end), (seg_graph[nodeY].start, seg_graph[nodeY].end))
     for exonsB in {tuple(seg_graph._get_all_exons(nodeX, nodeY, b_tr)) for b_tr in setB}:
         exons_sel = None
         if st in ['A3SS', 'A5SS'] and len(exonsB) == 2:
@@ -1189,8 +1201,8 @@ def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
         elif st == 'SE' and len(exonsB) == 3:
             assert exonsA[0] == exonsB[0] and exonsA[1] == exonsB[2], f'invalid exon skipping {exonsA} vs {exonsB}'  # just to be sure everything is consistent
             # e_order=(1,0,2) if g.strand=='+' else (1,2,0)
-            e_order = (1, 0, 2)
-            exons_sel = [exonsB[i] for i in e_order]
+            e_order= (1, 0, 2)
+            exons_sel= [exonsB[i] for i in e_order]
         elif st == 'RI' and len(exonsB) == 1:
             exons_sel = [exonsB[0], exonsA[0], exonsA[1]]  # if g.strand=='+' else [exonsB[0], exonsA[1], exonsA[0]]
         elif st == 'MXE' and len(exonsB) == 3:
@@ -1231,7 +1243,7 @@ class IntervalArray:
 
     def __init__(self, total_size, bin_size=1e4):
         self.obj = {}
-        self.data = [set() for _ in range(int((total_size) // bin_size) + 1)]
+        self.data: List[Set[int]] = [set() for _ in range(int((total_size) // bin_size) + 1)] # set of all ids of the stored objects
         self.bin_size = bin_size
 
     def overlap(self, begin, end):

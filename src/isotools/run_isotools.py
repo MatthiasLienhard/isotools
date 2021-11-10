@@ -33,7 +33,7 @@ def load_isoseq(args):
             raise ValueError('No pickled transcriptome found, samples, genome and annotation must be provided.')
         isoseq = Transcriptome.from_reference(args.anno)
         isoseq.collapse_immune_genes()
-    if args.samples:
+    if args.samples is not None:
         added = False
         sample_tab = pd.read_csv(args.samples, sep='\t')
         if 'sample_name' not in sample_tab.columns:

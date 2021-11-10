@@ -9,6 +9,10 @@ from .gene import Gene
 from ._transcriptome_filter import DEFAULT_GENE_FILTER, DEFAULT_TRANSCRIPT_FILTER, DEFAULT_REF_TRANSCRIPT_FILTER, ANNOTATION_VOCABULARY, SPLICE_CATEGORY
 from . import __version__
 logger = logging.getLogger('isotools')
+from typing import Dict, List, Tuple,Optional
+
+exon: Tuple[int, int]
+
 
 
 # as this class has diverse functionality, its split among:
@@ -23,7 +27,7 @@ class Transcriptome:
 
     :param pickle_file: Filename to restore previous data'''
     # initialization and save/restore data
-    def __new__(cls, pickle_file=None, **kwargs):
+    def __new__(cls, pickle_file:Optional[str]=None, **kwargs):
         if pickle_file is not None:
             obj = cls.load(pickle_file)
         else:
@@ -39,7 +43,7 @@ class Transcriptome:
             self.make_index()
 
     @classmethod
-    def from_reference(cls, reference_file, file_format='auto', **kwargs) -> 'Transcriptome':
+    def from_reference(cls, reference_file:str, file_format:str='auto', **kwargs) -> 'Transcriptome':
         '''Creates a Transcriptome object by importing reference annotation.
 
         :param reference_file: Reference file in gff3 format or pickle file to restore previously imported annotation
@@ -96,7 +100,8 @@ class Transcriptome:
         :param pickle_file: Filename to restore data'''
 
         logger.info('loading transcriptome from '+pickle_file)
-        tr = pickle.load(open(pickle_file, 'rb'))
+        with open(pickle_file, 'rb') as f:
+            tr = pickle.load(f)
         pickled_version = tr.infos.get('isotools_version', '<0.2.6')
         if pickled_version != __version__:
             logger.warn(f'This is isotools version {__version__}, but data has been pickled with version {pickled_version}, which may be incompatible')
@@ -125,7 +130,7 @@ class Transcriptome:
 
     def make_index(self):
         '''Updates the index of gene names and ids (e.g. used by the the [] operator).'''
-        idx = dict()
+        idx:Dict[str, Gene] = dict()
         for g in self:
             if g.id in idx:  # at least id should be unique - maybe raise exception?
                 logger.warn(f'{g.id} seems to be ambigous: {str(idx[g.id])} vs {str(g)}')
@@ -177,11 +182,11 @@ class Transcriptome:
             return pd.DataFrame(columns=['name', 'file', 'group', 'nonchimeric_reads', 'chimeric_reads'], dtype='object')
 
     @property
-    def samples(self) -> list:
+    def samples(self) -> List[str]:
         '''An ordered list of sample names.'''
         return list(self.sample_table.name)
 
-    def groups(self, by='group') -> dict:
+    def groups(self, by='group') -> Dict[str,List[str]]:
         '''Get sample groups as defined in columns of the sample table.
 
         :param by: A column name of the sample table that defines the grouping.
@@ -213,7 +218,7 @@ class Transcriptome:
             return 0
 
     @property
-    def chromosomes(self) -> list:
+    def chromosomes(self) -> List[str]:
         '''The list of chromosome names.'''
         return list(self.data)
 

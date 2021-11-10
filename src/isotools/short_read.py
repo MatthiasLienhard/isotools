@@ -6,6 +6,9 @@ import logging
 logger = logging.getLogger('isotools')
 
 
+from typing import Dict, List, Tuple, Any
+
+
 class Coverage:
     'stores the illumina read coverage of a gene'
     # plan: make a binned version, or use run length encoding
@@ -45,7 +48,7 @@ class Coverage:
     @classmethod  # this is slow - called only if coverage is requested
     def _import_coverage(cls, align_fh, reg):
         delta = np.zeros(reg[2]-reg[1])
-        junctions = {}
+        junctions:Dict[Tuple[int, int], int] = {}
         for read in align_fh.fetch(*reg):
             exons = junctions_from_cigar(read.cigartuples, read.reference_start)
             # alternative: read.get_blocks() should be more efficient.. -todo: is it different?

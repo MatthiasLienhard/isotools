@@ -1,4 +1,7 @@
-# isotools
+![Tests](https://github.com/MatthiasLienhard/isotools/actions/workflows/tests.yml/badge.svg) 
+
+# IsoTools 
+
 IsoTools is a python module for Long Read Transcriptome Sequencing (LRTS) analysis.
 
 Key features:
@@ -28,20 +31,21 @@ python3 -m pip install .
 ```
 
 ## usage:
-This code block demonstrates the basic file import with isoseq. For a more comprehensive real world example see the [tutorials](https://isotools.readthedocs.io/en/latest/tutorials.html "readthedocs").
+This code block demonstrates the basic file import with IsoTools. 
+It uses a small test data set contained in this repository, and should run within seconds. The paths are relative to the root of the repository.
+For more comprehensive real world examples see the [tutorials](https://isotools.readthedocs.io/en/latest/tutorials.html "readthedocs").
 ```python
-from  isotools.transcriptome import Transcriptome
+from  isotools import Transcriptome
 import logging
 logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.INFO)
-isoseq=Transcriptome.from_reference('reference_file.gff3.gz')
-isoseq_bam_fn={'sample1':'isoseq_fn_s1.bam', 'sample2':'isoseq_fn_s2.bam'}
-groups={'sample1':'control', 'sample2':'treatment'}
-for sa,bam in isoseq_bam_fn.items():
-    isoseq.add_sample_from_bam(bam, sample_name=sa, group=groups[sa]) 
-isoseq.add_biases('genome.fa')
-isoseq.make_index()
-isoseq.add_filter()
-isoseq.save('example_isotools.pkl')
+# import the reference annotation
+isoseq = Transcriptome.from_reference('tests/data/example.gff.gz')
+# import the isoseq data
+for sa in ('CTL', 'VPA'):
+    isoseq.add_sample_from_bam(f'../tests/data/example_1_{sa}.bam', sample_name=sa, group=sa, platform='SequelII')
+# save the imported file as pkl file (for faster import)
+isoseq.add_qc_metrics('../tests/data/example.fa')
+isoseq.save('../tests/data/example_1_isotools.pkl')
 ```
 
 ## Citation and feedback:

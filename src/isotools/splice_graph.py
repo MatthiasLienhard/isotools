@@ -273,7 +273,7 @@ class SegmentGraph():
         :param j1: index of first segment ending after exon start (i.e. first overlapping segment)
         :param j2: index of last segment starting befor exon end (i.e. last overlapping  segment)'''
 
-        logger.debug(f'exon {e} between sg node {j1} and {j2}/{len(self)} (first={is_first},rev={is_reverse},e2={e2})')
+        logger.debug('exon %s between sg node %s and %s/%s (first=%s,rev=%s,e2=%s)', e, j1, j2, len(self), is_first, is_reverse, e2)
         is_last = e2 is None
         altsplice = {}
         category = 0
@@ -292,7 +292,7 @@ class SegmentGraph():
                 if not is_first:
                     # pos="intronic" if self[j1][0]>e[0] else "exonic"
                     kind = '5' if is_reverse else '3'
-                    dist = min((self[j][0] - e[0] for j in range(j1, j2 + 1)), key=lambda x: abs(x))  # the distance to next junction
+                    dist = min((self[j][0] - e[0] for j in range(j1, j2 + 1)), key=abs)  # the distance to next junction
                     altsplice[f"novel {kind}' splice site"] = [(e[0], dist)]
                     category = 3
                 elif self[j1][0] > e[0] and not any(j in self._tss for j in range(j1, j2 + 1)):  # exon start is intronic in ref
@@ -304,7 +304,7 @@ class SegmentGraph():
                     # pos="intronic" if self[j2][1]<e[1] else "exonic"
                     # TODO: could also be a "novel intron", if the next "first" splice site is also novel.
                     kind = '3' if is_reverse else '5'
-                    dist = min((self[j][1] - e[1] for j in range(j1, j2 + 1)), key=lambda x: abs(x))  # the distance to next junction
+                    dist = min((self[j][1] - e[1] for j in range(j1, j2 + 1)), key=abs)  # the distance to next junction
                     altsplice.setdefault(f"novel {kind}' splice site", []).append((e[1], dist))
                     category = 3
                 elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1, j2 + 1)):  # exon end is intronic in ref & not overlapping tss
@@ -330,7 +330,7 @@ class SegmentGraph():
                     if ret_introns:
                         altsplice['intron retention'] = ret_introns
                         category = max(2, category)
-        logger.debug(f'check exon {e} resulted in {altsplice}')
+        logger.debug('check exon %s resulted in %s', e, altsplice)
         return altsplice, category
 
     def _check_junction(self, j1, j2, e, e2):
@@ -385,7 +385,7 @@ class SegmentGraph():
         elif e[1] == self[j2].end and e2[0] == self[j3].start:  # e1-e2 path is not present, but splice sites are
             altsplice.setdefault('novel junction', []).append([e[1], e2[0]])  # for example mutually exclusive exons spliced togeter
 
-        logger.debug(f'check junction {e[1]} - {e2[0]} resulted in {altsplice}')
+        logger.debug('check junction %s - %s resulted in %s', e[0], e[1], altsplice)
 
         return j3, j4, altsplice
 
@@ -603,7 +603,7 @@ class SegmentGraph():
             try:
                 next_node = self[node].suc[trid]  # raises error if trid not in node
             except KeyError:
-                logger.error(f'trid {trid} seems to be not in node {node}')
+                logger.error('trid %s seems to be not in node %s', trid, node)
                 raise
             if self[next_node].start > self[node].end:
                 return next_node
@@ -616,7 +616,7 @@ class SegmentGraph():
             try:
                 next_node = self[node].suc[trid]  # raises error if trid not in node
             except KeyError:
-                logger.error(f'trid {trid} seems to be not in node {node}')
+                logger.error('trid %s seems to be not in node %s', trid, node)
                 raise
             if self[next_node].start > self[node].end:
                 return node
@@ -629,7 +629,7 @@ class SegmentGraph():
             try:
                 next_node = self[node].pre[trid]  # raises error if trid not in node
             except KeyError:
-                logger.error(f'trid {trid} seems to be not in node {node}')
+                logger.error('trid %s seems to be not in node %s', trid, node)
                 raise
             if self[next_node].end < self[node].start:
                 return node
@@ -756,14 +756,14 @@ class SegmentGraph():
                 # tr -> node at start of 2nd exon C for tr such that there is one exon (B) (and both flanking introns) between nA and C; None if transcript ends
                 nC_dict = {}
                 me_alt_seen = set()  # ensure that only ME events with novel tr are reported
-                logger.debug(f'checking node {i}: {nA} ({list(zip(junctions,[outA_sets[j] for j in junctions]))})')
+                logger.debug('checking node %s: %s (%s)', i, nA, list(zip(junctions, [outA_sets[j] for j in junctions])))
                 for j_idx, joi in enumerate(junctions[1:]):  # start from second, as first does not have an alternative
                     alternative = [{tr for tr in alternative[i] if self._pas[tr] > joi} for i in range(2)]  # check that transcripts extend beyond nB
                     logger.debug(alternative)
                     found = [trL1.intersection(trL2) for trL1 in alternative for trL2 in inB_sets[joi]]  # alternative transcript sets for the 4 types
                     #  5th type: mutually exclusive (outdated handling of ME for reference)
                     # found.append(set.union(*alternative)-inB_sets[joi][0]-inB_sets[joi][1])
-                    logger.debug(f'checking junction {joi} (tr={outA_sets[joi]}) and found {found} at B={inB_sets[joi]}')
+                    logger.debug('checking junction %s (tr=%s) and found %s at B=%s', joi, outA_sets[joi], found, inB_sets[joi])
                     for alt_tid, alt in enumerate(found):
                         if alt_types[alt_tid] in types and alt:
                             yield list(outA_sets[joi]), list(alt), i, joi, alt_types[alt_tid]
@@ -915,8 +915,15 @@ class SpliceGraph():
     Edges are assessed with SpliceGraph.pre(node, [tr_nr]) and SpliceGraph.suc(node, [tr_nr]) functions.
     If no tr_nr is provided, a dict with all incoming/outgoing edges is returned'''
     # @experimental
+
+    def __init__(self, is_reverse, graph, fwd_starts, rev_starts):
+        self.is_reverse = is_reverse
+        self._graph = graph
+        self._fwd_starts = fwd_starts
+        self._rev_starts = rev_starts
+
     @classmethod
-    def from_transcript_list(cls, transcripts, strand) -> 'SpliceGraph':
+    def from_transcript_list(cls, transcripts, strand):
         '''Compute the splice graph from a list of transcripts
 
         :param transcripts: A list of transcripts, which are lists of exons, which in turn are (start,end) tuples
@@ -926,20 +933,19 @@ class SpliceGraph():
         :rtype: SpliceGraph'''
 
         assert strand in '+-', 'strand must be either "+" or "-"'
-        sg = cls()
-        sg.is_reverse = strand == '-'
-        sg._graph = SortedDict()
 
-        sg._fwd_starts = [(tr[0][0], True) for tr in transcripts]  # genomic 5'
-        sg._rev_starts = [(tr[-1][1], False) for tr in transcripts]  # genomic 3'
+        graph = SortedDict()
+        fwd_starts = [(tr[0][0], True) for tr in transcripts]  # genomic 5'
+        rev_starts = [(tr[-1][1], False) for tr in transcripts]  # genomic 3'
 
         for tr_nr, tr in enumerate(transcripts):
-            sg._graph.setdefault((tr[0][0], True), ({}, {}))
+            graph.setdefault((tr[0][0], True), ({}, {}))
 
             for i, (b1, b2) in enumerate(pairwise(pos for e in tr for pos in e)):
-                sg._graph.setdefault((b2, bool(i % 2)), ({}, {}))
-                sg._graph[b2, bool(i % 2)][1][tr_nr] = b1, not bool((i) % 2)  # successor
-                sg._graph[b1, not bool(i % 2)][0][tr_nr] = b2, bool((1) % 2)  # predesessor
+                graph.setdefault((b2, bool(i % 2)), ({}, {}))
+                graph[b2, bool(i % 2)][1][tr_nr] = b1, not bool((i) % 2)  # successor
+                graph[b1, not bool(i % 2)][0][tr_nr] = b2, bool((1) % 2)  # predesessor
+        sg = cls(strand == '-', graph, fwd_starts, rev_starts)
         return sg
 
     def __iter__(self):

@@ -54,8 +54,8 @@ def add_qc_metrics(self, genome_fn):
         missing_chr = set(self.chromosomes) - set(genome_fh.references)
         if missing_chr:
             missing_genes = sum(len(self.data[mc]) for mc in missing_chr)
-            logger.warning(f'{len(missing_chr)} contigs are not contained in genome, affecting {missing_genes} genes. \
-                Some metrics cannot be computed: {missing_chr}')
+            logger.warning('%s contigs are not contained in genome, affecting %s genes. \
+                Some metrics cannot be computed: %s', str(len(missing_chr)), str(missing_genes), str(missing_chr))
 
         for g in tqdm(self):
             g.add_fragments()
@@ -73,7 +73,7 @@ def remove_filter(self, tag):
     :param tag: Specify the tag of the filter definition to remove.'''
     old = [f.pop(tag, None) for f in self.filter.values()]
     if not any(old):
-        logger.error(f'filter tag {tag} not found')
+        logger.error('filter tag %s not found', tag)
 
 
 def add_filter(self, tag, expression, context='transcript', update=False):
@@ -103,19 +103,19 @@ def add_filter(self, tag, expression, context='transcript', update=False):
     # used=re.findall(r'\b\w+\b', expression)
 
     try:  # test whether the expression can be evaluated
-        f, f_args = _filter_function(expression)
+        _, f_args = _filter_function(expression)
         # _=f() # this would fail for many default expressions - can be avoided by checking if used attributes are None - but not ideal
         # Could be extended by dummy gene/transcript argument
     except BaseException:
-        logger.error('expression cannot be evaluated:\n' + expression)
+        logger.error('expression cannot be evaluated:\n%s', expression)
         raise
     unknown_attr = [attr for attr in f_args if attr not in attributes]
     if unknown_attr:
-        logger.warning(f"Some attributes not present in {context} context, please make sure there is no typo: {','.join(unknown_attr)}")
+        logger.warning("Some attributes not present in %s context, please make sure there is no typo: %s", context, ','.join(unknown_attr))
     if update:  # avoid the same tag in different context
         for old_context, filter_dict in self.filter.items():
             if filter_dict.pop(tag, None) is not None:
-                logger.info('replaced existing filter rule {tag} in {old_context} context')
+                logger.info('replaced existing filter rule %s in %s context', tag, old_context)
     self.filter[context][tag] = expression
 
 
@@ -152,8 +152,8 @@ def iter_genes(self, region=None, query=None, progress_bar=False):
                         start, end = [int(v) for v in pos.split('-')]
                     else:
                         raise ValueError('specified chromosome {} not found'.format(chrom))
-                except BaseException:
-                    raise ValueError('incorrect region {} - specify as string "chr" or "chr:start-end" or tuple ("chr",start,end)'.format(region))
+                except BaseException as e:
+                    raise ValueError('incorrect region {} - specify as string "chr" or "chr:start-end" or tuple ("chr",start,end)'.format(region)) from e
         elif isinstance(region, tuple):
             chrom, start, end = region
         if chrom in self.data:
@@ -185,7 +185,7 @@ def iter_transcripts(self, region=None, query=None, min_coverage=None, max_cover
         try:  # test the filter expression with dummy tags
             _ = query_fun(**{tag: True for tag in used_tags})
         except BaseException:
-            logger.error(f"Error in query string: \n{query}")
+            logger.error("Error in query string: \n%s", query)
             raise
     else:
         tr_filter_fun = query_fun = None

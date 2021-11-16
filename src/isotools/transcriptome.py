@@ -20,21 +20,16 @@ logger = logging.getLogger('isotools')
 
 class Transcriptome:
     '''Contains sequencing data and annotation for Long Read Transcriptome Sequencing (LRTS) Experiments.
-
-    :param pickle_file: Filename to restore previous data'''
+    '''
     # initialization and save/restore data
-    def __new__(cls, pickle_file=None, **kwargs):
-        if pickle_file is not None:
-            obj = cls.load(pickle_file)
-        else:
-            obj = super().__new__(cls)
-        return obj
 
-    def __init__(self, pickle_file=None, **kwargs):
+    def __init__(self, **kwargs):
         '''Constructor method'''
         if 'data' in kwargs:
-            self.data, self.infos, self.chimeric, self.filter = kwargs['data'], kwargs.get(
-                'infos', dict()), kwargs.get('chimeric', {}), kwargs.get('filter', {})
+            self.data = kwargs['data']
+            self.infos = kwargs.get('infos', {})
+            self.chimeric = kwargs.get('chimeric', {})
+            self.filter = kwargs.get('filter', {})
             assert 'reference_file' in self.infos
             self.make_index()
 
@@ -48,30 +43,29 @@ class Transcriptome:
             If set to "auto" the file type is infrered from the extension.
         :param chromosome: If reference file is gtf/gff, restrict import on specified chromosomes
         :param infer_transcrpts: If reference file is gtf, genes and transcripts are infered from "exon" entries, no specific transcript '''
-        tr = cls.__new__(cls)
-        tr.infos = {'reference_file': reference_file, 'isotools_version': __version__}
-        tr.filter = {'gene': DEFAULT_GENE_FILTER.copy(),
-                     'transcript': DEFAULT_TRANSCRIPT_FILTER.copy(),
-                     'reference': DEFAULT_REF_TRANSCRIPT_FILTER.copy()}
 
-        for subcat in ANNOTATION_VOCABULARY:
-            tag = '_'.join(re.findall(r'\b\w+\b', subcat)).upper()
-            tr.filter['transcript'][tag] = f'"{subcat}" in annotation[1]'
-        for i, cat in enumerate(SPLICE_CATEGORY):
-            tr.filter['transcript'][cat] = f'annotation[0]=={i}'
-
-        tr.chimeric = {}
         if file_format == 'auto':
             file_format = os.path.splitext(reference_file)[1].lstrip('.')
             if file_format == 'gz':
                 file_format = os.path.splitext(reference_file[:-3])[1].lstrip('.')
-        logger.info(f'importing reference from {file_format} file {reference_file}')
+        logger.info('importing reference from %s file %s', file_format, reference_file)
         if file_format in ('gff', 'gff3', 'gtf'):
+            tr = cls()
             tr.data = import_ref_transcripts(reference_file, tr, file_format,  **kwargs)
+            tr.infos = {'reference_file': reference_file, 'isotools_version': __version__}
+            tr.filter = {'gene': DEFAULT_GENE_FILTER.copy(),
+                         'transcript': DEFAULT_TRANSCRIPT_FILTER.copy(),
+                         'reference': DEFAULT_REF_TRANSCRIPT_FILTER.copy()}
+            for subcat in ANNOTATION_VOCABULARY:
+                tag = '_'.join(re.findall(r'\b\w+\b', subcat)).upper()
+                tr.filter['transcript'][tag] = f'"{subcat}" in annotation[1]'
+            for i, cat in enumerate(SPLICE_CATEGORY):
+                tr.filter['transcript'][cat] = f'annotation[0]=={i}'
+
         elif file_format == 'pkl':
             # warn if kwargs are specified: kwargs are ignored
             if kwargs:
-                logger.warning("The following parameters are ignored when loading reference from pkl: "+", ".join(kwargs))
+                logger.warning("The following parameters are ignored when loading reference from pkl: %s", ", ".join(kwargs))
             tr = pickle.load(open(reference_file, 'rb'))
             if 'sample_table' in tr.infos:
                 logger.warning('the pickle file seems to contain sample information... extracting refrence')
@@ -86,7 +80,7 @@ class Transcriptome:
         :param pickle_file: Filename to save data'''
         if pickle_file is None:
             pickle_file = self.infos['out_file_name']+'.isotools.pkl'  # key error if not set
-        logger.info('saving transcriptome to '+pickle_file)
+        logger.info('saving transcriptome to %s', pickle_file)
         pickle.dump(self, open(pickle_file, 'wb'))
 
     @classmethod
@@ -95,11 +89,11 @@ class Transcriptome:
 
         :param pickle_file: Filename to restore data'''
 
-        logger.info('loading transcriptome from '+pickle_file)
+        logger.info('loading transcriptome from %s', pickle_file)
         tr = pickle.load(open(pickle_file, 'rb'))
         pickled_version = tr.infos.get('isotools_version', '<0.2.6')
         if pickled_version != __version__:
-            logger.warning(f'This is isotools version {__version__}, but data has been pickled with version {pickled_version}, which may be incompatible')
+            logger.warning('This is isotools version %s, but data has been pickled with version %s, which may be incompatible', __version__, pickled_version)
         return tr
 
     def save_reference(self, pickle_file=None):
@@ -108,7 +102,7 @@ class Transcriptome:
         :param pickle_file: Filename to save data'''
         if pickle_file is None:
             pickle_file = self.infos['reference_file']+'.isotools.pkl'
-        logger.info('saving reference to '+pickle_file)
+        logger.info('saving reference to %s', pickle_file)
         ref_tr = self._extract_reference()
         pickle.dump(ref_tr, open(pickle_file, 'wb'))
 
@@ -128,7 +122,7 @@ class Transcriptome:
         idx = dict()
         for g in self:
             if g.id in idx:  # at least id should be unique - maybe raise exception?
-                logger.warning(f'{g.id} seems to be ambigous: {str(idx[g.id])} vs {str(g)}')
+                logger.warning('%s seems to be ambigous: %s vs %s', g.id, str(idx[g.id]), str(g))
             idx[g.name] = g
             idx[g.id] = g
         self._idx = idx
@@ -228,9 +222,6 @@ class Transcriptome:
 
     # IO: load new data from primary data files
     from ._transcriptome_io import add_sample_from_bam, remove_samples, add_short_read_coverage, remove_short_read_coverage, collapse_immune_genes
-
-    # IO: utility functions
-    from ._transcriptome_io import _add_sample_transcript, _add_novel_genes, _get_intersects, _add_chimeric
 
     # IO: output data as tables or other human readable format
     from ._transcriptome_io import gene_table, transcript_table, chimeric_table, write_gtf, export_alternative_splicing

@@ -13,8 +13,8 @@ def main():
         # https://stackoverflow.com/questions/12116685/how-can-i-require-my-python-scripts-argument-to-be-a-float-between-0-0-1-0-usin
         try:
             x = float(x)
-        except ValueError:
-            raise argparse.ArgumentTypeError("%r not a floating-point literal" % (x,))
+        except ValueError as e:
+            raise argparse.ArgumentTypeError("%r not a floating-point literal" % (x,)) from e
         if x < 0.0 or x > 1.0:
             raise argparse.ArgumentTypeError("%r not in range [0.0, 1.0]" % (x,))
         return x
@@ -47,7 +47,7 @@ def subset_genome(genome_fn, regions, out_fn="example_genome.fa"):
     fai = []
     offset = 0
     line_length = 50
-    with open(out_fn, "w") as outfh:
+    with open(out_fn, "w", encoding="utf8") as outfh:
         with pysam.FastaFile(genome_fn) as genome_fh:
             for reg in regions:
                 outfh.write(f'>{reg[0]}_part\n')
@@ -57,7 +57,7 @@ def subset_genome(genome_fn, regions, out_fn="example_genome.fa"):
                 for line in (seq[i:i+line_length] for i in range(0, len(seq), line_length)):
                     outfh.write(line+'\n')
                     offset += len(line)+1
-    with open(out_fn+'.fai', "w") as outfh:
+    with open(out_fn+'.fai', "w", encoding="utf8") as outfh:
         for idx, reg in zip(fai, regions):
             outfh.write('\t'.join(str(v) for v in idx)+'\n')
             print(f'extracted {idx[1]} bases from {reg[0]}:{reg[1]}-{reg[2]}')

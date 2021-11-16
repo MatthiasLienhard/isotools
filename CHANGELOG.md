@@ -5,6 +5,7 @@
 
 ## [0.2.7]
 * added command line script run_isotools.py
+* added test data for unit tests 
 
 
 ## [0.2.6]

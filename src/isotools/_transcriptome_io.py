@@ -258,9 +258,9 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                 for sa, nc_reads in total_nc_reads_chr[chrom].items():
                     sample_nc_reads[sa] = sample_nc_reads.get(sa, 0) + nc_reads
     if partial_count:
-        logger.warn(f'skipped {partial_count} reads aligned fraction of less than {min_align_fraction}.')
+        logger.warning(f'skipped {partial_count} reads aligned fraction of less than {min_align_fraction}.')
     if skip_bc:
-        logger.warn(f'skipped {skip_bc} reads with barcodes not found in the provided list.')
+        logger.warning(f'skipped {skip_bc} reads with barcodes not found in the provided list.')
     if n_secondary > 0:
         logger.info(f'skipped {n_secondary} secondary alignments (0x100), alignment that failed quality check (0x200) or PCR duplicates (0x400)')
     if unmapped > 0:
@@ -681,7 +681,7 @@ def _read_gtf_file(gtf, transcriptome, chromosomes, infer_genes=False):
                 raise
         elif ls[2] == 'gene':
             if 'gene_id' not in info:
-                logger.warn("gtf format error: gene without gene_id. Skipping line\n" + line)
+                logger.warning("gtf format error: gene without gene_id. Skipping line\n" + line)
             else:  # overrule potential entries from exon line
                 info['strand'] = ls[6]
                 info['chr'] = ls[0]
@@ -699,7 +699,7 @@ def _read_gtf_file(gtf, transcriptome, chromosomes, infer_genes=False):
                 tr_info = {k: v for k, v in info.items() if 'transcript' in k and k != 'transcript_id'}
                 _ = transcripts.setdefault(info["gene_id"], dict())[info["transcript_id"]] = tr_info
             except KeyError:
-                logger.warn("gtf format errror: transcript must have gene_id and transcript_id, skipping line\n" + line)
+                logger.warning("gtf format errror: transcript must have gene_id and transcript_id, skipping line\n" + line)
         elif ls[2] == 'start_codon' and 'transcript_id' in info:
             cds_start[info['transcript_id']] = end if ls[6] == '-' else start
         elif ls[2] == 'stop_codon' and 'transcript_id' in info:

@@ -111,7 +111,7 @@ def add_filter(self, tag, expression, context='transcript', update=False):
         raise
     unknown_attr = [attr for attr in f_args if attr not in attributes]
     if unknown_attr:
-        logger.warn(f"Some attributes not present in {context} context, please make sure there is no typo: {','.join(unknown_attr)}")
+        logger.warning(f"Some attributes not present in {context} context, please make sure there is no typo: {','.join(unknown_attr)}")
     if update:  # avoid the same tag in different context
         for old_context, filter_dict in self.filter.items():
             if filter_dict.pop(tag, None) is not None:

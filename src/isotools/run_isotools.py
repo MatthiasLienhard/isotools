@@ -356,7 +356,7 @@ def main():
             gr = diff_cmp.split('/')
             logger.debug(f'processing {gr}')
             if len(gr) != 2:
-                logger.warn('--diff argument format error: provide two groups seperated by "/" -- skipping')
+                logger.warning('--diff argument format error: provide two groups seperated by "/" -- skipping')
                 continue
             if not all(gn in groups for gn in gr):
                 logger.warning(

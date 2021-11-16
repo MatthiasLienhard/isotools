@@ -39,7 +39,7 @@ class Transcriptome:
             self.make_index()
 
     @classmethod
-    def from_reference(cls, reference_file, file_format='auto', **kwargs) -> 'Transcriptome':
+    def from_reference(cls, reference_file, file_format='auto', **kwargs):
         '''Creates a Transcriptome object by importing reference annotation.
 
         :param reference_file: Reference file in gff3 format or pickle file to restore previously imported annotation
@@ -71,7 +71,7 @@ class Transcriptome:
         elif file_format == 'pkl':
             # warn if kwargs are specified: kwargs are ignored
             if kwargs:
-                logger.warn("The following parameters are ignored when loading reference from pkl: "+", ".join(kwargs))
+                logger.warning("The following parameters are ignored when loading reference from pkl: "+", ".join(kwargs))
             tr = pickle.load(open(reference_file, 'rb'))
             if 'sample_table' in tr.infos:
                 logger.warning('the pickle file seems to contain sample information... extracting refrence')
@@ -90,7 +90,7 @@ class Transcriptome:
         pickle.dump(self, open(pickle_file, 'wb'))
 
     @classmethod
-    def load(cls, pickle_file) -> 'Transcriptome':
+    def load(cls, pickle_file):
         '''Restores transcriptome information from a pickle file.
 
         :param pickle_file: Filename to restore data'''
@@ -99,7 +99,7 @@ class Transcriptome:
         tr = pickle.load(open(pickle_file, 'rb'))
         pickled_version = tr.infos.get('isotools_version', '<0.2.6')
         if pickled_version != __version__:
-            logger.warn(f'This is isotools version {__version__}, but data has been pickled with version {pickled_version}, which may be incompatible')
+            logger.warning(f'This is isotools version {__version__}, but data has been pickled with version {pickled_version}, which may be incompatible')
         return tr
 
     def save_reference(self, pickle_file=None):
@@ -128,7 +128,7 @@ class Transcriptome:
         idx = dict()
         for g in self:
             if g.id in idx:  # at least id should be unique - maybe raise exception?
-                logger.warn(f'{g.id} seems to be ambigous: {str(idx[g.id])} vs {str(g)}')
+                logger.warning(f'{g.id} seems to be ambigous: {str(idx[g.id])} vs {str(g)}')
             idx[g.name] = g
             idx[g.id] = g
         self._idx = idx

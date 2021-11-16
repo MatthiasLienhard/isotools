@@ -5,6 +5,14 @@
 !.github
 # Compiled python modules.
 *.pyc
+*.log
+
+#example data
+*.bam
+*.bam.bai
+!tests/data/example_1_*.bam*
+tests/data/example_*.pkl
+
 
 # Setuptools distribution folder.
 /dist/

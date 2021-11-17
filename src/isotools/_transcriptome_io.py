@@ -295,7 +295,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
             except BaseException:
                 logger.error('\n\n-->%s\n\n', (exons[0][0], exons[-1][1]) if strand == "+" else (exons[-1][1], exons[0][0]))
                 raise
-            gene = _add_sample_transcript(self, chrom, s_name, fuzzy_junction)  # tr is not updated
+            gene = _add_sample_transcript(self, tr, chrom, s_name, fuzzy_junction)  # tr is not updated
             if gene is None:
                 novel.setdefault(chrom, []).append(tr)
         for chrom in novel:
@@ -1205,6 +1205,7 @@ def get_gff_chrom_dict(gff, chromosomes):
         else:  # no specific regions entries - no aliases
             if chromosomes is None or c in chromosomes:
                 chrom[c] = c
+    gff.seek(0)
     return(chrom)
 
 

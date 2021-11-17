@@ -141,21 +141,21 @@ def iter_genes(self, region=None, query=None, progress_bar=False):
             raise
     if region is None:
         genes = self
-    else:
-        if isinstance(region, str):
-            if region in self.data:
-                genes = self.data[region]  # provide chromosome
-            else:
-                try:
-                    chrom, pos = region.split(':')
-                    if chrom in self.data:
-                        start, end = [int(v) for v in pos.split('-')]
-                    else:
-                        raise ValueError('specified chromosome {} not found'.format(chrom))
-                except BaseException as e:
-                    raise ValueError('incorrect region {} - specify as string "chr" or "chr:start-end" or tuple ("chr",start,end)'.format(region)) from e
-        elif isinstance(region, tuple):
-            chrom, start, end = region
+    elif isinstance(region, str):
+        if region in self.data:
+            genes = self.data[region]  # provide chromosome
+        else:
+            try:
+                chrom, pos = region.split(':')
+                if chrom in self.data:
+                    start, end = [int(v) for v in pos.split('-')]
+                else:
+                    raise ValueError('specified chromosome {} not found'.format(chrom))
+            except BaseException as e:
+                raise ValueError('incorrect region {} - specify as string "chr" or "chr:start-end" or tuple ("chr",start,end)'.format(region)) from e
+            genes = self.data[chrom][int(start):int(end)]
+    elif isinstance(region, tuple):
+        chrom, start, end = region
         if chrom in self.data:
             genes = self.data[chrom][int(start):int(end)]
         else:

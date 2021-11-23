@@ -304,13 +304,19 @@ def plot_saturation(isoseq=None, ax=None, cov_th=2, expr_th=[.5, 1, 2, 5, 10], x
     return ax
 
 
-def plot_rarefaction(rarefaction,total=None,  ax=None, legend=True, **axparams):
+def plot_rarefaction(rarefaction, total=None,  ax=None, legend=True, **axparams):
+    '''Plots the rarefaction curve.
 
-    for sa in rarefaction.columns:
-        #total = rarefaction.loc['total_reads', sa]
-        ax.plot([float(f) * total[sa] / 1e6 if total is not None else float(f)*100 for f in rarefaction.index], rarefaction[sa], label=sa)
+    :param rarefaction: A DataFrame with the observed number of transcripts, as computed by Transcriptome.rarefaction().
+    :param total: A dictionary with the total number of reads per sample/sample group, as computed by Transcriptome.rarefaction().
+    :param ax: The axis for the plot.
+    :param legend: If set True, a legend is added to the plot.
+    :param \\**axparams: Additional keyword parameters are passed to ax.set().'''
     if ax is None:
         _, ax = plt.subplots()
+    for sa in rarefaction.columns:
+        ax.plot([float(f) * total[sa] / 1e6 if total is not None else float(f)*100 for f in rarefaction.index], rarefaction[sa], label=sa)
+
     axparams.setdefault('title', 'Rarefaction Analysis')  # [nr],{'fontsize':20}, loc='left', pad=10)
     axparams.setdefault('ylabel', 'Number of discovered Transcripts')
     axparams.setdefault('xlabel', 'Fraction of subsampled reads [%]' if total is None else 'Number of subsampled reads [million]')

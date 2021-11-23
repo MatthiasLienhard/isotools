@@ -314,7 +314,7 @@ def plot_rarefaction(rarefaction, ax=None, legend=True, **axparams):
     axparams.setdefault('title', 'Rarefaction Analysis')  # [nr],{'fontsize':20}, loc='left', pad=10)
     axparams.setdefault('ylabel', 'Number of discovered Transcripts')
     axparams.setdefault('xlabel', 'Number of subsampled reads [million]')
-    ax.set()
+    ax.set(**axparams)
     if legend:
-        ax.legend(**axparams)
+        ax.legend()
     return ax

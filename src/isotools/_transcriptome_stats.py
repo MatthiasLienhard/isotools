@@ -661,7 +661,9 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
         Either a list of floats between 0 and 1, or a integer number, specifying the number of equally spaced fractions.
     :param min_coverage: Number of reads per transcript required to consider the transcriped discovered.
     :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
-    :return: Table with number of discovered transcripts, for each subsampling fraction and each sample / sample group.'''
+    :return: Tuple with:
+        1) Data frame containing the number of discovered transcripts, for each subsampling fraction and each sample / sample group.
+        2) List with total number of reads for each group. '''
 
     cov = []
     current = None
@@ -673,9 +675,11 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
             current_cov = g.coverage
         cov.append(current_cov[:, trid])
     cov = pd.DataFrame(cov, columns=self.samples)
+    total = dict(self.sample_table.set_index('name').nonchimeric_reads)
     if groups is not None:
         cov = pd.DataFrame({grn: cov[grp].sum(1) for grn, grp in groups.items()})
+        total = {grn: sum(n for sa, n in total.items() if sa in grp) for grn, grp in groups.items()}
     curves = {}
     for sa in cov:
-        curves[sa] = [(np.random.binomial(n=cov[sa], p=th) >= min_coverage).sum() for th in fractions]
-    return pd.DataFrame(curves, index=fractions)
+        curves[sa] = [total[sa]]+[(np.random.binomial(n=cov[sa], p=th) >= min_coverage).sum() for th in fractions]
+    return pd.DataFrame(curves, index=['total_reads']+fractions), total

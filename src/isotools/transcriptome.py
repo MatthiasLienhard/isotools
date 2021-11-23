@@ -51,6 +51,7 @@ class Transcriptome:
         logger.info('importing reference from %s file %s', file_format, reference_file)
         if file_format in ('gff', 'gff3', 'gtf'):
             tr = cls()
+            tr.chimeric = {}
             tr.data = import_ref_transcripts(reference_file, tr, file_format,  **kwargs)
             tr.infos = {'reference_file': reference_file, 'isotools_version': __version__}
             tr.filter = {'gene': DEFAULT_GENE_FILTER.copy(),
@@ -58,6 +59,8 @@ class Transcriptome:
                          'reference': DEFAULT_REF_TRANSCRIPT_FILTER.copy()}
             for subcat in ANNOTATION_VOCABULARY:
                 tag = '_'.join(re.findall(r'\b\w+\b', subcat)).upper()
+                if tag[0].isdigit():
+                    tag = '_'+tag
                 tr.filter['transcript'][tag] = f'"{subcat}" in annotation[1]'
             for i, cat in enumerate(SPLICE_CATEGORY):
                 tr.filter['transcript'][cat] = f'annotation[0]=={i}'

@@ -663,7 +663,7 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
     :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
     :return: Tuple with:
         1) Data frame containing the number of discovered transcripts, for each subsampling fraction and each sample / sample group.
-        2) List with total number of reads for each group. '''
+        2) Dict with total number of reads for each group. '''
 
     cov = []
     current = None
@@ -681,5 +681,5 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
         total = {grn: sum(n for sa, n in total.items() if sa in grp) for grn, grp in groups.items()}
     curves = {}
     for sa in cov:
-        curves[sa] = [total[sa]]+[(np.random.binomial(n=cov[sa], p=th) >= min_coverage).sum() for th in fractions]
-    return pd.DataFrame(curves, index=['total_reads']+fractions), total
+        curves[sa] = [(np.random.binomial(n=cov[sa], p=th) >= min_coverage).sum() for th in fractions]
+    return pd.DataFrame(curves, index=fractions), total

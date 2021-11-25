@@ -977,7 +977,7 @@ def transcript_table(self, extra_columns=None, **filter_args):
     colnames = ['chr', 'transcript_start', 'transcript_end', 'strand', 'gene_id', 'gene_name', 'transcript_nr'] + \
         [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
     rows = []
-    for g, trid, tr in self.iter_transcripts(region, query, min_coverage, max_coverage):
+    for g, trid, tr in self.iter_transcripts(**filter_args):
         rows.append([g.chrom, tr['exons'][0][0], tr['exons'][-1][1], g.strand, g.id, g.name, trid] + g.get_infos(trid, extra_columns))
     df = pd.DataFrame(rows, columns=colnames)
     return(df)
@@ -1030,7 +1030,7 @@ def chimeric_table(self, region=None, query=None):  # , star_chimeric=None, illu
 #    return chim_tab
 
 
-def write_gtf(self, fn, source='isotools', use_gene_name=False,  gzip=False,**filter_args):
+def write_gtf(self, fn, source='isotools', use_gene_name=False,  gzip=False, **filter_args):
     '''Exports the transcripts in gtf format to a file.
 
     :param fn: The filename to write the gtf.

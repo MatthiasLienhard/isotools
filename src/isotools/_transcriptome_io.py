@@ -942,7 +942,7 @@ def _set_alias(d, alias, required=True):
 
 
 # human readable output
-def gene_table(self, region=None):  # ideas: filter, extra_columns
+def gene_table(self, **filter_args):  # ideas: filter, extra_columns
     '''Creates a gene summary table.
 
     Exports all genes within region to a table.
@@ -950,20 +950,20 @@ def gene_table(self, region=None):  # ideas: filter, extra_columns
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. If omitted specify the complete genome.'''
 
     colnames = ['chr', 'start', 'end', 'strand', 'gene_name', 'n_transcripts']
-    rows = [(g.chrom, g.start, g.end, g.strand, g.id, g.n_transcripts) for g in self.iter_genes(region)]
+    rows = [(g.chrom, g.start, g.end, g.strand, g.id, g.n_transcripts) for g in self.iter_genes(**filter_args)]
     df = pd.DataFrame(rows, columns=colnames)
     return(df)
 
 
-def transcript_table(self, region=None, extra_columns=None, query=None, min_coverage=None, max_coverage=None):
+def transcript_table(self, extra_columns=None, **filter_args):
     '''Creates a transcript table.
 
     Exports all transcript isoforms within region to a table.
 
-    :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string.
-        If omitted specify the complete genome.
     :param extra_columns: Specify the additional information added to the table.
         Valid examples are "annotation", "coverage", or any other transcrit property as defined by the key in the transcript dict.
+    :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string.
+        If omitted specify the complete genome.
     :param query: Specify transcript filter query.
     :param min_coverage: minimum required total coverage.
     :params max_coverage: maximal allowed total coverage.'''
@@ -1030,7 +1030,7 @@ def chimeric_table(self, region=None, query=None):  # , star_chimeric=None, illu
 #    return chim_tab
 
 
-def write_gtf(self, fn, source='isotools', use_gene_name=False, region=None, query=None, min_coverage=2, gzip=False):
+def write_gtf(self, fn, source='isotools', use_gene_name=False,  gzip=False,**filter_args):
     '''Exports the transcripts in gtf format to a file.
 
     :param fn: The filename to write the gtf.
@@ -1050,7 +1050,7 @@ def write_gtf(self, fn, source='isotools', use_gene_name=False, region=None, que
 
     with openfile(fn) as f:
         logger.info('writing %sgtf file to %s', "gzip compressed " if gzip else "", fn)
-        for g, trid, _ in self.iter_transcripts(region=region, query=query, min_coverage=min_coverage):
+        for g, trid, _ in self.iter_transcripts(**filter_args):
             if g != g_pre and tr_ids:
                 lines = g_pre._to_gtf(trids=tr_ids, source=source, use_gene_name=use_gene_name)
                 _ = f.write('\n'.join(('\t'.join(str(field) for field in line) for line in lines)) + '\n')

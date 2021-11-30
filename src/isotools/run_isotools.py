@@ -227,7 +227,7 @@ def plot_altsplice_examples(isoseq, groups, illu_groups, examples, out_prefix):
                 info = g.transcripts[trid]["annotation"][1][cat]
             except TypeError:
                 info = list()
-            logger.info(f'{i+1}. best example for {cat}: {gene_name} {trid} {info=}, {cov=} {total_cov=} ({cov/total_cov:%})')
+            logger.info(f'{i+1}. best example for {cat}: {gene_name} {trid} {info}, {cov} {total_cov} ({cov/total_cov:%})')
             joi = []  # set joi
 
             if info:

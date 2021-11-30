@@ -1,23 +1,14 @@
 from intervaltree import Interval
+from collections.abc import Iterable
 from Bio.Seq import Seq
 import numpy as np
 import copy
 from .splice_graph import SegmentGraph
 from .short_read import Coverage
+from ._transcriptome_filter import SPLICE_CATEGORY
 
 import logging
 logger = logging.getLogger('isotools')
-
-
-def _eval_filter_fun(fun, name, **args):
-    '''Decorator for the filter functions, which are lambdas and thus cannot have normal decorators.
-    On exceptions the provided parameters are reported. This is helpfull for debugging.'''
-    try:
-        return fun(**args)
-    except Exception as e:
-        logger.error('error when evaluating filter %s with arguments %s: %s', name, str(args), str(e))
-        raise  # either stop evaluation
-        # return False   #or continue
 
 
 class Gene(Interval):
@@ -53,37 +44,6 @@ class Gene(Interval):
             for i in range(len(self.data['short_reads']), len(srdf)):
                 self.data['short_reads'].append(Coverage.from_bam(srdf.file[i], self))
         return self.data['short_reads'][idx]
-
-    def _filter_transcripts(self, query_fun, filter_fun, g_filter_eval, mincoverage=None, maxcoverage=None):
-        ''' Iterator over the transcripts of the gene.
-
-        Transcrips are specified by lists of flags submitted to the parameters.
-
-        :param query_fun: function to be evaluated on tags
-        :param filter_fun: tags to be evalutated on transcripts'''
-        for i, tr in enumerate(self.transcripts):
-            if mincoverage and self.coverage[:, i].sum() < mincoverage:
-                continue
-            if maxcoverage and self.coverage[:, i].sum() > maxcoverage:
-                continue
-            query_result = query_fun is None or query_fun(
-                **g_filter_eval, **{tag: _eval_filter_fun(f, tag, g=self, trid=i, **tr) for tag, f in filter_fun.items()})
-            if query_result:
-                yield i, tr
-
-    def _filter_ref_transcripts(self, query_fun, filter_fun, g_filter_eval):
-        ''' Iterator over the refernce transcripts of the gene.
-
-        Transcrips are specified by lists of flags submitted to the parameters.
-
-        :param query_fun: function to be evaluated on tags
-        :param filter_fun: tags to be evalutated on transcripts'''
-        for i, tr in enumerate(self.ref_transcripts):
-            # query_result=query_fun is None or query_fun(**{tag:f(g=self, trid=i,**g_filter_eval, **tr) for tag,f in filter_fun.items()})
-            query_result = query_fun is None or query_fun(
-                **g_filter_eval, **{tag: _eval_filter_fun(f, tag, g=self, trid=i, **tr) for tag, f in filter_fun.items()})
-            if query_result:
-                yield i, tr
 
     def correct_fuzzy_junctions(self, trid, size, modify=True):
         '''Corrects for splicing shifts.
@@ -245,11 +205,11 @@ class Gene(Interval):
             coding_len.reverse()
         return coding_len
 
-    def get_infos(self, trid, keys):
+    def get_infos(self, trid, keys, sample_i, group_i, **kwargs):
         '''Returns the transcript information specified in "keys" as a list.'''
-        return [value for k in keys for value in self._get_info(trid, k)]
+        return [value for k in keys for value in self._get_info(trid, k, sample_i, group_i)]
 
-    def _get_info(self, trid, key):
+    def _get_info(self, trid, key, sample_i, group_i, **kwargs):
         # returns tuples (as some keys return multiple values)
         if key == 'length':
             return sum((e - b for b, e in self.transcripts[trid]['exons'])),
@@ -264,18 +224,22 @@ class Gene(Interval):
             if 'annotation' not in self.transcripts[trid]:
                 return ('NA',) * 2
             nov_class, subcat = self.transcripts[trid]['annotation']
-            subcat_string = ';'.join(k if v is None else '{}:{}'.format(k, v) for k, v in subcat.items())
-            return nov_class, subcat_string
+            # subcat_string = ';'.join(k if v is None else '{}:{}'.format(k, v) for k, v in subcat.items())
+            return SPLICE_CATEGORY[nov_class], ','.join(subcat)  # only the names of the subcategories
         elif key == 'coverage':
-            return self.coverage[:, trid]
+            return self.coverage[sample_i, trid]
+        elif key == 'tpm':
+            return self.tpm(kwargs.get('pseudocount', 1))[sample_i, trid]
+        elif key == 'group_coverage_sum':
+            return tuple(self.coverage[si, trid].sum() for si in group_i)
+        elif key == 'group_tpm_mean':
+            return tuple(self.tpm(kwargs.get('pseudocount', 1))[si, trid].mean() for si in group_i)
         elif key in self.transcripts[trid]:
             val = self.transcripts[trid][key]
-            try:
-                iter(val)
-            except TypeError:
-                return val,  # atomic (e.g. numeric)
+            if isinstance(val, Iterable):  # iterables get converted to string
+                return str(val),
             else:
-                return str(val),  # iterables get converted to string
+                return val,  # atomic (e.g. numeric)
         return 'NA',
 
     def _set_coverage(self, force=False):
@@ -297,6 +261,12 @@ class Gene(Interval):
                 cov[i, j] = tr['coverage'].get(sa, 0)
         self.data['coverage'] = cov
         self.data['segment_graph'] = None
+
+    def tpm(self, pseudocount=1):
+        '''Returns the transcripts per million (TPM).
+
+        TPM is returned as a numpy array, with samples in columns and transcript isoforms in the rows.'''
+        return (self.coverage+pseudocount)/self._transcriptome.sample_table['nonchimeric_reads'].values.reshape(-1, 1)*1e6
 
     @property
     def coverage(self):

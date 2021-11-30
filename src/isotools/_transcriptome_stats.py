@@ -6,7 +6,7 @@ import logging
 import numpy as np
 import pandas as pd
 import itertools
-from tqdm import tqdm
+
 # from ._utils import overlap
 # from .decorators import deprecated, debug, experimental
 from ._utils import _filter_function
@@ -132,7 +132,7 @@ TESTS = {'betabinom_lr': betabinom_lr_test,
          'proportions': proportion_test}
 
 
-def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto', padj_method='fdr_bh', types=None):
+def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto', padj_method='fdr_bh', types=None, progress_bar=True):
     '''Performs the alternative splicing event test.
 
     :param groups: Dict with groupnames as keys and lists of samplenames as values, defining the two groups for the test.
@@ -179,7 +179,7 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
     if min_sa < 1:
         min_sa *= sum(len(gr) for gr in groups[:2])
     res = []
-    for g in tqdm(self):
+    for g in self.iter_genes(progress_bar=progress_bar):
         if g.coverage[sidx, :].sum() < min_total:
             continue
         known = {}  # check for known events
@@ -219,10 +219,10 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
             else:
                 start, end = sg[nX].end, sg[nY].start
                 novel = (start, end) not in known.get(splice_type, set())
-            res.append(tuple(itertools.chain((g.name, g.id, g.chrom, g.strand, start, end, splice_type, novel, pval), params, params_other,
+            res.append(tuple(itertools.chain((g.name, g.id, g.chrom, g.strand, start, end, splice_type, novel, pval, setA, setB), params, params_other,
                                              (val for lists in zip(x, n) for pair in zip(*lists) for val in pair))))
 
-    df = pd.DataFrame(res, columns=(['gene', 'gene_id', 'chrom', 'strand', 'start', 'end', 'splice_type', 'novel', 'pvalue'] +
+    df = pd.DataFrame(res, columns=(['gene', 'gene_id', 'chrom', 'strand', 'start', 'end', 'splice_type', 'novel', 'pvalue', 'trA', 'trB'] +
                                     [gn + part for gn in groupnames[:2] + ['total'] + groupnames[2:] for part in ['_PSI', '_disp']] +
                                     [f'{sa}_{gn}_{w}' for gn, grp in zip(groupnames, groups) for sa in grp for w in ['in_cov', 'total_cov']]))
     try:
@@ -236,7 +236,7 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
     return df
 
 
-def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1, samples=None, region=None, query=None):
+def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1, samples=None, region=None, query=None, progress_bar=False):
     '''Finds alternative splicing events.
 
     Finds alternative splicing events and potential transcription start sites/polyA sites
@@ -249,6 +249,7 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1, sample
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string.
         If omitted, the complete genome is searched.
     :param query: Specify gene filter query.
+    :param progress_bar: If set True the progress is shown.
     :return: Table with alternative splicing events.'''
     bubbles = []
     if samples is None:
@@ -258,7 +259,7 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1, sample
     sidx = np.array([sa_dict[sa] for sa in samples])
 
     assert 0 < min_alt_fraction < .5, 'min_alt_fraction must be > 0 and < 0.5'
-    for g in self.iter_genes(region=region, query=query):
+    for g in self.iter_genes(region=region, query=query, progress_bar=progress_bar):
         if g.coverage[sidx, :].sum() < min_total:
             continue
         known = {}  # check for known events

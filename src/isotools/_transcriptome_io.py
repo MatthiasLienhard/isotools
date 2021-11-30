@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 from os import path
 from intervaltree import IntervalTree, Interval
+from collections.abc import Iterable
 from pysam import TabixFile, AlignmentFile, FastaFile
 from tqdm import tqdm
 from contextlib import ExitStack
@@ -12,6 +13,8 @@ from .gene import Gene
 from .decorators import experimental
 import logging
 import gzip as gziplib
+from ._transcriptome_filter import SPLICE_CATEGORY
+
 logger = logging.getLogger('isotools')
 
 # io functions for the transcriptome class
@@ -81,7 +84,8 @@ def remove_samples(self, sample_names):
 
 
 def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_junction=5, add_chromosomes=True,
-                        min_align_fraction=.75, chimeric_mincov=2, use_satag=False, save_readnames=False, **kwargs):
+                        min_align_fraction=.75, chimeric_mincov=2, use_satag=False, save_readnames=False, progress_bar=True,
+                        **kwargs):
     '''Imports expressed transcripts from bam and adds it to the 'Transcriptome' object.
 
     :param fn: The bam filename of the new sample
@@ -96,7 +100,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
     :param chimeric_mincov: Minimum number of reads for a chimeric transcript to be considered
     :param use_satag: If True, import secondary alignments (of chimeric alignments) from the SA tag.
         This should only be specified if the secondary alignment is not reported in a seperate bam entry.
-    :param save_readnames: save a list of readnames, that contributed to the transcript
+    :param save_readnames: Save a list of the readnames, that contributed to the transcript.
+    :param progress_bar: Show the progress.
     :param kwargs: Additional keyword arugments are added to the sample table.'''
 
     # todo: one alignment may contain several samples - this is not supported at the moment
@@ -134,7 +139,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         total_nc_reads_chr = {}
         chimeric = dict()
 
-        with tqdm(total=total_alignments, unit='reads', unit_scale=True) as pbar:
+        with tqdm(total=total_alignments, unit='reads', unit_scale=True, disable=not progress_bar) as pbar:
 
             for chrom in chromosomes:  # todo: potential issue here - secondary/chimeric alignments to non listed chromosomes are ignored
                 total_nc_reads_chr[chrom] = dict()
@@ -259,7 +264,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                 for sa, nc_reads in total_nc_reads_chr[chrom].items():
                     sample_nc_reads[sa] = sample_nc_reads.get(sa, 0) + nc_reads
     if partial_count:
-        logger.warning('skipped %s reads aligned fraction of less than %s.', partial_count, min_align_fraction)
+        logger.info('skipped %s reads aligned fraction of less than %s.', partial_count, min_align_fraction)
     if skip_bc:
         logger.warning('skipped %s reads with barcodes not found in the provided list.', skip_bc)
     if n_secondary > 0:
@@ -616,7 +621,7 @@ def _find_matching_gene(genes_ol, exons, min_exon_coverage=.5):
     return None, ref_ol, None, list(range((len(exons) - 1) * 2))
 
 
-def _read_gtf_file(file_name, transcriptome, chromosomes, infer_genes=False):
+def _read_gtf_file(file_name, transcriptome, chromosomes, infer_genes=False, progress_bar=True):
     exons = dict()  # transcript id -> exons
     transcripts = dict()  # gene_id -> transcripts
     skipped = set()
@@ -624,7 +629,7 @@ def _read_gtf_file(file_name, transcriptome, chromosomes, infer_genes=False):
     cds_start = dict()
     cds_stop = dict()
     chrom_found = set()
-    with tqdm(total=path.getsize(file_name), unit_scale=True, unit='B', unit_divisor=1024) as pbar, TabixFile(file_name) as gtf:
+    with tqdm(total=path.getsize(file_name), unit_scale=True, unit='B', unit_divisor=1024, disable=not progress_bar) as pbar, TabixFile(file_name) as gtf:
         for line in gtf.fetch():
             file_pos = gtf.tell() >> 16
             if pbar.n < file_pos:
@@ -705,7 +710,7 @@ def _get_tabix_end(tbx_fh):
     return end
 
 
-def _read_gff_file(file_name, transcriptome, chromosomes):
+def _read_gff_file(file_name, transcriptome, chromosomes, progress_bar=True):
     exons = dict()  # transcript id -> exons
     transcripts = dict()  # gene_id -> transcripts
     skipped = set()
@@ -715,7 +720,7 @@ def _read_gff_file(file_name, transcriptome, chromosomes):
     cds_stop = dict()
 
     # takes quite some time... add a progress bar?
-    with tqdm(total=path.getsize(file_name), unit_scale=True, unit='B', unit_divisor=1024) as pbar, TabixFile(file_name) as gff:
+    with tqdm(total=path.getsize(file_name), unit_scale=True, unit='B', unit_divisor=1024, disable=not progress_bar) as pbar, TabixFile(file_name) as gff:
         chrom_ids = get_gff_chrom_dict(gff, chromosomes)
         for line in gff.fetch():
             file_pos = gff.tell() >> 16  # the lower 16 bit are the position within the zipped block
@@ -766,6 +771,7 @@ def import_ref_transcripts(fn, transcriptome, file_format, chromosomes=None, gen
     returns a dict interval trees for the genes'''
     if gene_categories is None:
         gene_categories = ['gene']
+    logger.info('importing annotation from %s', fn)
     if file_format == 'gtf':
         exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gtf_file(fn, transcriptome, chromosomes, **kwargs)
     else:  # gff/gff3
@@ -955,31 +961,92 @@ def gene_table(self, **filter_args):  # ideas: filter, extra_columns
     return(df)
 
 
-def transcript_table(self, extra_columns=None, **filter_args):
+def transcript_table(self,  samples=None,  groups=None, coverage=False, tpm=False, tpm_pseudocount=0, extra_columns=None,  **filter_args):
     '''Creates a transcript table.
 
     Exports all transcript isoforms within region to a table.
 
+     :param samples: provide a list of samples for which coverage / expression information is added.
+    :param groups: provide groups as a dict (as from Transcriptome.groups()), for which coverage  / expression information is added.
+    :param coverage: If set, coverage information is added for specified samples / groups.
+    :param tpm: If set, expression information (in tpm) is added for specified samples / groups.
     :param extra_columns: Specify the additional information added to the table.
-        Valid examples are "annotation", "coverage", or any other transcrit property as defined by the key in the transcript dict.
+        These can be any transcrit property as defined by the key in the transcript dict.
+
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string.
         If omitted specify the complete genome.
     :param query: Specify transcript filter query.
     :param min_coverage: minimum required total coverage.
     :params max_coverage: maximal allowed total coverage.'''
 
+    if samples is None:
+        if groups is None:
+            samples = self.samples
+        else:
+            samples = []
+    if groups is None:
+        groups = {}
+    if coverage is False and tpm is False:
+        samples = []
+        groups = {}
     if extra_columns is None:
         extra_columns = []
+    if samples is None:
+        samples = self.samples
+    samples_set = set(samples)
+    samples_set.update(*groups.values())
+    assert all(s in self.samples for s in samples_set), 'Not all specified samples are known'
+    if len(samples_set) == len(self.samples):
+        sample_i = slice(None)
+    else:
+        sample_i = [i for i, sa in enumerate(self.samples) if sa in samples_set]
+
     if not isinstance(extra_columns, list):
         raise ValueError('extra_columns should be provided as list')
-    extracolnames = {'annotation': ('novelty_class', 'novelty_subclasses'), 'coverage': (f'coverage_{sn}' for sn in self.samples)}
 
-    colnames = ['chr', 'transcript_start', 'transcript_end', 'strand', 'gene_id', 'gene_name', 'transcript_nr'] + \
-        [n for w in extra_columns for n in (extracolnames[w] if w in extracolnames else (w,))]
+    colnames = ['chr', 'transcript_start', 'transcript_end', 'strand', 'gene_id', 'gene_name', 'transcript_nr',
+                'transcript_length', 'num_exons', 'exon_starts', 'exon_ends', 'novelty_class', 'novelty_subclasses']
+    colnames += extra_columns
+
     rows = []
-    for g, trid, tr in self.iter_transcripts(**filter_args):
-        rows.append([g.chrom, tr['exons'][0][0], tr['exons'][-1][1], g.strand, g.id, g.name, trid] + g.get_infos(trid, extra_columns))
+    cov = []
+    for g, trids, trs in self.iter_transcripts(**filter_args, genewise=True):
+        if sample_i:
+            cov.append(g.coverage[sample_i, trids])
+        for trid, tr in zip(trids, trs):
+            exons = tr['exons']
+            trlen = sum(e[1]-e[0] for e in exons)
+            nov_class, subcat = tr['annotation']
+            # subcat_string = ';'.join(k if v is None else '{}:{}'.format(k, v) for k, v in subcat.items())
+            e_starts, e_ends = (','.join(str(exons[i][j]) for i in range(len(exons))) for j in range(2))
+            row = [g.chrom, exons[0][0], exons[-1][1], g.strand, g.id, g.name, trid, trlen, len(exons), e_starts, e_ends,
+                   SPLICE_CATEGORY[nov_class], ','.join(subcat)]
+            for k in extra_columns:
+                val = tr.get(k, 'NA')
+                row.append(str(val) if isinstance(val, Iterable) else val)
+            rows.append(row)
+
+    # add coverage information
     df = pd.DataFrame(rows, columns=colnames)
+    if cov:
+        df_list = [df]
+        cov = pd.DataFrame(np.concatenate(cov, 1).T, columns=self.samples if isinstance(sample_i, slice) else [sa for i, sa in self.samples if i in sample_i])
+        stab = self.sample_table.set_index('name')
+        if samples:
+            if coverage:
+                df_list.append(cov[samples].add_suffix('_coverage'))
+            if tpm:
+                total = stab.loc[samples, 'nonchimeric_reads']+tpm_pseudocount*cov.shape[0]
+                df_list.append(((cov[samples]+tpm_pseudocount)/total*1e6).add_suffix('_tpm'))
+        if groups:
+            cov_gr = pd.DataFrame({gn: cov[sa].sum(1) for gn, sa in groups.items()})
+            if coverage:
+                df_list.append(cov_gr.add_suffix('_sum_coverage'))
+            if tpm:
+                total = {gn: stab.loc[sa, 'nonchimeric_reads'].sum()+tpm_pseudocount*cov.shape[0] for gn, sa in groups.items()}
+                df_list.append(((cov_gr+tpm_pseudocount)/total*1e6).add_suffix('_sum_tpm'))
+        df = pd.concat(df_list, axis=1)
+
     return(df)
 
 

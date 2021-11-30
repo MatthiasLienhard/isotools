@@ -42,7 +42,7 @@ ANNOTATION_VOCABULARY = ['antisense', 'intergenic', 'genic genomic', 'novel exon
 # filtering functions for the transcriptome class
 
 
-def add_qc_metrics(self, genome_fn):
+def add_qc_metrics(self, genome_fn, progress_bar=True):
     ''' Retrieves QC metrics for the transcripts.
 
     Calling this function populates transcript["biases"] information, which can be used do create filters.
@@ -57,7 +57,7 @@ def add_qc_metrics(self, genome_fn):
             logger.warning('%s contigs are not contained in genome, affecting %s genes. \
                 Some metrics cannot be computed: %s', str(len(missing_chr)), str(missing_genes), str(missing_chr))
 
-        for g in tqdm(self):
+        for g in self.iter_genes(progress_bar=progress_bar):
             g.add_fragments()
             if g.chrom in genome_fh.references:
                 g.add_direct_repeat_len(genome_fh)
@@ -160,17 +160,22 @@ def iter_genes(self, region=None, query=None, progress_bar=False):
             genes = self.data[chrom][int(start):int(end)]
         else:
             raise ValueError('specified chromosome {} not found'.format(chrom))
-    for g in tqdm(genes, disable=not progress_bar, unit='genes'):
+    for g in tqdm(genes, disable=not progress_bar, unit='genes', smoothing=0):  # often few genes take much longer - smoothing 0 means avg
         if query is None or query_fun({tag: fun(**g.data) for tag, fun in filter_fun.items()}):
             yield g
 
 
-def iter_transcripts(self, region=None, query=None, min_coverage=None, max_coverage=None, progress_bar=False):
+def iter_transcripts(self, region=None, query=None, min_coverage=None, max_coverage=None, genewise=False, progress_bar=False):
     '''Iterates over the transcripts of a region, optionally applying filters.
+
+    By default, each iteration returns a 3 Tuple with the gene object, the transcript number and the transcript dictionary.
+
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional.
     :param query: If provided, query string is evaluated on all transcripts for filtering
     :param min_coverage: The minimum coverage threshold. Transcripts with less reads in total are ignored.
-    :param max_coverage: The maximum coverage threshold. Transcripts with more reads in total are ignored. '''
+    :param max_coverage: The maximum coverage threshold. Transcripts with more reads in total are ignored.
+    :param genewise: In each iteration, return the gene and all transcript numbers and transcript dicts for the gene as tuples.
+    :param progress_bar: Print a progress bar. '''
 
     if query:
         # used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}
@@ -190,11 +195,18 @@ def iter_transcripts(self, region=None, query=None, min_coverage=None, max_cover
     else:
         tr_filter_fun = query_fun = None
         g_filter_fun = {}
-
-    for g in self.iter_genes(region=region, progress_bar=progress_bar):
-        g_filter_eval = {tag: fun(**g.data) for tag, fun in g_filter_fun.items()}
-        for i, tr in g._filter_transcripts(query_fun, tr_filter_fun, g_filter_eval, min_coverage, max_coverage):
-            yield g, i, tr
+    if genewise:
+        for g in self.iter_genes(region=region, progress_bar=progress_bar):
+            g_filter_eval = {tag: fun(**g.data) for tag, fun in g_filter_fun.items()}
+            filter_result = tuple(_filter_transcripts(g, g.transcripts, query_fun, tr_filter_fun, g_filter_eval, min_coverage, max_coverage))
+            if filter_result:
+                i_tuple, tr_tuple = zip(*filter_result)
+                yield g, i_tuple, tr_tuple
+    else:
+        for g in self.iter_genes(region=region, progress_bar=progress_bar):
+            g_filter_eval = {tag: fun(**g.data) for tag, fun in g_filter_fun.items()}
+            for i, tr in _filter_transcripts(g, g.transcripts, query_fun, tr_filter_fun, g_filter_eval, min_coverage, max_coverage):
+                yield g, i, tr
 
 
 def iter_ref_transcripts(self, region=None, query=None, progress_bar=False):
@@ -222,5 +234,34 @@ def iter_ref_transcripts(self, region=None, query=None, progress_bar=False):
     for g in self.iter_genes(region=region, progress_bar=progress_bar):
         if g.is_annotated:
             g_filter_eval = {tag: fun(**g.data) for tag, fun in g_filter_fun.items()}
-            for i, tr in g._filter_ref_transcripts(query_fun, ref_filter_fun, g_filter_eval):
+            for i, tr in _filter_transcripts(g, g.ref_transcripts, query_fun, ref_filter_fun, g_filter_eval):
                 yield g, i, tr
+
+
+def _eval_filter_fun(fun, name, **args):
+    '''Decorator for the filter functions, which are lambdas and thus cannot have normal decorators.
+    On exceptions the provided parameters are reported. This is helpfull for debugging.'''
+    try:
+        return fun(**args)
+    except Exception as e:
+        logger.error('error when evaluating filter %s with arguments %s: %s', name, str(args), str(e))
+        raise  # either stop evaluation
+        # return False   #or continue
+
+
+def _filter_transcripts(g, transcripts,  query_fun, filter_fun, g_filter_eval, mincoverage=None, maxcoverage=None):
+    ''' Iterator over the transcripts of the gene.
+
+    Transcrips are specified by lists of flags submitted to the parameters.
+
+    :param query_fun: function to be evaluated on tags
+    :param filter_fun: tags to be evalutated on transcripts'''
+    for i, tr in enumerate(transcripts):
+        if mincoverage and g.coverage[:, i].sum() < mincoverage:
+            continue
+        if maxcoverage and g.coverage[:, i].sum() > maxcoverage:
+            continue
+        query_result = query_fun is None or query_fun(
+            **g_filter_eval, **{tag: _eval_filter_fun(f, tag, g=g, trid=i, **tr) for tag, f in filter_fun.items()})
+        if query_result:
+            yield i, tr

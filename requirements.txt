@@ -10,3 +10,4 @@ umap-learn
 sklearn
 scipy
 statsmodels
+importlib-metadata

@@ -771,7 +771,6 @@ def import_ref_transcripts(fn, transcriptome, file_format, chromosomes=None, gen
     returns a dict interval trees for the genes'''
     if gene_categories is None:
         gene_categories = ['gene']
-    logger.info('importing annotation from %s', fn)
     if file_format == 'gtf':
         exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gtf_file(fn, transcriptome, chromosomes, **kwargs)
     else:  # gff/gff3
@@ -966,13 +965,12 @@ def transcript_table(self,  samples=None,  groups=None, coverage=False, tpm=Fals
 
     Exports all transcript isoforms within region to a table.
 
-     :param samples: provide a list of samples for which coverage / expression information is added.
+    :param samples: provide a list of samples for which coverage / expression information is added.
     :param groups: provide groups as a dict (as from Transcriptome.groups()), for which coverage  / expression information is added.
     :param coverage: If set, coverage information is added for specified samples / groups.
     :param tpm: If set, expression information (in tpm) is added for specified samples / groups.
     :param extra_columns: Specify the additional information added to the table.
         These can be any transcrit property as defined by the key in the transcript dict.
-
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string.
         If omitted specify the complete genome.
     :param query: Specify transcript filter query.
@@ -997,8 +995,10 @@ def transcript_table(self,  samples=None,  groups=None, coverage=False, tpm=Fals
     samples_set.update(*groups.values())
     assert all(s in self.samples for s in samples_set), 'Not all specified samples are known'
     if len(samples_set) == len(self.samples):
+        all_samples = True
         sample_i = slice(None)
     else:
+        all_samples = False
         sample_i = [i for i, sa in enumerate(self.samples) if sa in samples_set]
 
     if not isinstance(extra_columns, list):
@@ -1012,7 +1012,8 @@ def transcript_table(self,  samples=None,  groups=None, coverage=False, tpm=Fals
     cov = []
     for g, trids, trs in self.iter_transcripts(**filter_args, genewise=True):
         if sample_i:
-            cov.append(g.coverage[sample_i, trids])
+            idx = (slice(None), trids) if all_samples else np.ix_(sample_i, trids)
+            cov.append(g.coverage[idx])
         for trid, tr in zip(trids, trs):
             exons = tr['exons']
             trlen = sum(e[1]-e[0] for e in exons)
@@ -1030,7 +1031,7 @@ def transcript_table(self,  samples=None,  groups=None, coverage=False, tpm=Fals
     df = pd.DataFrame(rows, columns=colnames)
     if cov:
         df_list = [df]
-        cov = pd.DataFrame(np.concatenate(cov, 1).T, columns=self.samples if isinstance(sample_i, slice) else [sa for i, sa in self.samples if i in sample_i])
+        cov = pd.DataFrame(np.concatenate(cov, 1).T, columns=self.samples if all_samples else [sa for i, sa in enumerate(self.samples) if i in sample_i])
         stab = self.sample_table.set_index('name')
         if samples:
             if coverage:

@@ -48,8 +48,8 @@ class Transcriptome:
             file_format = os.path.splitext(reference_file)[1].lstrip('.')
             if file_format == 'gz':
                 file_format = os.path.splitext(reference_file[:-3])[1].lstrip('.')
-        logger.info('importing reference from %s file %s', file_format, reference_file)
         if file_format in ('gff', 'gff3', 'gtf'):
+            logger.info('importing reference from %s file %s', file_format, reference_file)
             tr = cls()
             tr.chimeric = {}
             tr.data = import_ref_transcripts(reference_file, tr, file_format,  **kwargs)
@@ -69,7 +69,7 @@ class Transcriptome:
             # warn if kwargs are specified: kwargs are ignored
             if kwargs:
                 logger.warning("The following parameters are ignored when loading reference from pkl: %s", ", ".join(kwargs))
-            tr = pickle.load(open(reference_file, 'rb'))
+            tr = cls.load(reference_file)
             if 'sample_table' in tr.infos:
                 logger.warning('the pickle file seems to contain sample information... extracting refrence')
                 tr = tr._extract_reference()
@@ -110,14 +110,16 @@ class Transcriptome:
         pickle.dump(ref_tr, open(pickle_file, 'wb'))
 
     def _extract_reference(self):
-        if not [k for k in self.infos if k != 'reference_file']:
+        if not 'sample_table' not in self.infos:
             return self  # only reference info - assume that self.data only contains reference data
         # make a new transcriptome
-        ref_tr = type(self)(data={}, infos={'reference_file': self.infos['reference_file']}, filter=self.filter)
+        ref_info = {k: v for k, v in self.infos.items() if k in ['reference_file', 'isotools_version']}
+        ref_tr = type(self)(data={}, infos=ref_info, filter=self.filter)
         # extract the reference genes and link them to the new ref_tr
+        keep = {'ID', 'chr', 'strand', 'name', 'reference'}  # no coverage, segment_graph, transcripts
         for chrom, tree in self.data.items():
-            ref_tr.data[chrom] = IntervalTree(Gene(g.start, g.end, {k: g.data[k]
-                                              for k in Gene.required_infos+['reference']}, ref_tr) for g in tree if g.is_annotated)
+            ref_tr.data[chrom] = IntervalTree(Gene(g.start, g.end, {k: v
+                                              for k, v in g.data.items() if k in keep}, ref_tr) for g in tree if g.is_annotated)
         return ref_tr
 
     def make_index(self):

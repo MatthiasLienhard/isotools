@@ -3,6 +3,13 @@
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
+## [0.2.8]
+* fix: version information lost when pickeling reference.
+* fix missing genen name
+* added pt_size parameter to plot_embedding and plot_diff_results function
+* added colors parameter to plotting functions
+
+
 ## [0.2.7]
 * added command line script run_isotools.py
 * added test data for unit tests 

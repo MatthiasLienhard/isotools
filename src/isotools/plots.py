@@ -8,7 +8,8 @@ import logging
 logger = logging.getLogger('isotools')
 
 
-def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5), min_cov=10, splice_types=None):
+def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5), min_cov=10, splice_types=None,
+                      group_colors=None, sample_colors=None, pt_size=20, lw=1, ls='solid'):
     '''Plots differential splicing results.
 
     For the first (e.g. most significant) differential splicing events from result_table
@@ -24,6 +25,11 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5
     :param grid_shape: Number of rows and columns for the figure.
     :param splice_type: Only events from the splecified splice_type(s) are depicted.
         If omitted, all types are selected.
+    :param group_colors: Specify the colors for the groups (e.g. the lines) as a dict or list of length two.
+    :param sample_colors: Specify the colors for the samples (e.g. the dots) as a dict. Defaults to the corresponding group color.
+    :param pt_size: Specify the size for the data points in the plot.
+    :param lw: Specify witdh of the lines. See matplotlib Line2D for details.
+    :param ls: Specify style of the lines. See matplotlib Line2D for details.
     :return: figure, axes and list of plotted events
     '''
 
@@ -34,29 +40,41 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5
     axs = axs.flatten()
     x = [i / 100 for i in range(101)]
     group_names = [c[:-4] for c in result_table.columns if c.endswith('_PSI')][:2]
-    groups = {gn: [c[:-10] for c in result_table.columns if c.endswith(gn + '_total_cov')] for gn in group_names}
+    groups = {gn: [c[:c.find(gn)-1] for c in result_table.columns if c.endswith(gn + '_total_cov')] for gn in group_names}
+    if group_colors is None:
+        group_colors = [0, 1]
+    if isinstance(group_colors, list):
+        group_colors = dict(zip(group_names, group_colors))
+    if sample_colors is None:
+        sample_colors = {}
+    sample_colors = {sa: sample_colors.get(sa, group_colors[gn]) for gn in group_names for sa in groups[gn]}
+    other = {group_names[0]: group_names[1], group_names[1]: group_names[0]}
     logger.debug('groups: %s', str(groups))
     for idx, row in result_table.iterrows():
-        logger.debug(f'plotting {idx}: {row.gene}')
+        logger.debug('plotting %s: %s', idx, row.gene)
         if splice_types is not None and row.splice_type not in splice_types:
             continue
         if row.gene in set(plotted.gene):
             continue
         params_alt = {gn: (row[f'{gn}_PSI'], row[f'{gn}_disp']) for gn in group_names}
-        # select only samples covered >= min_support
-        psi_gr = {gn: [row[f'{sa}_in_cov'] / row[f'{sa}_total_cov'] for sa in gr if row[f'{sa}_total_cov'] >= min_support] for gn, gr in groups.items()}
-        support = {s: sum(abs(i - params_alt[s][0]) < abs(i - params_alt[o][0]) for i in psi_gr[s]) for s, o in zip(group_names, reversed(group_names))}
+        # select only samples covered >= min_cov
+        # psi_gr = {gn: [row[f'{sa}_in_cov'] / row[f'{sa}_total_cov'] for sa in gr if row[f'{sa}_total_cov'] >= min_cov] for gn, gr in groups.items()}
+        psi_gr_list = [(sa, gn, row[f'{sa}_{gn}_in_cov'] / row[f'{sa}_{gn}_total_cov'])
+                       for gn, gr in groups.items() for sa in gr if row[f'{sa}_{gn}_total_cov'] >= min_cov]
+        psi_gr = pd.DataFrame(psi_gr_list, columns=['sample', 'group', 'psi'])
+        psi_gr['support'] = [abs(sa.psi - params_alt[sa['group']][0]) < abs(sa.psi - params_alt[other[sa['group']]][0]) for i, sa in psi_gr.iterrows()]
+        support = dict(psi_gr.groupby('group')['support'].sum())
         if any(sup < min_support for sup in support.values()):
-            logger.debug(f'skipping {row.gene} with {support} supporters')
+            logger.debug('skipping %s with %s supporters', row.gene, support)
             continue
         if abs(params_alt[group_names[0]][0] - params_alt[group_names[1]][0]) < min_diff:
-            logger.debug(f'{row.gene} with {"vs".join(str(p[0]) for p in params_alt.values())}')
+            logger.debug('%s with %s', row.gene, "vs".join(str(p[0]) for p in params_alt.values()))
             continue
         # get the paramters for the beta distiribution
-        # print(param)
         ax = axs[len(plotted)]
         # ax.boxplot([mut,wt], labels=['mut','wt'])
-        sns.swarmplot(data=pd.DataFrame(list(psi_gr.values()), index=psi_gr).T, ax=ax, orient='h')
+        sns.swarmplot(data=psi_gr, x='psi', y='group', hue='sample', orient='h', size=np.sqrt(pt_size), palette=sample_colors, ax=ax)
+        ax.legend([], [], frameon=False)
         for i, gn in enumerate(group_names):
             max_i = int(params_alt[gn][0] * (len(x) - 1))
             ax2 = ax.twinx()  # instantiate a second axes that shares the same x-axis
@@ -68,7 +86,7 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5
             else:
                 y = np.zeros(len(x))
                 y[max_i] = 1  # point mass
-            ax2.plot(x, y, color=f'C{i}')
+            ax2.plot(x, y, color=group_colors[gn], lw=lw, ls=ls)
             ax2.tick_params(right=False, labelright=False)
         ax.set_title(f'{row.gene} {row.splice_type}\nFDR={row.padj:.5f}')
         plotted = plotted.append(row)
@@ -79,8 +97,8 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5
 
 
 def plot_embedding(splice_bubbles, method='PCA', prior_count=3,
-                   top_var=500, min_total=100, min_alt_fraction=.1, plot_components=[1, 2],
-                   splice_types='all', labels=True, groups=None, colors=None, ax=None, **kwargs):
+                   top_var=500, min_total=100, min_alt_fraction=.1, plot_components=(1, 2),
+                   splice_types='all', labels=True, groups=None, colors=None, pt_size=20, ax=None, **kwargs):
     ''' Plots embedding of alternative splicing events.
 
     Alternative splicing events are soreted by variance and only the top variable events are used for the embedding.
@@ -99,6 +117,7 @@ def plot_embedding(splice_bubbles, method='PCA', prior_count=3,
     :param groups: Set a group definition (e.g. by isoseq.Transcirptome.groups()) to color the datapoints.
         All samples within one group are depicted.
     :param colors: List or dict of colors for the groups, if ommited colors are generated automatically.
+    :param pt_size: Specify the size for the data points in the plot.
     :param ax: The axis for plotting.
     :param \\**kwargs: Additional keyword parameters are passed to PCA() or UMAP().
     :return: A dataframe with the proportions of the alternative events, the transformed data and the embedding object.'''
@@ -150,7 +169,7 @@ def plot_embedding(splice_bubbles, method='PCA', prior_count=3,
     k = k.loc[covered]
     # compute the proportions
     scaled_mean = k.sum(1) / n.sum(1) * prior_count
-    p = ((k.values + scaled_mean[:, np.newaxis]) / (n.values + prior_count)).T
+    p = ((k.values + scaled_mean.values[:, np.newaxis]) / (n.values + prior_count)).T
     topvar = p[:, p.var(0).argsort()[-top_var:]]  # sort from low to high var
 
     # compute embedding
@@ -172,7 +191,7 @@ def plot_embedding(splice_bubbles, method='PCA', prior_count=3,
         ax.scatter(
             transformed.loc[sa, plot_components[0] - 1],
             transformed.loc[sa, plot_components[1] - 1],
-            c=colors[gr], label=gr)
+            c=colors[gr], label=gr, s=pt_size)
     ax.set(**axparams)
     if labels:
         for idx, (x, y) in transformed[plot_components - 1].iterrows():
@@ -182,7 +201,7 @@ def plot_embedding(splice_bubbles, method='PCA', prior_count=3,
 # plots
 
 
-def plot_bar(df, ax=None, drop_categories=None, legend=True, annotate=True, rot=90, bar_width=.5, **axparams):
+def plot_bar(df, ax=None, drop_categories=None, legend=True, annotate=True, rot=90, bar_width=.5, colors=None,  **axparams):
     '''Depicts data as a barplot.
 
     This function is intended to be called with the result from
@@ -195,6 +214,7 @@ def plot_bar(df, ax=None, drop_categories=None, legend=True, annotate=True, rot=
     :param annotate: If True, print numbers / fractions in the bars.
     :param rot: Set rotation of the lables.
     :param bar_width: Set relative width of the plotted bars.
+    :param colors: Provide a dictionary with label keys and color values. By default, colors are automatically assigned.
     :param \\**axparams: Additional keyword parameters are passed to ax.set().'''
 
     if ax is None:
@@ -209,7 +229,7 @@ def plot_bar(df, ax=None, drop_categories=None, legend=True, annotate=True, rot=
         dcat = []
     else:
         dcat = [d for d in drop_categories if d in df.index]
-    fractions.drop(dcat).plot.bar(ax=ax, legend=legend, width=bar_width, rot=rot)
+    fractions.drop(dcat).plot.bar(ax=ax, legend=legend, width=bar_width, rot=rot, color=colors)
     # add numbers
     if annotate:
         numbers = [int(v) for c in df.drop(dcat).T.values for v in c]
@@ -225,7 +245,7 @@ def plot_bar(df, ax=None, drop_categories=None, legend=True, annotate=True, rot=
     return ax
 
 
-def plot_distr(counts, ax=None, density=False, smooth=None, legend=True, fill=True, **axparams):
+def plot_distr(counts, ax=None, density=False, smooth=None, legend=True, fill=True, lw=1, ls='solid', colors=None, **axparams):
     '''Depicts data as density plot.
 
     This function is intended to be called with the result from
@@ -239,10 +259,15 @@ def plot_distr(counts, ax=None, density=False, smooth=None, legend=True, fill=Tr
     :param smooth: Ews smoothing span.
     :param legend: If True, add a legend.
     :param fill: If set, the area below the lines are filled with half transparent color.
+    :param lw: Specify witdh of the lines. See matplotlib Line2D for details.
+    :param ls: Specify style of the lines. See matplotlib Line2D for details.
+    :param colors: Provide a dictionary with label keys and color values. By default, colors are automatically assigned.
     :param \\**axparams: Additional keyword parameters are passed to ax.set().'''
     # maybe add smoothing
     x = [sum(bin) / 2 for bin in counts.index]
     sz = [bin[1] - bin[0] for bin in counts.index]
+    if colors is None:
+        colors = {}
     if ax is None:
         _, ax = plt.subplots()
     if density:
@@ -256,9 +281,9 @@ def plot_distr(counts, ax=None, density=False, smooth=None, legend=True, fill=Tr
     if smooth:
         counts = counts.ewm(span=smooth).mean()
     for gn, gc in counts.items():
-        ax.plot(x, gc / sz, label=gn)
+        lines = ax.plot(x, gc / sz, label=gn, color=colors.get(gn, None), lw=lw, ls=ls)
         if fill:
-            ax.fill_between(x, 0, gc / sz, alpha=.5)
+            ax.fill_between(x, 0, gc / sz, alpha=.5, color=lines[-1].get_color())
     # ax.plot(x, counts.divide(sz, axis=0))
     ax.set(**axparams)
     if legend:
@@ -294,7 +319,7 @@ def plot_saturation(isoseq=None, ax=None, cov_th=2, expr_th=[.5, 1, 2, 5, 10], x
         chance = nbinom.cdf(k - cov_th, n=cov_th, p=tpm_th * 1e-6)  # 0 to k-cov_th failiors
         ax.plot(k / 1e6, chance, label=f'{tpm_th} TPM')
     for sa, cov in n_reads.items():
-        ax.axvline(cov / 1e6, color='grey', linestyle='--')
+        ax.axvline(cov / 1e6, color='grey', ls='--')
         if label:
             ax.text((cov + (k[-1] - k[0]) / 200) / 1e6, 0.1, f'{sa} ({cov/1e6:.2f} M)', rotation=-90)
     ax.set(**axparams)
@@ -304,18 +329,24 @@ def plot_saturation(isoseq=None, ax=None, cov_th=2, expr_th=[.5, 1, 2, 5, 10], x
     return ax
 
 
-def plot_rarefaction(rarefaction, total=None,  ax=None, legend=True, **axparams):
+def plot_rarefaction(rarefaction, total=None,  ax=None, legend=True, colors=None, lw=1, ls='solid', **axparams):
     '''Plots the rarefaction curve.
 
     :param rarefaction: A DataFrame with the observed number of transcripts, as computed by Transcriptome.rarefaction().
     :param total: A dictionary with the total number of reads per sample/sample group, as computed by Transcriptome.rarefaction().
     :param ax: The axis for the plot.
     :param legend: If set True, a legend is added to the plot.
+    :param colors: Provide a dictionary with label keys and color values. By default, colors are automatically assigned.
+    :param lw: Specify witdh of the lines. See matplotlib Line2D for details.
+    :param ls: Specify style of the lines. See matplotlib Line2D for details.
     :param \\**axparams: Additional keyword parameters are passed to ax.set().'''
     if ax is None:
         _, ax = plt.subplots()
+    if colors is None:
+        colors = {}
     for sa in rarefaction.columns:
-        ax.plot([float(f) * total[sa] / 1e6 if total is not None else float(f)*100 for f in rarefaction.index], rarefaction[sa], label=sa)
+        ax.plot([float(f) * total[sa] / 1e6 if total is not None else float(f)*100 for f in rarefaction.index], rarefaction[sa],
+                label=sa, ls=ls, lw=lw, color=colors.get(sa, None))
 
     axparams.setdefault('title', 'Rarefaction Analysis')  # [nr],{'fontsize':20}, loc='left', pad=10)
     axparams.setdefault('ylabel', 'Number of discovered Transcripts')

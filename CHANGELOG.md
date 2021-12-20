@@ -8,6 +8,7 @@
 * fix missing genen name
 * added pt_size parameter to plot_embedding and plot_diff_results function
 * added colors parameter to plotting functions
+* various fixes of command line script run_isotools.py
 
 
 ## [0.2.7]

@@ -90,7 +90,7 @@ def main():
 
     if args.gtf_out:
         gtf_fn = f'{args.file_prefix}_transcripts{file_suffix}.gtf'
-        isoseq.write_gtf(gtf_fn, use_gene_name=True, query=args.filter_query, progress_bar=args.progress_bar)
+        isoseq.write_gtf(gtf_fn, query=args.filter_query, progress_bar=args.progress_bar)
 
     if args.qc_plots:
         filter_plots(isoseq, groups, f'{args.file_prefix}_filter_stats{file_suffix}.png', args.progress_bar)

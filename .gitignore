@@ -3,6 +3,7 @@
 !.gitignore
 !.readthedocs.yaml
 !.github
+!.gitattributes
 # Compiled python modules.
 *.pyc
 *.log

@@ -3,6 +3,9 @@
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
+## [0.2.9]
+* added options for additional fields in gtf output
+
 ## [0.2.8]
 * fix: version information lost when pickeling reference.
 * fix missing genen name

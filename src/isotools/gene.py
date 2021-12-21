@@ -65,10 +65,10 @@ class Gene(Interval):
             trid['exons'] = [e for e in exons if e[0] < e[1]]  # remove zero length exons
         return shifts
 
-    def _to_gtf(self, trids, source='isoseq', use_gene_name=False):
+    def _to_gtf(self, trids, source='isoseq'):
         '''Creates the gtf lines of the gene as strings.'''
-
-        info = {'gene_id': self.name if use_gene_name else self.id}
+        donotshow = {'transcripts', 'short_exons', 'segment_graph'}
+        info = {'gene_id': self.id, 'gene_name': self.name}
         lines = [None]
         starts = []
         ends = []
@@ -77,14 +77,44 @@ class Gene(Interval):
             info['transcript_id'] = f'{info["gene_id"]}_{i}'
             starts.append(tr['exons'][0][0] + 1)
             ends.append(tr['exons'][-1][1])
+            trinfo = info.copy()
+            if 'downstream_A_content' in tr:
+                trinfo['downstream_A_content'] = f'{tr["downstream_A_content"]:0.3f}'
+            if tr['annotation'][0] == 0:  # FSM
+                refinfo = {}
+                for refid in tr['annotation'][1]['FSM']:
+                    for k in self.ref_transcripts[refid]:
+                        if k == 'exons':
+                            continue
+                        elif k == 'CDS':
+                            if self.strand == '+':
+                                cds_start, cds_end = self.ref_transcripts[refid]['CDS']
+                            else:
+                                cds_end, cds_start = self.ref_transcripts[refid]['CDS']
+                            refinfo.setdefault('CDS_start', []).append(str(cds_start))
+                            refinfo.setdefault('CDS_end', []).append(str(cds_end))
+                        else:
+                            refinfo.setdefault(k, []).append(str(self.ref_transcripts[refid][k]))
+                for k, vlist in refinfo.items():
+                    trinfo[f'ref_{k}'] = ','.join(vlist)
+            else:
+                trinfo['novelty'] = ','.join(k for k in tr['annotation'][1])
             lines.append((self.chrom, source, 'transcript', tr['exons'][0][0] + 1, tr['exons'][-1][1], '.',
-                         self.strand, '.', '; '.join(f'{k} "{v}"' for k, v in info.items() if k != 'exon_id')))
+                         self.strand, '.', '; '.join(f'{k} "{v}"' for k, v in trinfo.items())))
+            noncanonical = tr.get('noncanonical_splicing', [])
             for enr, pos in enumerate(tr['exons']):
-                info['exon_id'] = f'{info["gene_id"]}_{i}_{enr}'
-                lines.append((self.chrom, source, 'exon', pos[0] + 1, pos[1], '.', self.strand, '.', '; '.join(f'{k} "{v}"' for k, v in info.items())))
+                exon_info = info.copy()
+                exon_info['exon_id'] = f'{info["gene_id"]}_{i}_{enr}'
+                if enr in noncanonical:
+                    exon_info['noncanonical_donor'] = noncanonical[enr][:2]
+                if enr+1 in noncanonical:
+                    exon_info['noncanonical_acceptor'] = noncanonical[enr+1][2:]
+                lines.append((self.chrom, source, 'exon', pos[0] + 1, pos[1], '.', self.strand, '.', '; '.join(f'{k} "{v}"' for k, v in exon_info.items())))
         if len(lines) > 1:
             # add gene line
-            lines[0] = (self.chrom, source, 'gene', min(starts), max(ends), '.', self.strand, '.', '{} "{}"'.format('gene_id', info['gene_id']))
+            if 'reference' in self.data:
+                info.update({k: v for k, v in self.data['reference'].items() if k not in donotshow})  # add reference gene specific fields
+            lines[0] = (self.chrom, source, 'gene', min(starts), max(ends), '.', self.strand, '.', '; '.join(f'{k} "{v}"' for k, v in info.items()))
             return lines
         return []
 

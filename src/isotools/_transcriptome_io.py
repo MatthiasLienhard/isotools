@@ -1098,17 +1098,14 @@ def chimeric_table(self, region=None, query=None):  # , star_chimeric=None, illu
 #    return chim_tab
 
 
-def write_gtf(self, fn, source='isotools', use_gene_name=False,  gzip=False, **filter_args):
+def write_gtf(self, fn, source='isotools', gzip=False, **filter_args):
     '''Exports the transcripts in gtf format to a file.
 
     :param fn: The filename to write the gtf.
     :param source: String for the source column of the gtf file.
-    :param use_gene_name: Use the gene name instead of the gene id in the for the gene_id descriptor
     :param region: Splecify genomic region to export to gtf. If omitted, export whole genome.
     :param query: Specify transcript filter query.
     :param gzip: compress the output as gzip.'''
-    g = g_pre = None
-    tr_ids = []
 
     def openfile(fn):
         if gzip:
@@ -1118,15 +1115,8 @@ def write_gtf(self, fn, source='isotools', use_gene_name=False,  gzip=False, **f
 
     with openfile(fn) as f:
         logger.info('writing %sgtf file to %s', "gzip compressed " if gzip else "", fn)
-        for g, trid, _ in self.iter_transcripts(**filter_args):
-            if g != g_pre and tr_ids:
-                lines = g_pre._to_gtf(trids=tr_ids, source=source, use_gene_name=use_gene_name)
-                _ = f.write('\n'.join(('\t'.join(str(field) for field in line) for line in lines)) + '\n')
-                tr_ids = []
-            g_pre = g
-            tr_ids.append(trid)
-        if tr_ids:
-            lines = g._to_gtf(trids=tr_ids, source=source, use_gene_name=use_gene_name)
+        for g, trids, _ in self.iter_transcripts(genewise=True, **filter_args):
+            lines = g._to_gtf(trids=trids, source=source)
             _ = f.write('\n'.join(('\t'.join(str(field) for field in line) for line in lines)) + '\n')
 
 

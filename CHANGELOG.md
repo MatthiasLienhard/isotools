@@ -5,6 +5,7 @@
 
 ## [0.2.9]
 * added options for additional fields in gtf output
+* fixed plot_bar default color scheme
 
 ## [0.2.8]
 * fix: version information lost when pickeling reference.

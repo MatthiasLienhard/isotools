@@ -229,6 +229,8 @@ def plot_bar(df, ax=None, drop_categories=None, legend=True, annotate=True, rot=
         dcat = []
     else:
         dcat = [d for d in drop_categories if d in df.index]
+    if colors is None:
+        colors = [f'C{i}' for i, _ in enumerate(dcat)]  # plot.bar cannot deal with color=None
     fractions.drop(dcat).plot.bar(ax=ax, legend=legend, width=bar_width, rot=rot, color=colors)
     # add numbers
     if annotate:

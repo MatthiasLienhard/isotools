@@ -4,6 +4,7 @@ import argparse
 # import numpy as np
 import pandas as pd
 from isotools import Transcriptome
+from isotools._utils import pairwise
 import isotools.plots
 import logging
 import sys
@@ -38,16 +39,20 @@ def main():
     parser.add_argument('--gtf_out', help='make filtered gtf', action='store_true')
     parser.add_argument('--diff', metavar='<group1/group2>', nargs='*', help='perform differential splicing analysis')
     parser.add_argument('--diff_plots', metavar='<n>', type=int, help='make sashimi plots for <n> top differential genes')
+    parser.add_argument('--plot_type', metavar='<type>', type=str, default='png', choices=['png', 'pdf', 'svg', 'eps', 'pgf', 'ps'])
+    parser.add_argument('--plot_dpi', metavar='<dpi>', type=int, default=100, help='Specify resolution of plots')
     parser.add_argument('--altsplice_plots', metavar='<n>', type=int,
                         help='make sashimi plots for <n> top covered alternative spliced genes for each category')
 
     args = parser.parse_args()
 
+    plt.rcParams['savefig.dpi'] = args.plot_dpi
+
     if args.logLevel:
         logging.basicConfig(level=getattr(logging, args.logLevel), format='%(asctime)s %(levelname)s: %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S')
 
-    logger.debug(f'arguments: {args}')
+    logger.debug('arguments: %s', args)
     if args.file_suffix is None:
         file_suffix = ''
     else:
@@ -61,7 +66,7 @@ def main():
         exit(1)
 
     groups = isoseq.groups(args.group_by)
-    logger.debug(f'sample group definition: {groups}')
+    logger.debug('sample group definition: %s', groups)
 
     if args.short_read_samples:
         illu_samples = pd.read_csv(args.short_read_samples)
@@ -73,7 +78,7 @@ def main():
             if sa in isoseq.infos['short_reads']['name']:
                 i = pd.Index(isoseq.infos['short_reads']['name']).get_loc(sa)
                 illu_groups.setdefault(grp, []).append(i)
-        logger.debug(f'illumina sample group definition: {illu_groups}\n{isoseq.infos["short_reads"]}')
+        logger.debug('illumina sample group definition: %s\n%s', illu_groups, isoseq.infos["short_reads"])
 
     if args.custom_filter_tag is not None:
         for f_def in args.custom_filter_tag:
@@ -84,7 +89,7 @@ def main():
 
     if args.transcript_table:
         trtab_fn = f'{args.file_prefix}_transcripts{file_suffix}.csv'
-        logger.info(f'writing transcript table to {trtab_fn}')
+        logger.info('writing transcript table to %s', trtab_fn)
         df = isoseq.transcript_table(groups=groups, coverage=True, tpm=True, query=args.filter_query, progress_bar=args.progress_bar)
         df.to_csv(trtab_fn)
 
@@ -93,15 +98,15 @@ def main():
         isoseq.write_gtf(gtf_fn, query=args.filter_query, progress_bar=args.progress_bar)
 
     if args.qc_plots:
-        filter_plots(isoseq, groups, f'{args.file_prefix}_filter_stats{file_suffix}.png', args.progress_bar)
-        transcript_plots(isoseq, groups,  f'{args.file_prefix}_transcript_stats{file_suffix}.png', args.progress_bar)
+        filter_plots(isoseq, groups, f'{args.file_prefix}_filter_stats{file_suffix}.{args.plot_type}', args.progress_bar)
+        transcript_plots(isoseq, groups,  f'{args.file_prefix}_transcript_stats{file_suffix}.{args.plot_type}', args.progress_bar)
 
     if args.altsplice_stats:
-        altsplice_plots(isoseq, groups, f'{args.file_prefix}_altsplice{file_suffix}.png', args.progress_bar)
+        altsplice_plots(isoseq, groups, f'{args.file_prefix}_altsplice{file_suffix}.{args.plot_type}', args.progress_bar)
 
     if args.altsplice_plots:
         examples = altsplice_examples(isoseq, args.altsplice_plots)
-        plot_altsplice_examples(isoseq, groups,  illu_groups, examples, args.file_prefix, file_suffix)
+        plot_altsplice_examples(isoseq, groups,  illu_groups, examples, args.file_prefix, file_suffix, args.plot_type)
 
     if args.diff is not None:
         test_differential(isoseq, groups, illu_groups, args, file_suffix)
@@ -223,7 +228,7 @@ def altsplice_examples(isoseq, n, query='not FSM'):  # return the top n covered 
     return {k: v[:n] for k, v in examples.items()}
 
 
-def plot_altsplice_examples(isoseq, groups, illu_groups, examples, file_prefix, file_suffix):
+def plot_altsplice_examples(isoseq, groups, illu_groups, examples, file_prefix, file_suffix, plot_type):
     nplots = len(groups)+1
     # sample_idx = {r: i for i, r in enumerate(isoseq.infos['sample_table'].name)}
     if illu_groups:
@@ -271,7 +276,7 @@ def plot_altsplice_examples(isoseq, groups, illu_groups, examples, file_prefix, 
 
             fig.tight_layout()
             stem = f'{file_prefix}_altsplice{file_suffix}_{cat.replace(" ","_").replace("/","_")}_{g.name}'
-            fig.savefig(f'{stem}_sashimi.png')
+            fig.savefig(f'{stem}_sashimi.{plot_type}')
             # zoom
             if info:
                 for pos in info:
@@ -288,11 +293,11 @@ def plot_altsplice_examples(isoseq, groups, illu_groups, examples, file_prefix, 
                         a.set_xlim((start - 100, end + 100))
                     axs[0].set_title(f'{g.name} {g.chrom}:{start}-{end} {cat} (cov={cov})')
 
-                    plt.savefig(f'{stem}_zoom_{start}_{end}_sashimi.png')
+                    plt.savefig(f'{stem}_zoom_{start}_{end}_sashimi.{plot_type}')
             plt.close()
 
 
-def plot_diffsplice(isoseq, de_tab, groups, illu_gr, file_prefix):
+def plot_diffsplice(isoseq, de_tab, groups, illu_gr, file_prefix, plot_type):
 
     nplots = len(groups)+1
     # sample_idx = {r: i for i, r in enumerate(isoseq.infos['sample_table'].name)}
@@ -300,20 +305,29 @@ def plot_diffsplice(isoseq, de_tab, groups, illu_gr, file_prefix):
         # illu_sample_idx = {r: i for i, r in enumerate(isoseq.infos['illumina_fn'])}  # todo: add illumina
         nplots += len(illu_gr)
 
-    plt.rcParams["figure.figsize"] = (20, 5*nplots)
+    plt.rcParams["figure.figsize"] = (7, 2*nplots)
     for gene_id in de_tab['gene_id'].unique():
         g = isoseq[gene_id]
         logger.info(f'sashimi plot for differentially spliced gene {g.name}')
-        fig, axs = g.sashimi_figure(samples=groups)
+        joi = []
+        for _, regOI in de_tab.loc[de_tab['gene_id'] == gene_id].iterrows():
+            # trA, trB = (list(map(int, regOI[i][1:-1].split(', '))) for i in ('trA', 'trB'))
+            trA, trB = list(regOI['trA']), list(regOI['trB'])
+            trA.sort(key=lambda x: -g.coverage[:, x].sum())
+            trB.sort(key=lambda x: -g.coverage[:, x].sum())
+            joi.extend([(e1[1], e2[0]) for e1, e2 in pairwise(g.transcripts[trA[0]]['exons']) if e1[1] >= regOI.start and e2[0] <= regOI.end])
+            joi.extend([(e1[1], e2[0]) for e1, e2 in pairwise(g.transcripts[trB[0]]['exons']) if e1[1] >= regOI.start and e2[0] <= regOI.end])
 
-        fig.savefig(f'{file_prefix}_{"_".join(groups)}_{g.name}_sashimi.png')
+        fig, axs = g.sashimi_figure(samples=groups, junctions_of_interest=joi)
+        fig.tight_layout()
+        fig.savefig(f'{file_prefix}_{"_".join(groups)}_{g.name}_sashimi.{plot_type}')
         # zoom
         for i, row in de_tab.loc[de_tab.gene == g.name].iterrows():
             if row.start > g.start and row.end < g.end:
                 for a in axs:
                     a.set_xlim((row.start - 1000, row.end + 1000))
                 axs[0].set_title(f'{g.name} {g.chrom}:{row.start}-{row.end}')
-                fig.savefig(f'{file_prefix}_{"_".join(groups)}_{g.name}_zoom_{row.start}_{row.end}_sashimi.png')
+                fig.savefig(f'{file_prefix}_{"_".join(groups)}_{g.name}_zoom_{row.start}_{row.end}_sashimi.{plot_type}')
         plt.close(fig)
 
 
@@ -356,7 +370,7 @@ def test_differential(isoseq, groups, illu_groups, args, file_suffix):
                 illu_cov = {k: v for k, v in zip(['illu_cov1', 'illu_cov2', 'illu_max1', 'illu_max2'], zip(*illu_cov))}
                 sig_tab = sig_tab.assign(**illu_cov)
             sig_tab.to_csv(f'{file_prefix}_top_{"_".join(gr)}.csv')
-            plot_diffsplice(isoseq, res.head(args.diff_plots), gr, illu_groups, file_prefix)
+            plot_diffsplice(isoseq, res.head(args.diff_plots), gr, illu_groups, file_prefix, args.plot_type)
 
 
 if __name__ == '__main__':

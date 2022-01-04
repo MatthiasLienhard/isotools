@@ -5,6 +5,7 @@
 
 ## [0.2.9]
 * added options for additional fields in gtf output
+* improved options for graphical output with the command line script
 * fixed plot_bar default color scheme
 
 ## [0.2.8]

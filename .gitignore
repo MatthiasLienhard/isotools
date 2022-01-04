@@ -13,7 +13,7 @@
 *.bam.bai
 !tests/data/example_1_*.bam*
 tests/data/example_*.pkl
-
+tests/data/result*
 
 # Setuptools distribution folder.
 /dist/

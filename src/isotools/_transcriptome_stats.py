@@ -597,7 +597,7 @@ def downstream_a_hist(self, groups=None, add_reference=False, bins=30, x_range=(
         cov = pd.DataFrame({grn: cov[grp].sum(1) for grn, grp in groups.items()})
     if isinstance(bins, int):
         bins = np.linspace(x_range[0], x_range[1], bins + 1)
-    cov[cov <= min_coverage] = 0
+    cov[cov < min_coverage] = 0
     if not weight_by_coverage:
         cov[cov > 0] = 1
     counts = pd.DataFrame({gn: np.histogram(acontent, weights=g_cov, bins=bins)[0] for gn, g_cov in cov.items()})

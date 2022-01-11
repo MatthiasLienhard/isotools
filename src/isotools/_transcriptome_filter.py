@@ -42,14 +42,19 @@ ANNOTATION_VOCABULARY = ['antisense', 'intergenic', 'genic genomic', 'novel exon
 # filtering functions for the transcriptome class
 
 
-def add_qc_metrics(self, genome_fn, progress_bar=True):
+def add_qc_metrics(self, genome_fn, progress_bar=True, downstream_a_len=30, direct_repeat_wd=15, direct_repeat_wobble=2, direct_repeat_mm=2):
     ''' Retrieves QC metrics for the transcripts.
 
     Calling this function populates transcript["biases"] information, which can be used do create filters.
     In particular, the direct repeat length, the downstream adenosine content and information about noncanonical splice sites are fetched.
     Additionaly genes are scanned for transcripts that are fully contained in other transcripts.
 
-    :param geneome_fn: path to the genome in fastA format.'''
+    :param geneome_fn: Path to the genome in fastA format.
+    :param downstream_a_len: The number of bases downstream the transcript where the adenosine fraction is determined.
+    :param direct_repeat_wd: The number of bases around the splice sites scanned for direct repeats.
+    :param direct_repeat_wobble: Number of bases the splice site sequences are shifted.
+    :param direct_repeat_mm: Maximum number of missmatches in a direct repeat. '''
+
     with FastaFile(genome_fn) as genome_fh:
         missing_chr = set(self.chromosomes) - set(genome_fh.references)
         if missing_chr:
@@ -60,9 +65,9 @@ def add_qc_metrics(self, genome_fn, progress_bar=True):
         for g in self.iter_genes(progress_bar=progress_bar):
             g.add_fragments()
             if g.chrom in genome_fh.references:
-                g.add_direct_repeat_len(genome_fh)
+                g.add_direct_repeat_len(genome_fh, delta=direct_repeat_wd, max_mm=direct_repeat_mm, wobble=direct_repeat_wobble)
                 g.add_noncanonical_splicing(genome_fh)
-                g.add_threeprime_a_content(genome_fh)
+                g.add_threeprime_a_content(genome_fh, length=downstream_a_len)
 
     self.infos['biases'] = True  # flag to check that the function was called
 

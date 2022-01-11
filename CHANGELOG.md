@@ -4,6 +4,10 @@
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
 ## [0.2.9]
+* improved assigment of reference genes in case of equal number of matching splice sites to several reference genes. 
+* added parameter to control for minimal exonic overlap to reference genes in add_sample_from_bam.
+* changed computation of direct repeats. Added wobble and max_mm parameters.
+* exposed parameters to end user in the add_qc_metrics function. 
 * added options for additional fields in gtf output
 * improved options for graphical output with the command line script
 * fixed plot_bar default color scheme

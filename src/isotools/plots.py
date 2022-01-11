@@ -265,6 +265,7 @@ def plot_distr(counts, ax=None, density=False, smooth=None, legend=True, fill=Tr
     :param ls: Specify style of the lines. See matplotlib Line2D for details.
     :param colors: Provide a dictionary with label keys and color values. By default, colors are automatically assigned.
     :param \\**axparams: Additional keyword parameters are passed to ax.set().'''
+
     # maybe add smoothing
     x = [sum(bin) / 2 for bin in counts.index]
     sz = [bin[1] - bin[0] for bin in counts.index]

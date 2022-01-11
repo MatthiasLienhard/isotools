@@ -6,6 +6,7 @@ import copy
 from .splice_graph import SegmentGraph
 from .short_read import Coverage
 from ._transcriptome_filter import SPLICE_CATEGORY
+from ._utils import pairwise
 
 import logging
 logger = logging.getLogger('isotools')
@@ -143,7 +144,7 @@ class Gene(Interval):
             if nc:
                 tr['noncanonical_splicing'] = nc
 
-    def add_direct_repeat_len(self, genome_fh, delta=10):
+    def add_direct_repeat_len(self, genome_fh, delta=15, max_mm=2, wobble=2):
         '''Computes direct repeat length.
 
         This function counts the number of consequtive equal bases at donor and acceptor sites of the splice junctions.
@@ -151,7 +152,9 @@ class Gene(Interval):
         Direct repeats longer than expected by chance indicate template switching.
 
         :param genome_fh: The file handle to the genome fasta.
-        :param delta: The maximum length of direct repeats that can be found. '''
+        :param delta: The maximum length of direct repeats that can be found.
+        :param max_mm: The maximum length of direct repeats that can be found.
+        :param wobble: The maximum length of direct repeats that can be found.'''
 
         intron_seq = {}
         score = {}
@@ -170,21 +173,10 @@ class Gene(Interval):
                             seq += ''.join(['N'] * (pos + delta - chr_len))
                         intron_seq.setdefault(pos, seq)
                 if intron not in score:
-                    # align=[pairwise2.align.globalms(seq5, seq3, 1,-1, -1, 0) for seq5, seq3 in intron_seq]
-                    # align=[pairwise2.align.globalxs(seq5, seq3,-1,-1, score_only=True) for seq5, seq3 in intron_seq] # number of equal bases at splice site
-                    align = [a == b for a, b in zip(intron_seq[intron[0]], intron_seq[intron[1]])]
-                    score[intron] = 0
-                    for a in align[delta:]:  # find the runlength at the middle (delta)
-                        if not a:
-                            break
-                        score[intron] += 1
-                    for a in reversed(align[:delta]):
-                        if not a:
-                            break
-                        score[intron] += 1
+                    score[intron] = repeat_len(intron_seq[intron[0]], intron_seq[intron[1]], wobble=wobble, max_mm=max_mm)
+
         for tr in self.transcripts:
-            tr['direct_repeat_len'] = [min(score[intron], delta) for intron in ((tr['exons'][i][1], tr['exons'][i + 1][0])
-                                                                                for i in range(len(tr['exons']) - 1))]
+            tr['direct_repeat_len'] = [min(score[(e1[1], e2[0])], delta) for e1, e2 in pairwise(tr['exons'])]
 
     def add_threeprime_a_content(self, genome_fh, length=30):
         '''Adds the information of the genomic A content downstream the transcript.
@@ -440,3 +432,40 @@ def _coding_len(exons, cds):
         else:
             coding_len[state] += e[1] - e[0]
     return coding_len
+
+
+def repeat_len(seq1, seq2, wobble, max_mm):
+    ''' Calcluate direct repeat length between seq1 and seq2
+    '''
+    score = [0]*(2*wobble+1)
+    delta = int(len(seq1)/2-wobble)
+    for w in range(2*wobble+1):  # wobble
+        s1 = seq1[w:len(seq1)-(2*wobble-w)]
+        s2 = seq2[wobble:len(seq2)-wobble]
+        align = [a == b for a, b in zip(s1, s2)]
+        score_left = find_runlength(reversed(align[:delta]), max_mm)
+        score_right = find_runlength(align[delta:], max_mm)
+        try:
+            score[w] = max([score_left[fmm]+score_right[max_mm-fmm] for fmm in range(max_mm+1)])
+        except Exception:
+            print(f'{w=}, {score_left=}, {score_right=}')
+            raise
+    return max(score)
+
+
+def find_runlength(align, max_mm):
+    '''Find the runlength, e.g. the number of True in the list before the max_mm+1 False occur.
+    '''
+    score = [0]*(max_mm+1)
+    mm = 0
+    for a in align:
+        if not a:
+            mm += 1
+            if mm > max_mm:
+                return score
+            score[mm] = score[mm-1]
+        else:
+            score[mm] += 1
+    for i in range(mm+1, max_mm+1):
+        score[i] = score[i-1]
+    return score

@@ -445,11 +445,7 @@ def repeat_len(seq1, seq2, wobble, max_mm):
         align = [a == b for a, b in zip(s1, s2)]
         score_left = find_runlength(reversed(align[:delta]), max_mm)
         score_right = find_runlength(align[delta:], max_mm)
-        try:
-            score[w] = max([score_left[fmm]+score_right[max_mm-fmm] for fmm in range(max_mm+1)])
-        except Exception:
-            print(f'{w=}, {score_left=}, {score_right=}')
-            raise
+        score[w] = max([score_left[fmm]+score_right[max_mm-fmm] for fmm in range(max_mm+1)])
     return max(score)
 
 

@@ -8,7 +8,7 @@ from pysam import TabixFile, AlignmentFile, FastaFile
 from tqdm import tqdm
 from contextlib import ExitStack
 from .short_read import Coverage
-from ._utils import junctions_from_cigar, splice_identical, is_same_gene, overlap, pairwise, cigar_string2tuples, rc, get_intersects
+from ._utils import junctions_from_cigar, splice_identical, is_same_gene, has_overlap, get_overlap, pairwise, cigar_string2tuples, rc, get_intersects
 from .gene import Gene
 from .decorators import experimental
 import logging
@@ -84,7 +84,7 @@ def remove_samples(self, sample_names):
 
 
 def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_junction=5, add_chromosomes=True,
-                        min_align_fraction=.75, chimeric_mincov=2, min_exonic_ref_coverage=.5, use_satag=False, save_readnames=False, progress_bar=True,
+                        min_align_fraction=.75, chimeric_mincov=2, min_exonic_ref_coverage=.25, use_satag=False, save_readnames=False, progress_bar=True,
                         **kwargs):
     '''Imports expressed transcripts from bam and adds it to the 'Transcriptome' object.
 
@@ -579,7 +579,7 @@ def _add_novel_genes(t, novel, chrom, sa, spj_iou_th=0, reg_iou_th=.5, gene_pref
     t.infos['novel_counter'] = n_novel
 
 
-def _find_matching_gene(genes_ol, exons, min_exon_coverage=.5):
+def _find_matching_gene(genes_ol, exons, min_exon_coverage):
     '''check the splice site intersect of all overlapping genes and return
             1) the gene with most shared splice sites,
             2) names of genes that cover additional splice sites, and
@@ -629,7 +629,7 @@ def _find_matching_gene(genes_ol, exons, min_exon_coverage=.5):
             trlen = exons[0][1]-exons[0][0]
             ol = []
             for g in genes_ol:
-                ol_g = [overlap(exons[0], tr['exons'][0]) for tr in g.transcripts if len(tr['exons']) == 1]
+                ol_g = [get_overlap(exons[0], tr['exons'][0]) for tr in g.ref_transcripts if len(tr['exons']) == 1]
                 ol.append(max(ol_g, default=0))
             best_idx = np.argmax(ol)
             if ol[best_idx] >= min_exon_coverage * trlen:
@@ -1322,7 +1322,7 @@ class IntervalArray:
         except IndexError:
             logger.error('requesting interval between %s and %s, but array is allocated only until position %s', begin, end, len(self.data)*self.bin_size)
             raise
-        return (self.obj[obj_id] for obj_id in candidates if overlap((begin, end), self.obj[obj_id]))  # this assumes object has range obj[0] to obj[1]
+        return (self.obj[obj_id] for obj_id in candidates if has_overlap((begin, end), self.obj[obj_id]))  # this assumes object has range obj[0] to obj[1]
 
     def add(self, obj):
         self.obj[id(obj)] = obj

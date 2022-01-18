@@ -1,5 +1,6 @@
 from intervaltree import Interval
 from collections.abc import Iterable
+from scipy.stats import chi2_contingency
 from Bio.Seq import Seq
 import numpy as np
 import copy
@@ -414,6 +415,56 @@ class Gene(Interval):
     def copy(self):
         'Returns a shallow copy of self.'
         return self.__copy__()
+
+    def die_test(self, groups, min_cov=25, n_isoforms=10):
+        ''' Reimplementation of the DIE test, suggested by Joglekar et al in Nat Commun 12, 463 (2021):
+        "A spatially resolved brain region- and cell type-specific isoform atlas of the postnatal mouse brain"
+
+        Syntax and parameters follow the original implementation in
+        https://github.com/noush-joglekar/scisorseqr/blob/master/inst/RScript/IsoformTest.R
+        :param groups: Define the columns for the groups.
+        :param min_cov: Minimal number of reads per group for the gene.
+        :param n_isoforms: Number of isoforms to consider in the test for the gene. All additional least expressed isoforms get summarized.'''
+        # select the samples and sum the group counts
+        try:
+            # Fast mode when testing several genes
+            cov = np.array([self.coverage[grp].sum(0) for grp in groups]).T
+        except IndexError:
+            # Fall back to looking up the sample indices
+            from isotools._transcriptome_stats import _check_groups
+            _, _, groups = _check_groups(self._transcriptome, groups)
+            cov = np.array([self.coverage[grp].sum(0) for grp in groups]).T
+
+        if np.any(cov.sum(0) < min_cov):
+            return np.nan, np.nan, []
+        # if there are more than 'numIsoforms' isoforms of the gene, all additional least expressed get summarized.
+        if cov.shape[0] > n_isoforms:
+            idx = np.argpartition(-cov.sum(1), n_isoforms)
+
+            additional = cov[idx[n_isoforms:]].sum(0)
+            cov = cov[idx[:n_isoforms]]
+            cov[n_isoforms-1] += additional
+            idx[n_isoforms-1] = -1  # this isoform gets all other - I give it index
+        elif cov.shape[0] < 2:
+            return np.nan, np.nan, []
+        else:
+            idx = np.array(range(cov.shape[0]))
+        try:
+            _, pval, _, _ = chi2_contingency(cov)
+        except ValueError:
+            logger.debug(f'chi2_contingency({cov})')
+            raise
+        iso_frac = cov/cov.sum(0)
+        deltaPI = iso_frac[..., 0]-iso_frac[..., 1]
+        order = np.argsort(deltaPI)
+        pos_idx = [order[-i] for i in range(1, 3) if deltaPI[order[-i]] > 0]
+        neg_idx = [order[i] for i in range(2) if deltaPI[order[i]] < 0]
+        deltaPI_pos = deltaPI[pos_idx].sum()
+        deltaPI_neg = deltaPI[neg_idx].sum()
+        if deltaPI_pos > -deltaPI_neg:
+            return pval, deltaPI_pos, idx[pos_idx]
+        else:
+            return pval, deltaPI_neg, idx[neg_idx]
 
 
 def _coding_len(exons, cds):

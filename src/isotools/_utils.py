@@ -183,8 +183,8 @@ def events_dist(e1, e2):
     '''
     returns the distance (in nucleotides) between two Alternative Splicing Events.
 
-    :param e1: event obtained from .find_splice_bubbles().
-    :param e2: event obtained from .find_splice_bubbles().
+    :param e1: event obtained from .find_splice_bubbles()
+    :param e2: event obtained from .find_splice_bubbles()
     '''
 
     # the event begins at the beginning of the first exon and ends at the end of the last exon

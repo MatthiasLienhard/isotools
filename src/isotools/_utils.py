@@ -179,12 +179,13 @@ def _interval_dist(a, b):
     return max([a[0], b[0]])-min([a[1], b[1]])
 
 
-def events_dist(e1, e2):
+def events_dist(e1, e2, sg):
     '''
     returns the distance (in nucleotides) between two Alternative Splicing Events.
 
     :param e1: event obtained from .find_splice_bubbles()
     :param e2: event obtained from .find_splice_bubbles()
+    :param sg: segment graph
     '''
 
     # the event begins at the beginning of the first exon and ends at the end of the last exon

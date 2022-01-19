@@ -695,7 +695,7 @@ def _filter_event(event, transcriptome, gene, min_total=100, min_alt_fraction=.1
     return True if the event satisfies the filter conditions and False otherwise
 
     :param event: event obtained from .find_splice_bubbles()
-    :param transcriptome: the Transcriptome object on which the events were computed 
+    :param transcriptome: the Transcriptome object on which the events were computed
     ;param gene: Ensemble ID of the gene in which the event happened
     :type gene: str
     :param min_total: the minimum total number of reads for an event to pass the filter
@@ -723,24 +723,27 @@ def _filter_event(event, transcriptome, gene, min_total=100, min_alt_fraction=.1
     return True
 
 
-def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2"):
+def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2", **kwargs):
     '''
     performs an independence test among the joint frequencies of two events
 
     :param e1: event obtained from .find_splice_bubbles()
     :param e2: event obtained from .find_splice_bubbles()
-    :param transcriptome: the Transcriptome object on which the events were computed 
+    :param transcriptome: the Transcriptome object on which the events were computed
     ;param gene: Ensemble ID of the gene in which the event happened
     :type gene: str
     :param min_dist: minimum distance (in nucleotides) between the two Alternative Splicing Events for the pair to be tested
     :type min_dist: int
     :param test: test to be performed. One of ("chi2", "fisher")
     :type test: str
+    :param sg: segment graph
     '''
+
+    sg = kwargs["sg"] if "sg" in kwargs else transcriptome[gene].segment_graph
 
     coverage = transcriptome[gene].coverage.sum(axis=0)
 
-    if events_dist(e1, e2) > min_dist:
+    if events_dist(e1, e2, sg) > min_dist:
 
         C = pd.DataFrame({"A_pri": (0, 0), "A_alt": (0, 0)})
         C.index = ("B_pri", "B_alt")
@@ -759,4 +762,5 @@ def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2"):
         test_stat = test_res[0]
 
         return p_value, test_stat, priA_priB, priA_altB, altA_priB, altA_altB
+
 

@@ -761,6 +761,4 @@ def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2", **
         p_value = test_res[1]
         test_stat = test_res[0]
 
-        return p_value, test_stat, priA_priB, priA_altB, altA_priB, altA_altB
-
-
+        return p_value, test_stat, int(priA_priB-0.01), int(priA_altB-0.01), int(altA_priB-0.01), int(altA_altB-0.01)

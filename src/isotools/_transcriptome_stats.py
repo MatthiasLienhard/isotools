@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import itertools
 from scipy.stats import chi2_contingency, fisher_exact
-from _utils import events_dist
+from ._utils import events_dist
 
 # from ._utils import overlap
 # from .decorators import deprecated, debug, experimental

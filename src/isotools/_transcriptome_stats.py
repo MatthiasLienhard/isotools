@@ -764,7 +764,8 @@ def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2", **
         return p_value, test_stat, int(priA_priB-0.01), int(priA_altB-0.01), int(altA_priB-0.01), int(altA_altB-0.01)
 
 
-def gene_coordination_test(self, gene, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1, event_type=("ES", "5AS", "3AS", "IR", "ME")):
+def gene_coordination_test(self, gene, test="chi2", min_dist=1, min_total=100,
+                           min_alt_fraction=.1, event_type=("ES", "5AS", "3AS", "IR", "ME")):
 
     sg = self[gene].segment_graph
 
@@ -786,7 +787,7 @@ def gene_coordination_test(self, gene, test="chi2", min_dist=1, min_total=100, m
 
     for i, j in list(itertools.combinations(range(len(events)), 2)):
 
-        test_res = pairwise_event_test(events[i], events[j], self, gene, test=test)
+        test_res = pairwise_event_test(events[i], events[j], self, gene, test=test, min_dist=min_dist)
 
         if test_res is not None:  # it is none for pairs of events whose distanca is smaller than min_dist
             if test_res[0] != 1:

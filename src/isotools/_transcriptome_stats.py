@@ -6,6 +6,8 @@ import logging
 import numpy as np
 import pandas as pd
 import itertools
+from scipy.stats import chi2_contingency, fisher_exact
+from _utils import events_dist
 
 # from ._utils import overlap
 # from .decorators import deprecated, debug, experimental
@@ -129,7 +131,9 @@ def betabinom_ll(x, n, a, b):
 
 TESTS = {'betabinom_lr': betabinom_lr_test,
          'binom_lr': binom_lr_test,
-         'proportions': proportion_test}
+         'proportions': proportion_test,
+         "chi2": chi2_contingency,
+         "fisher": fisher_exact}
 
 
 def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto', padj_method='fdr_bh', types=None, progress_bar=True):
@@ -684,3 +688,75 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
     for sa in cov:
         curves[sa] = [(np.random.binomial(n=cov[sa], p=th) >= min_coverage).sum() for th in fractions]
     return pd.DataFrame(curves, index=fractions), total
+
+
+def _filter_event(event, transcriptome, gene, min_total=100, min_alt_fraction=.1):
+    '''
+    return True if the event satisfies the filter conditions and False otherwise
+
+    :param event: event obtained from .find_splice_bubbles()
+    :param transcriptome: the Transcriptome object on which the events were computed 
+    ;param gene: Ensemble ID of the gene in which the event happened
+    :type gene: str
+    :param min_total: the minimum total number of reads for an event to pass the filter
+    :type min_total: int
+    :param min_alt_fraction: the minimum fraction of read supporting the alternative
+    :type min_alt_frction: float
+
+    '''
+
+    coverage = transcriptome[gene].coverage.sum(axis=0)
+
+    tr_IDs = event[0]+event[1]
+    tot_cov = sum([coverage[ID] for ID in tr_IDs])
+
+    if tot_cov < min_total:
+        return False
+
+    pri_cov = sum([coverage[ID] for ID in event[0]])
+    alt_cov = sum([coverage[ID] for ID in event[1]])
+    frac = min(pri_cov, alt_cov)/max(pri_cov, alt_cov)
+
+    if frac < min_alt_fraction:
+        return False
+
+    return True
+
+
+def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2"):
+    '''
+    performs an independence test among the joint frequencies of two events
+
+    :param e1: event obtained from .find_splice_bubbles()
+    :param e2: event obtained from .find_splice_bubbles()
+    :param transcriptome: the Transcriptome object on which the events were computed 
+    ;param gene: Ensemble ID of the gene in which the event happened
+    :type gene: str
+    :param min_dist: minimum distance (in nucleotides) between the two Alternative Splicing Events for the pair to be tested
+    :type min_dist: int
+    :param test: test to be performed. One of ("chi2", "fisher")
+    :type test: str
+    '''
+
+    coverage = transcriptome[gene].coverage.sum(axis=0)
+
+    if events_dist(e1, e2) > min_dist:
+
+        C = pd.DataFrame({"A_pri": (0, 0), "A_alt": (0, 0)})
+        C.index = ("B_pri", "B_alt")
+
+        for m, n in itertools.product(range(2), range(2)):
+            tr_IDs = list(set(e1[m]) & set(e2[n]))
+            c_mn = sum([coverage[ID] for ID in tr_IDs])+0.01
+            C.iloc[n, m] = c_mn
+
+        TEST = TESTS[test]
+        test_res = TEST(C)
+
+        priA_priB, altA_altB = C.iloc[0, 0], C.iloc[1, 1]
+        priA_altB, altA_priB = C.iloc[1, 0], C.iloc[0, 1]
+        p_value = test_res[1]
+        test_stat = test_res[0]
+
+        return p_value, test_stat, priA_priB, priA_altB, altA_priB, altA_altB
+

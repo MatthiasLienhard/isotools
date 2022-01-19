@@ -694,13 +694,13 @@ def _filter_event(event, transcriptome, gene, min_total=100, min_alt_fraction=.1
     '''
     return True if the event satisfies the filter conditions and False otherwise
 
-    :param event: event obtained from .find_splice_bubbles()
-    :param transcriptome: the Transcriptome object on which the events were computed
+    :param event: Event obtained from .find_splice_bubbles()
+    :param transcriptome: The Transcriptome object on which the events were computed
     ;param gene: Ensemble ID of the gene in which the event happened
     :type gene: str
-    :param min_total: the minimum total number of reads for an event to pass the filter
+    :param min_total: The minimum total number of reads for an event to pass the filter
     :type min_total: int
-    :param min_alt_fraction: the minimum fraction of read supporting the alternative
+    :param min_alt_fraction: The minimum fraction of read supporting the alternative
     :type min_alt_frction: float
 
     '''
@@ -766,6 +766,34 @@ def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2", **
 
 def gene_coordination_test(self, gene, test="chi2", min_dist=1, min_total=100,
                            min_alt_fraction=.1, event_type=("ES", "5AS", "3AS", "IR", "ME")):
+    '''
+    Performs pairwise independence test for all pairs of Alternative Splicing Events (ASEs) in a gene.
+
+    For all pairs of ASEs in a gene creates a contingency table and performs an indeppendence test.
+    All ASEs A have two states, pri_A and alt_A, the primary and the alternative state respectivley.
+    Thus, given two events A and B, we have four possible ways in which these events can occur on a transcript, 
+    that is, pri_A and pri_B, pri_A and alt_B, alt_A and pri_B, and alt_A and alt_B. These four values can be put in a contingency table
+    and independence, or coordination, between the two events can be tested.
+
+    ;param gene: Ensemble ID of the gene in which the event happened
+    :type gene: str
+    :param test: Test to be performed. One of ("chi2", "fisher")
+    :type test: str
+    :param min_dist: Minimum distance (in nucleotides) between the two Alternative Splicing Events for the pair to be tested
+    :type min_dist: int
+    :param min_total: The minimum total number of reads for an event to pass the filter
+    :type min_total: int
+    :param min_alt_fraction: The minimum fraction of read supporting the alternative
+    :type min_alt_frction: float
+    :param event_type:  A tuple with event types to test. Valid types are (‘ES’,’3AS’, ‘5AS’,’IR’ or ‘ME’, ‘TSS’, ‘PAS’).
+    Default is ("ES", "5AS", "3AS", "IR", "ME")
+
+    :return: a tuple (p_value, stat, Gene, ASE1_type, ASE2_type, ASE1_start, ASE1_end, ASE2_start,
+    ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB), where each element is a list containing the p_values, the statistics, 
+    the gene name, the type of the first ASE, the type of the second ASE, the starting coordinate of the first ASE, 
+    the ending coordinate of the first ASE, the starting coordinate of the second ASE, the ending coordinate of the second ASE, 
+    and the four entries of the contingency table. 
+    '''
 
     sg = self[gene].segment_graph
 

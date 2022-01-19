@@ -837,3 +837,65 @@ def gene_coordination_test(self, gene, test="chi2", min_dist=1, min_total=100,
         return None
 
     return p_value, stat, Gene, ASE1_type, ASE2_type, ASE1_start, ASE1_end, ASE2_start, ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB
+
+
+def coordination_test(self, test="chi2", min_dist=1, min_total=100,
+                      min_alt_fraction=.1, event_type=("ES", "5AS", "3AS", "IR", "ME")):
+    '''
+    Performs gene_coordination_test on all genes.
+
+    :param test: Test to be performed. One of ("chi2", "fisher")
+    :type test: str
+    :param min_dist: Minimum distance (in nucleotides) between the two Alternative Splicing Events for the pair to be tested
+    :type min_dist: int
+    :param min_total: The minimum total number of reads for an event to pass the filter
+    :type min_total: int
+    :param min_alt_fraction: The minimum fraction of read supporting the alternative
+    :type min_alt_frction: float
+    :param event_type:  A tuple with event types to test. Valid types are (‘ES’,’3AS’, ‘5AS’,’IR’ or ‘ME’, ‘TSS’, ‘PAS’).
+    Default is ("ES", "5AS", "3AS", "IR", "ME")
+
+    :return: a Pandas dataframe, where each column corresponds to the p_values, the statistics 
+    (the chi squared statistic if the chi squared test is used and the odds-ratio if the Fisher test is used), 
+    the gene name, the type of the first ASE, the type of the second ASE, the starting coordinate of the first ASE, 
+    the ending coordinate of the first ASE, the starting coordinate of the second ASE, the ending coordinate of the second ASE, 
+    and the four entries of the contingency table. 
+    '''
+    p_value = []
+    stat = []
+    Gene = []
+    ASE1_type, ASE2_type = [], []
+    ASE1_start = []
+    ASE1_end = []
+    ASE2_start = []
+    ASE2_end = []
+    priA_priB = []
+    priA_altB = []
+    altA_priB = []
+    altA_altB = []
+
+    for g in self.gene_table().gene_name:
+        test_res = self.gene_coordination_test(g, test=test, min_dist=min_dist, min_total=min_total,
+                                               min_alt_fraction=min_alt_fraction, event_type=event_type)
+        if test_res is not None:
+            p_value.extend(test_res[0])
+            stat.extend(test_res[1])
+            Gene.extend(test_res[2])
+            ASE1_type.extend(test_res[3])
+            ASE2_type.extend(test_res[4])
+            ASE1_start.extend(test_res[5])
+            ASE1_end.extend(test_res[6])
+            ASE2_start.extend(test_res[7])
+            ASE2_end.extend(test_res[8])
+            priA_priB.extend(test_res[9])
+            priA_altB.extend(test_res[10])
+            altA_priB.extend(test_res[11])
+            altA_altB.extend(test_res[12])
+
+    adj_p_value = multi.multipletests(p_value)[1]
+
+    res = pd.DataFrame({"adj_p_value": adj_p_value, "p_value": p_value, "stat": stat, "Gene": Gene,
+                        "ASE1_type": ASE1_type, "ASE2_type": ASE2_type,
+                        "ASE1_start": ASE1_start, "ASE1_end": ASE1_end, "ASE2_start": ASE2_start, "ASE2_end": ASE2_end,
+                        "priA_priB": priA_priB, "priA_altB": priA_altB, "altA_priB": altA_priB, "altA_altB": altA_altB})
+    return res

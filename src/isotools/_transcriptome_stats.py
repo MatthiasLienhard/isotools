@@ -762,3 +762,49 @@ def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2", **
         test_stat = test_res[0]
 
         return p_value, test_stat, int(priA_priB-0.01), int(priA_altB-0.01), int(altA_priB-0.01), int(altA_altB-0.01)
+
+
+def gene_coordination_test(self, gene, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1, event_type=("ES", "5AS", "3AS", "IR", "ME")):
+
+    sg = self[gene].segment_graph
+
+    events = list(sg.find_splice_bubbles(types=event_type))
+    events = [e for e in events if _filter_event(e, self, gene, min_total=min_total, min_alt_fraction=min_alt_fraction)]
+
+    p_value = []
+    stat = []
+    Gene = []
+    ASE1_type, ASE2_type = [], []
+    ASE1_start = []
+    ASE1_end = []
+    ASE2_start = []
+    ASE2_end = []
+    priA_priB = []
+    priA_altB = []
+    altA_priB = []
+    altA_altB = []
+
+    for i, j in list(itertools.combinations(range(len(events)), 2)):
+
+        test_res = pairwise_event_test(events[i], events[j], self, gene, test=test)
+
+        if test_res is not None:  # it is none for pairs of events whose distanca is smaller than min_dist
+            if test_res[0] != 1:
+                p_value.append(test_res[0])
+                stat.append(test_res[1])
+                Gene.append(gene)
+                ASE1_type.append(events[i][4])
+                ASE2_type.append(events[j][4])
+                ASE1_start.append(sg[events[i][2]].start)  # starting coordinate of event 1
+                ASE1_end.append(sg[events[i][3]].end)  # ending coordinate of event 1
+                ASE2_start.append(sg[events[j][2]].start)  # starting coordinate of event 2
+                ASE2_end.append(sg[events[j][3]].end)  # ending coordinate of event 2
+                priA_priB.append(test_res[2])
+                priA_altB.append(test_res[3])
+                altA_priB.append(test_res[4])
+                altA_altB.append(test_res[5])
+
+    if len(p_value) == 0:
+        return None
+
+    return p_value, stat, Gene, ASE1_type, ASE2_type, ASE1_start, ASE1_end, ASE2_start, ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB

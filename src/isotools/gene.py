@@ -470,7 +470,7 @@ class Gene(Interval):
 
         for i, j in list(itertools.combinations(range(len(events)), 2)):
 
-            test_res = pairwise_event_test(events[i], events[j], self, gene, test=test, min_dist=min_dist)
+            test_res = pairwise_event_test(events[i], events[j], self, test=test, min_dist=min_dist, sg=sg)
 
             if test_res is not None:  # it is none for pairs of events whose distanca is smaller than min_dist
                 if test_res[0] != 1:

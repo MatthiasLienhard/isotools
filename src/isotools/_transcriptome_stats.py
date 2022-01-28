@@ -689,15 +689,14 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
     return pd.DataFrame(curves, index=fractions), total
 
 
-def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2", **kwargs):
+def pairwise_event_test(e1, e2, gene, min_dist=1, test="chi2", **kwargs):
     '''
     performs an independence test among the joint frequencies of two events
 
     :param e1: event obtained from .find_splice_bubbles()
     :param e2: event obtained from .find_splice_bubbles()
     :param transcriptome: the Transcriptome object on which the events were computed
-    ;param gene: Ensemble ID of the gene in which the event happened
-    :type gene: str
+    :param gene: Gene object corresponding to the gene in which the event happened
     :param min_dist: minimum distance (in nucleotides) between the two Alternative Splicing Events for the pair to be tested
     :type min_dist: int
     :param test: test to be performed. One of ("chi2", "fisher")
@@ -705,9 +704,9 @@ def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2", **
     :param sg: segment graph
     '''
 
-    sg = kwargs["sg"] if "sg" in kwargs else transcriptome[gene].segment_graph
+    sg = kwargs["sg"] if "sg" in kwargs else gene.segment_graph
 
-    coverage = transcriptome[gene].coverage.sum(axis=0)
+    coverage = gene.coverage.sum(axis=0)
 
     if sg.events_dist(e1, e2) > min_dist:
 

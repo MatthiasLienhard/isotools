@@ -468,7 +468,7 @@ class Gene(Interval):
         altA_priB = []
         altA_altB = []
 
-        for i, j in list(itertools.combinations(range(len(events)), 2)):
+        for i, j in itertools.combinations(range(len(events)), 2):
 
             test_res = pairwise_event_test(events[i], events[j], self, test=test, min_dist=min_dist, sg=sg)
 

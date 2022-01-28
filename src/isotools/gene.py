@@ -476,7 +476,7 @@ class Gene(Interval):
                 if test_res[0] != 1:
                     p_value.append(test_res[0])
                     stat.append(test_res[1])
-                    Gene.append(gene)
+                    Gene.append(self.id)
                     ASE1_type.append(events[i][4])
                     ASE2_type.append(events[j][4])
                     ASE1_start.append(sg[events[i][2]].start)  # starting coordinate of event 1

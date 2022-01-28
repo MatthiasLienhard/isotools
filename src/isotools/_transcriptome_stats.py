@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import itertools
 from scipy.stats import chi2_contingency, fisher_exact
-from ._utils import events_dist
 
 # from ._utils import overlap
 # from .decorators import deprecated, debug, experimental
@@ -743,7 +742,7 @@ def pairwise_event_test(e1, e2, transcriptome, gene, min_dist=1, test="chi2", **
 
     coverage = transcriptome[gene].coverage.sum(axis=0)
 
-    if events_dist(e1, e2, sg) > min_dist:
+    if sg.events_dist(e1, e2) > min_dist:
 
         C = pd.DataFrame({"A_pri": (0, 0), "A_alt": (0, 0)})
         C.index = ("B_pri", "B_alt")

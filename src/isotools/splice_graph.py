@@ -2,7 +2,7 @@ from tracemalloc import Statistic
 import numpy as np
 import logging
 from sortedcontainers import SortedDict  # for SpliceGraph
-from ._utils import pairwise, overlap
+from ._utils import pairwise, overlap, _interval_dist
 from .decorators import deprecated, experimental
 from typing import Union
 
@@ -873,6 +873,21 @@ class SegmentGraph():
     def __len__(self):
         return len(self._graph)
 
+    def events_dist(self, e1, e2):
+        '''
+        returns the distance (in nucleotides) between two Alternative Splicing Events.
+
+        :param e1: event obtained from .find_splice_bubbles()
+        :param e2: event obtained from .find_splice_bubbles()
+        :param sg: segment graph
+        '''
+
+        # the event begins at the beginning of the first exon and ends at the end of the last exon
+        e1_coor = [self[e1[2]].start, self[e1[3]].end]  # starting and ending coordinates of event 1
+        e2_coor = [self[e2[2]].start, self[e2[3]].end]  # starting and ending coordinates of event 2
+
+        return _interval_dist(e1_coor, e2_coor)
+
 
 class SegGraphNode(tuple):
     '''A node in a segment graph represents an exonic segment.'''
@@ -995,4 +1010,3 @@ class SpliceGraph():
         if tr_nr is None:
             return edges
         return edges[tr_nr]
-

@@ -765,8 +765,8 @@ def coordination_test(self, test="chi2", min_dist=1, min_total=100,
     altA_altB = []
 
     for g in self.gene_table().gene_name:
-        test_res = self.gene_coordination_test(g, test=test, min_dist=min_dist, min_total=min_total,
-                                               min_alt_fraction=min_alt_fraction, event_type=event_type)
+        test_res = self[g].gene_coordination_test(test=test, min_dist=min_dist, min_total=min_total,
+                                                  min_alt_fraction=min_alt_fraction, event_type=event_type)
         if test_res is not None:
             p_value.extend(test_res[0])
             stat.extend(test_res[1])

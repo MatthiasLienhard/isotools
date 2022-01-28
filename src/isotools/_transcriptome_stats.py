@@ -696,7 +696,7 @@ def _filter_event(event, transcriptome, gene, min_total=100, min_alt_fraction=.1
 
     :param event: Event obtained from .find_splice_bubbles()
     :param transcriptome: The Transcriptome object on which the events were computed
-    ;param gene: Ensemble ID of the gene in which the event happened
+    :param gene: Ensemble ID of the gene in which the event happened
     :type gene: str
     :param min_total: The minimum total number of reads for an event to pass the filter
     :type min_total: int

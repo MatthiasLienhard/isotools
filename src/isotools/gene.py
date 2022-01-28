@@ -451,7 +451,7 @@ class Gene(Interval):
 
         sg = self.segment_graph
 
-        events = list(sg.find_splice_bubbles(types=event_type))
+        events = sg.find_splice_bubbles(types=event_type)
         events = [e for e in events if _filter_event(self, e, min_total=min_total,
                                                      min_alt_fraction=min_alt_fraction)]
 

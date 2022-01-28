@@ -470,23 +470,25 @@ class Gene(Interval):
 
         for i, j in itertools.combinations(range(len(events)), 2):
 
-            test_res = pairwise_event_test(events[i], events[j], self, test=test, min_dist=min_dist, sg=sg)
+            if sg.event_dist(events[i], events[j]) < min_dist:
+                continue
 
-            if test_res is not None:  # it is none for pairs of events whose distanca is smaller than min_dist
-                if test_res[0] != 1:
-                    p_value.append(test_res[0])
-                    stat.append(test_res[1])
-                    Gene.append(self.id)
-                    ASE1_type.append(events[i][4])
-                    ASE2_type.append(events[j][4])
-                    ASE1_start.append(sg[events[i][2]].start)  # starting coordinate of event 1
-                    ASE1_end.append(sg[events[i][3]].end)  # ending coordinate of event 1
-                    ASE2_start.append(sg[events[j][2]].start)  # starting coordinate of event 2
-                    ASE2_end.append(sg[events[j][3]].end)  # ending coordinate of event 2
-                    priA_priB.append(test_res[2])
-                    priA_altB.append(test_res[3])
-                    altA_priB.append(test_res[4])
-                    altA_altB.append(test_res[5])
+            test_res = pairwise_event_test(events[i], events[j], self, test=test)
+
+            if test_res[0] != 1:
+                p_value.append(test_res[0])
+                stat.append(test_res[1])
+                Gene.append(self.id)
+                ASE1_type.append(events[i][4])
+                ASE2_type.append(events[j][4])
+                ASE1_start.append(sg[events[i][2]].start)  # starting coordinate of event 1
+                ASE1_end.append(sg[events[i][3]].end)  # ending coordinate of event 1
+                ASE2_start.append(sg[events[j][2]].start)  # starting coordinate of event 2
+                ASE2_end.append(sg[events[j][3]].end)  # ending coordinate of event 2
+                priA_priB.append(test_res[2])
+                priA_altB.append(test_res[3])
+                altA_priB.append(test_res[4])
+                altA_altB.append(test_res[5])
 
         if len(p_value) == 0:
             return None

@@ -775,7 +775,7 @@ def gene_coordination_test(self, gene, test="chi2", min_dist=1, min_total=100,
     that is, pri_A and pri_B, pri_A and alt_B, alt_A and pri_B, and alt_A and alt_B. These four values can be put in a contingency table
     and independence, or coordination, between the two events can be tested.
 
-    ;param gene: Ensemble ID of the gene in which the event happened
+    :param gene: Ensemble ID of the gene in which the event happened
     :type gene: str
     :param test: Test to be performed. One of ("chi2", "fisher")
     :type test: str

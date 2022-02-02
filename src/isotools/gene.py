@@ -431,7 +431,7 @@ class Gene(Interval):
 
         :param test: Test to be performed. One of ("chi2", "fisher")
         :type test: str
-        :param min_dist: Minimum distance (in nucleotides) between the two 
+        :param min_dist: Minimum distance (in nucleotides) between the two
         Alternative Splicing Events for the pair to be tested
         :type min_dist: int
         :param min_total: The minimum total number of reads for an event to pass the filter
@@ -443,10 +443,10 @@ class Gene(Interval):
 
         :return: a tuple (p_value, stat, Gene, ASE1_type, ASE2_type, ASE1_start, ASE1_end, ASE2_start,
         ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB), where each element is a list
-        containing the p_values, the statistics, the gene name, the type of the first ASE, 
+        containing the p_values, the statistics, the gene name, the type of the first ASE,
         the type of the second ASE, the starting coordinate of the first ASE, the ending coordinate
         of the first ASE, the starting coordinate of the second ASE, the ending coordinate of the
-        second ASE, and the four entries of the contingency table. 
+        second ASE, and the four entries of the contingency table.
         '''
 
         sg = self.segment_graph

@@ -1,5 +1,6 @@
 import pytest
 from isotools import Gene
+import numpy as np
 
 
 @pytest.fixture(scope="session")
@@ -27,3 +28,49 @@ def example_gene():
     g = Gene(10, 81, {'chr': 'chr1', 'strand': '+', 'ID': 'example',
                       'reference': {'transcripts': ref_tr}, 'transcripts': transcripts}, None)
     return g
+
+
+@pytest.fixture(scope="session")
+def example_gene_coor():
+    ref = [[(0, 10), (20, 30), (40, 50), (60, 70), (80, 90), (100, 110), (120, 130)]]
+    novel = {'priA_priB': [(0, 10), (20, 30), (40, 50), (60, 70), (100, 110), (120, 130)],
+             'priA_altB': [(0, 10), (20, 30), (40, 50), (60, 70), (80, 90), (100, 110), (120, 130)],
+             'altA_priB': [(0, 10), (20, 50), (60, 70), (100, 110), (120, 130)],
+             'altA_altB': [(0, 10), (20, 50), (60, 70), (80, 90), (100, 110), (120, 130)]}
+
+    ref_tr = [{'exons': e, 'id': f'reference {i+1}'} for i, e in enumerate(ref)]
+    transcripts = [{'exons': e, 'transcript_name': n} for n, e in novel.items()]
+    coverage = np.array([300, 60, 100, 350])
+    g = Gene(1, 100, {'chr': 'chr1', 'strand': '+', 'ID': 'example_02',
+                      'reference': {'transcripts': ref_tr}, 'transcripts': transcripts,
+                      'coverage': coverage}, None)
+    return g
+
+
+@pytest.fixture(scope="session")
+def example_gene_uncoor():
+    ref = [[(0, 10), (20, 30), (40, 50), (60, 70), (80, 90), (100, 110), (120, 130)]]
+    novel = {'priA_priB': [(0, 10), (20, 30), (40, 50), (60, 70), (100, 110), (120, 130)],
+             'priA_altB': [(0, 10), (20, 30), (40, 50), (60, 70), (80, 90), (100, 110), (120, 130)],
+             'altA_priB': [(0, 10), (20, 50), (60, 70), (100, 110), (120, 130)],
+             'altA_altB': [(0, 10), (20, 50), (60, 70), (80, 90), (100, 110), (120, 130)]}
+
+    ref_tr = [{'exons': e, 'id': f'reference {i+1}'} for i, e in enumerate(ref)]
+    transcripts = [{'exons': e, 'transcript_name': n} for n, e in novel.items()]
+    coverage = np.array([310, 380, 310, 350])
+    g = Gene(1, 100, {'chr': 'chr1', 'strand': '+', 'ID': 'example_03',
+                      'reference': {'transcripts': ref_tr}, 'transcripts': transcripts,
+                      'coverage': coverage}, None)
+    return g
+
+
+@pytest.fixture(scope="session")
+def res_coor():
+    return ([2.0494817013043238e-66], [296.35622089456854], ['example_02'], ['IR'], ['ES'],
+            [20], [50], [60], [110], [300], [60], [100], [350])
+
+
+@pytest.fixture(scope="session")
+def res_uncoor():
+    return ([0.47764686057027506], [0.9210526315789473], ['example_03'], ['IR'], ['ES'],
+            [20], [50], [60], [110], [310], [380], [310], [350])

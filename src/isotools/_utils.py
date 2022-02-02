@@ -192,7 +192,7 @@ def _filter_event(gene, event, min_total=100, min_alt_fraction=.1):
 
     '''
 
-    coverage = gene.coverage.sum(axis=0)
+    coverage = gene.coverage.sum(axis=0) if len(gene.coverage.shape) > 1 else gene.coverage
 
     tr_IDs = event[0]+event[1]
     tot_cov = sum([coverage[ID] for ID in tr_IDs])

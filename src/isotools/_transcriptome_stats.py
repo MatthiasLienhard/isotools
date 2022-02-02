@@ -704,7 +704,7 @@ def pairwise_event_test(e1, e2, gene, test="chi2"):
     :param sg: segment graph
     '''
 
-    coverage = gene.coverage.sum(axis=0)
+    coverage = gene.coverage.sum(axis=0) if len(gene.coverage.shape) > 1 else gene.coverage
 
     C = pd.DataFrame({"A_pri": (0, 0), "A_alt": (0, 0)})
 
@@ -742,11 +742,12 @@ def coordination_test(self, test="chi2", min_dist=1, min_total=100,
     :param event_type:  A tuple with event types to test. Valid types are (‘ES’,’3AS’, ‘5AS’,’IR’ or ‘ME’, ‘TSS’, ‘PAS’).
     Default is ("ES", "5AS", "3AS", "IR", "ME")
 
-    :return: a Pandas dataframe, where each column corresponds to the p_values, the statistics 
-    (the chi squared statistic if the chi squared test is used and the odds-ratio if the Fisher test is used), 
-    the gene name, the type of the first ASE, the type of the second ASE, the starting coordinate of the first ASE, 
-    the ending coordinate of the first ASE, the starting coordinate of the second ASE, the ending coordinate of the second ASE, 
-    and the four entries of the contingency table. 
+    :return: a Pandas dataframe, where each column corresponds to the p_values, the statistics
+    (the chi squared statistic if the chi squared test is used and the odds-ratio if the Fisher
+    test is used), the gene name, the type of the first ASE, the type of the second ASE, the
+    starting coordinate of the first ASE, the ending coordinate of the first ASE, the starting
+    coordinate of the second ASE, the ending coordinate of the second ASE,
+    and the four entries of the contingency table.
     '''
     p_value = []
     stat = []

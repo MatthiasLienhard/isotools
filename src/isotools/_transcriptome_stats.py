@@ -90,7 +90,6 @@ def betabinom_ml(xi, ni):
     return params, params_alt, success
 
 
-
 def betabinom_lr_test(x, n):
     ''' Likelihood ratio test with random-effects betabinomial model.
 
@@ -326,21 +325,24 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1, sample
 
 # summary tables (can be used as input to plot_bar / plot_dist)
 
-#function to optimize (inverse nbinom cdf)
-def _tpm_fun(tpm_th,n_reads,cov_th=2, p=.8):
+# function to optimize (inverse nbinom cdf)
+
+
+def _tpm_fun(tpm_th, n_reads, cov_th=2, p=.8):
     return (p-nbinom.cdf(n_reads - cov_th, n=cov_th, p=tpm_th * 1e-6))**2
+
 
 def estimate_tpm_threshold(n_reads, cov_th=2, p=.8):
     '''Estimate the minimum expression level of obervable transcripts at given coverage.
 
-    The function returns the expression level in transcripts per million (TPM), that can be observed 
-    at the given sequencing depth. 
-    
+    The function returns the expression level in transcripts per million (TPM), that can be observed
+    at the given sequencing depth.
+
     :param n_reads: The sequencing depth (total number of reads) for the sample.
     :param cov_th: The requested minimum number of reads per transcripts.
-    :param p: The probability of a transcript at threshold expression level to be observed. 
+    :param p: The probability of a transcript at threshold expression level to be observed.
     '''
-    return minimize_scalar(_tpm_fun,  bounds=(.01,1000), args=(n_reads, cov_th,p))['x']
+    return minimize_scalar(_tpm_fun,  bounds=(.01, 1000), args=(n_reads, cov_th, p))['x']
 
 
 def altsplice_stats(self, groups=None, weight_by_coverage=True, min_coverage=2, tr_filter={}):

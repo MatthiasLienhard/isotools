@@ -12,5 +12,5 @@ from ._transcriptome_stats import estimate_tpm_threshold
 from ._transcriptome_filter import DEFAULT_GENE_FILTER, DEFAULT_TRANSCRIPT_FILTER, DEFAULT_REF_TRANSCRIPT_FILTER, ANNOTATION_VOCABULARY
 
 
-__all__ = ['Transcriptome', 'Gene', 'SegmentGraph', 'SegGraphNode',
+__all__ = ['Transcriptome', 'Gene', 'SegmentGraph', 'SegGraphNode', 'estimate_tpm_threshold',
            'DEFAULT_GENE_FILTER', 'DEFAULT_TRANSCRIPT_FILTER', 'DEFAULT_REF_TRANSCRIPT_FILTER', 'ANNOTATION_VOCABULARY']

@@ -96,8 +96,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         If sample_name is specified in addition to bacode_file, it will be used as a prefix
     :param fuzzy_junction: maximum size for fuzzy junction correction
     :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added.
-    :param min_mapqual: Minimum mapping quality of the read to be considdered. 
-        A mapping quality of 0 usually means ambigous alignment. 
+    :param min_mapqual: Minimum mapping quality of the read to be considdered.
+        A mapping quality of 0 usually means ambigous alignment.
     :param min_align_fraction: Minimum fraction of the read sequence matching the reference.
     :param chimeric_mincov: Minimum number of reads for a chimeric transcript to be considered
     :param min_exonic_ref_coverage: Minimal fraction of exonic overlap to assign to reference transcript if no splice junctions match.
@@ -163,8 +163,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                     if read.flag & 0x700:  # not primary alignment or failed qual check or PCR duplicate
                         n_secondary += 1
                         continue  # use only primary alignments
-                    if read.mapping_quality<min_mapqual: # Mapping quality of 0 usually means ambigous mapping. 
-                        n_lowqual+=1 
+                    if read.mapping_quality < min_mapqual:  # Mapping quality of 0 usually means ambigous mapping.
+                        n_lowqual += 1
                         continue
                     tags = dict(read.tags)
                     if barcodes:
@@ -278,7 +278,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         logger.info('skipped %s secondary alignments (0x100), alignment that failed quality check (0x200) or PCR duplicates (0x400)', n_secondary)
     if unmapped > 0:
         logger.info('ignored %s reads marked as unaligned', unmapped)
-    if n_lowqual>0:
+    if n_lowqual > 0:
         logger.info('ignored %s reads with mapping quality < %s', n_lowqual, min_mapqual)
     # merge chimeric reads and assign gene names
     n_chimeric = dict()
@@ -643,19 +643,19 @@ def _find_matching_gene(genes_ol, exons, min_exon_coverage):
         # else return best overlapping reference gene if more than minimum overlap fraction
         ol = [(0, []) if not g.is_annotated else g.ref_segment_graph.get_overlap(exons) for g in genes_ol]
         max_ol_frac = np.array([0 if ol[0] == 0 else max(ol_tr / min(trlen, sum(e[1] - e[0] for e in tr["exons"]))
-                                                for ol_tr, tr in zip(ol[1], g.ref_transcripts)) for g, ol in zip(genes_ol, ol)])
+                                                         for ol_tr, tr in zip(ol[1], g.ref_transcripts)) for g, ol in zip(genes_ol, ol)])
         best_idx = max_ol_frac.argmax()
         if max_ol_frac[best_idx] >= min_exon_coverage:
-            return genes_ol[best_idx], None, list(range((len(exons) - 1) * 2)) # none of the junctions are covered
+            return genes_ol[best_idx], None, list(range((len(exons) - 1) * 2))  # none of the junctions are covered
         # else return best overlapping novel gene if more than minimum overlap fraction
         ol = [(0, []) if g.is_annotated else g.segment_graph.get_overlap(exons) for g in genes_ol]
         max_ol_frac = np.array([0 if ol[0] == 0 else max(ol_tr / sum(e[1] - e[0] for e in tr["exons"])
-                                                for ol_tr, tr in zip(ol[1], g.transcripts)) for g, ol in zip(genes_ol, ol)])
+                                                         for ol_tr, tr in zip(ol[1], g.transcripts)) for g, ol in zip(genes_ol, ol)])
         best_idx = max_ol_frac.argmax()
         if max_ol_frac[best_idx] >= min_exon_coverage:
-            return genes_ol[best_idx], None, list(range((len(exons) - 1) * 2)) # none of the junctions are covered
+            return genes_ol[best_idx], None, list(range((len(exons) - 1) * 2))  # none of the junctions are covered
         # TODO: Issue: order matters here, if more than one novel gene with >50%ol, join them all?)
-    return None, None, list(range((len(exons) - 1) * 2)) # none of the junctions are covered
+    return None, None, list(range((len(exons) - 1) * 2))  # none of the junctions are covered
 
 
 def _read_gtf_file(file_name, transcriptome, chromosomes, infer_genes=False, progress_bar=True):

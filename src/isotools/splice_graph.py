@@ -192,6 +192,7 @@ class SegmentGraph():
 
         :param exons: A list of exon tuples representing the transcript
         :type exons: list
+        :param alternative: list of splice site indices that match other genes
         :return: pair with the squanti category number and the subcategories as list of novel splicing events
             that produce the provided transcript from the transcripts in splce graph
         :rtype: tuple'''
@@ -284,7 +285,7 @@ class SegmentGraph():
             else:
                 altsplice = {'novel exon': [e]}
             j2 = j1
-        elif (is_first and is_last):  # mono-exon TODO: add info wether there is a ref mono exon?
+        elif (is_first and is_last):  # mono-exon (should not overlap a reference monoexon transcript, this is caught earlier)
             altsplice['mono-exon'] = []
             category = 1
         else:  # check splice sites
@@ -307,7 +308,7 @@ class SegmentGraph():
                     dist = min((self[j][1] - e[1] for j in range(j1, j2 + 1)), key=abs)  # the distance to next junction
                     altsplice.setdefault(f"novel {kind}' splice site", []).append((e[1], dist))
                     category = 3
-                elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1, j2 + 1)):  # exon end is intronic in ref & not overlapping tss
+                elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1, j2 + 1)):  # exon end is intronic in ref & not overlapping pas
                     site = 'TSS' if is_reverse else 'PAS'
                     altsplice.setdefault(f'novel exonic {site}', []).append((self[j2][1], e[1]))
                     category = max(1, category)

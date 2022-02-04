@@ -51,7 +51,7 @@ def main():
     if args.logLevel:
         logging.basicConfig(level=getattr(logging, args.logLevel), format='%(asctime)s %(levelname)s: %(message)s',
                             datefmt='%Y-%m-%d %H:%M:%S')
-
+    logger.info('This is isotools version %s', isotools.__version__)
     logger.debug('arguments: %s', args)
     if args.file_suffix is None:
         file_suffix = ''

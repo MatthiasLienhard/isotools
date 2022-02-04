@@ -2,6 +2,14 @@
 
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
+* think about adding / merging in transcripts/coverage from gtf file (maybe including a coverage table)
+
+## [0.2.10]
+* fixed get_overlap - important for correct assignment of mono exonic genes to reference
+* added parameter to control for minimal mapping quality in add_sample_from_bam. This allows for filtering out ambiguous reads, which have mapping quality of 0
+* fixed plot_diff_result (Key error due to incorrect parsing of group names)
+* New function estimate_tpm_threshold, to estimate the minimal abundance level of observable transcripts, given a sequencing depth. 
+
 
 ## [0.2.9]
 * added DIE test

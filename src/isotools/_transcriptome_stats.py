@@ -130,9 +130,7 @@ def betabinom_ll(x, n, a, b):
 
 TESTS = {'betabinom_lr': betabinom_lr_test,
          'binom_lr': binom_lr_test,
-         'proportions': proportion_test,
-         "chi2": chi2_contingency,
-         "fisher": fisher_exact}
+         'proportions': proportion_test}
 
 
 def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto', padj_method='fdr_bh', types=None, progress_bar=True):
@@ -715,8 +713,13 @@ def pairwise_event_test(e1, e2, gene, test="chi2"):
         c_mn = sum([coverage[ID] for ID in tr_IDs])+0.01
         C.iloc[n, m] = c_mn
 
-    TEST = TESTS[test]
-    test_res = TEST(C)
+    if test == 'chi2':
+        test_fun = chi2_contingency
+
+    elif test == 'fisher':
+        test_fun = fisher_exact
+
+    test_res = test_fun(C)
 
     priA_priB, altA_altB = C.iloc[0, 0], C.iloc[1, 1]
     priA_altB, altA_priB = C.iloc[1, 0], C.iloc[0, 1]
@@ -744,46 +747,39 @@ def coordination_test(self, test="chi2", min_dist=1, min_total=100,
 
     :return: a Pandas dataframe, where each column corresponds to the p_values, the statistics
     (the chi squared statistic if the chi squared test is used and the odds-ratio if the Fisher
-    test is used), the gene name, the type of the first ASE, the type of the second ASE, the
+    test is used), the gene Id, the gene name, the type of the first ASE, the type of the second ASE, the
     starting coordinate of the first ASE, the ending coordinate of the first ASE, the starting
     coordinate of the second ASE, the ending coordinate of the second ASE,
     and the four entries of the contingency table.
     '''
-    p_value = []
-    stat = []
-    Gene = []
-    ASE1_type, ASE2_type = [], []
-    ASE1_start = []
-    ASE1_end = []
-    ASE2_start = []
-    ASE2_end = []
-    priA_priB = []
-    priA_altB = []
-    altA_priB = []
-    altA_altB = []
 
-    for g in self.gene_table().gene_name:
-        test_res = self[g].gene_coordination_test(test=test, min_dist=min_dist, min_total=min_total,
-                                                  min_alt_fraction=min_alt_fraction, event_type=event_type)
-        if test_res is not None:
-            p_value.extend(test_res[0])
-            stat.extend(test_res[1])
-            Gene.extend(test_res[2])
-            ASE1_type.extend(test_res[3])
-            ASE2_type.extend(test_res[4])
-            ASE1_start.extend(test_res[5])
-            ASE1_end.extend(test_res[6])
-            ASE2_start.extend(test_res[7])
-            ASE2_end.extend(test_res[8])
-            priA_priB.extend(test_res[9])
-            priA_altB.extend(test_res[10])
-            altA_priB.extend(test_res[11])
-            altA_altB.extend(test_res[12])
+    test_res = []
+
+    for g in self.iter_genes():
+        next_test_res = g.gene_coordination_test(test=test, min_dist=min_dist, min_total=min_total,
+                                                 min_alt_fraction=min_alt_fraction, event_type=event_type)
+        if next_test_res is not None:
+            test_res.extend(next_test_res)
+
+    p_value = [t[0] for t in test_res]
+    stat = [t[1] for t in test_res]
+    priA_priB = [t[2] for t in test_res]
+    priA_altB = [t[3] for t in test_res]
+    altA_priB = [t[4] for t in test_res]
+    altA_altB = [t[5] for t in test_res]
+    gene_id = [t[6] for t in test_res]
+    gene_name = [t[7] for t in test_res]
+    ase1_type = [t[8] for t in test_res]
+    ase2_type = [t[9] for t in test_res]
+    ase1_start = [t[10] for t in test_res]
+    ase1_end = [t[11] for t in test_res]
+    ase2_start = [t[12] for t in test_res]
+    ase2_end = [t[13] for t in test_res]
 
     adj_p_value = multi.multipletests(p_value)[1]
 
-    res = pd.DataFrame({"adj_p_value": adj_p_value, "p_value": p_value, "stat": stat, "Gene": Gene,
-                        "ASE1_type": ASE1_type, "ASE2_type": ASE2_type,
-                        "ASE1_start": ASE1_start, "ASE1_end": ASE1_end, "ASE2_start": ASE2_start, "ASE2_end": ASE2_end,
-                        "priA_priB": priA_priB, "priA_altB": priA_altB, "altA_priB": altA_priB, "altA_altB": altA_altB})
+    res = pd.DataFrame({"adj_p_value": adj_p_value, "p_value": p_value, "stat": stat, "gene_id": gene_id, "gene_name": gene_name,
+                        "ASE1_type": ase1_type, "ASE2_type": ase2_type, "ASE1_start": ase1_start, "ASE1_end": ase1_end,
+                        "ASE2_start": ase2_start, "ASE2_end": ase2_end, "priA_priB": priA_priB, "priA_altB": priA_altB,
+                        "altA_priB": altA_priB, "altA_altB": altA_altB})
     return res

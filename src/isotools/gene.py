@@ -441,12 +441,12 @@ class Gene(Interval):
         :param event_type:  A tuple with event types to test. Valid types are
         (‘ES’,’3AS’, ‘5AS’,’IR’ or ‘ME’, ‘TSS’, ‘PAS’). Default is ("ES", "5AS", "3AS", "IR", "ME")
 
-        :return: a tuple (p_value, stat, Gene, ASE1_type, ASE2_type, ASE1_start, ASE1_end, ASE2_start,
-        ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB), where each element is a list
-        containing the p_values, the statistics, the gene name, the type of the first ASE,
-        the type of the second ASE, the starting coordinate of the first ASE, the ending coordinate
-        of the first ASE, the starting coordinate of the second ASE, the ending coordinate of the
-        second ASE, and the four entries of the contingency table.
+        :return: a list of tuples (p_value, stat, gene_id, gene_name, ASE1_type, ASE2_type,
+        ASE1_start, ASE1_end, ASE2_start, ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB),
+        where each entrance in the tuple corresponds to the p_value, the statistic, the gene name,
+        the type of the first ASE, the type of the second ASE, the starting coordinate of the first ASE,
+        the ending coordinate of the first ASE, the starting coordinate of the second ASE,
+        the ending coordinate of the second ASE, and the four entries of the contingency table for each test performed.
         '''
 
         sg = self.segment_graph
@@ -455,45 +455,29 @@ class Gene(Interval):
         events = [e for e in events if _filter_event(self, e, min_total=min_total,
                                                      min_alt_fraction=min_alt_fraction)]
 
-        p_value = []
-        stat = []
-        Gene = []
-        ASE1_type, ASE2_type = [], []
-        ASE1_start = []
-        ASE1_end = []
-        ASE2_start = []
-        ASE2_end = []
-        priA_priB = []
-        priA_altB = []
-        altA_priB = []
-        altA_altB = []
+        test_res = []
 
         for i, j in itertools.combinations(range(len(events)), 2):
 
             if sg.events_dist(events[i], events[j]) < min_dist:
                 continue
 
-            test_res = pairwise_event_test(events[i], events[j], self, test=test)
+            attr = pairwise_event_test(events[i], events[j], self, test=test)  # append to test result
+            attr = attr+(self.id, self.name, events[i][4], events[j][4], sg[events[i][2]].start,
+                         sg[events[i][3]].end, sg[events[j][2]].start, sg[events[j][3]].end)
 
-            if test_res[0] != 1:
-                p_value.append(test_res[0])
-                stat.append(test_res[1])
-                Gene.append(self.id)
-                ASE1_type.append(events[i][4])
-                ASE2_type.append(events[j][4])
-                ASE1_start.append(sg[events[i][2]].start)  # starting coordinate of event 1
-                ASE1_end.append(sg[events[i][3]].end)  # ending coordinate of event 1
-                ASE2_start.append(sg[events[j][2]].start)  # starting coordinate of event 2
-                ASE2_end.append(sg[events[j][3]].end)  # ending coordinate of event 2
-                priA_priB.append(test_res[2])
-                priA_altB.append(test_res[3])
-                altA_priB.append(test_res[4])
-                altA_altB.append(test_res[5])
+            # events[i][4] is the events[i] type
+            # sg[events[i][2]].start is starting coordinate of event 1
+            # sg[events[i][3]].end ending coordinate of event 1
+            # sg[events[j][2]].start starting coordinate of event 2
+            # sg[events[j][3]].end ending coordinate of event 2
 
-        if len(p_value) == 0:
+            test_res.append(attr)
+
+        if len(test_res) == 0:
             return None
 
-        return p_value, stat, Gene, ASE1_type, ASE2_type, ASE1_start, ASE1_end, ASE2_start, ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB
+        return test_res
 
 
 def _coding_len(exons, cds):

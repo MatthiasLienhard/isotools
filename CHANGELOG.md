@@ -2,9 +2,19 @@
 
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
+* think about adding / merging in transcripts/coverage from gtf file (maybe including a coverage table)
+
+## [0.2.10]
+* fixed get_overlap - important for correct assignment of mono exonic genes to reference
+* added parameter to control for minimal mapping quality in add_sample_from_bam. This allows for filtering out ambiguous reads, which have mapping quality of 0
+* fixed plot_diff_result (Key error due to incorrect parsing of group names)
+* New function estimate_tpm_threshold, to estimate the minimal abundance level of observable transcripts, given a sequencing depth. 
+
 
 ## [0.2.9]
-* improved assigment of reference genes in case of equal number of matching splice sites to several reference genes. 
+* added DIE test
+* adjusted classification of novel exonic TSS/PAS to ISM
+* improved assignment of reference genes in case of equal number of matching splice sites to several reference genes. 
 * added parameter to control for minimal exonic overlap to reference genes in add_sample_from_bam.
 * changed computation of direct repeats. Added wobble and max_mm parameters.
 * exposed parameters to end user in the add_qc_metrics function. 
@@ -14,7 +24,7 @@
 
 ## [0.2.8]
 * fix: version information lost when pickeling reference.
-* fix missing genen name
+* fix missing gene name
 * added pt_size parameter to plot_embedding and plot_diff_results function
 * added colors parameter to plotting functions
 * various fixes of command line script run_isotools.py

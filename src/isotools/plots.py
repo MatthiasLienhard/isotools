@@ -40,7 +40,7 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5
     axs = axs.flatten()
     x = [i / 100 for i in range(101)]
     group_names = [c[:-4] for c in result_table.columns if c.endswith('_PSI')][:2]
-    groups = {gn: [c[:c.find(gn)-1] for c in result_table.columns if c.endswith(gn + '_total_cov')] for gn in group_names}
+    groups = {gn: [c[:c.rfind(gn)-1] for c in result_table.columns if c.endswith(gn + '_total_cov')] for gn in group_names}
     if group_colors is None:
         group_colors = [0, 1]
     if isinstance(group_colors, list):

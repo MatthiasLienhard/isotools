@@ -8,7 +8,7 @@ from pysam import TabixFile, AlignmentFile, FastaFile
 from tqdm import tqdm
 from contextlib import ExitStack
 from .short_read import Coverage
-from ._utils import junctions_from_cigar, splice_identical, is_same_gene, overlap, pairwise, cigar_string2tuples, rc, get_intersects
+from ._utils import junctions_from_cigar, splice_identical, is_same_gene, has_overlap, get_overlap, pairwise, cigar_string2tuples, rc, get_intersects
 from .gene import Gene
 from .decorators import experimental
 import logging
@@ -83,8 +83,8 @@ def remove_samples(self, sample_names):
         g.data['coverage'] = None
 
 
-def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_junction=5, add_chromosomes=True,
-                        min_align_fraction=.75, chimeric_mincov=2, min_exonic_ref_coverage=.5, use_satag=False, save_readnames=False, progress_bar=True,
+def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_junction=5, add_chromosomes=True, min_mapqual=0,
+                        min_align_fraction=.75, chimeric_mincov=2, min_exonic_ref_coverage=.25, use_satag=False, save_readnames=False, progress_bar=True,
                         **kwargs):
     '''Imports expressed transcripts from bam and adds it to the 'Transcriptome' object.
 
@@ -96,6 +96,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         If sample_name is specified in addition to bacode_file, it will be used as a prefix
     :param fuzzy_junction: maximum size for fuzzy junction correction
     :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added.
+    :param min_mapqual: Minimum mapping quality of the read to be considdered.
+        A mapping quality of 0 usually means ambigous alignment.
     :param min_align_fraction: Minimum fraction of the read sequence matching the reference.
     :param chimeric_mincov: Minimum number of reads for a chimeric transcript to be considered
     :param min_exonic_ref_coverage: Minimal fraction of exonic overlap to assign to reference transcript if no splice junctions match.
@@ -137,7 +139,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         # try catch if sam/ no index /not pacbio?
         total_alignments = sum([s.mapped for s in stats if s.contig in chromosomes])
         sample_nc_reads = dict()
-        unmapped = n_secondary = 0
+        unmapped = n_secondary = n_lowqual = 0
         total_nc_reads_chr = {}
         chimeric = dict()
 
@@ -161,6 +163,9 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                     if read.flag & 0x700:  # not primary alignment or failed qual check or PCR duplicate
                         n_secondary += 1
                         continue  # use only primary alignments
+                    if read.mapping_quality < min_mapqual:  # Mapping quality of 0 usually means ambigous mapping.
+                        n_lowqual += 1
+                        continue
                     tags = dict(read.tags)
                     if barcodes:
                         if 'XC' not in tags or tags['XC'] not in barcodes:
@@ -273,6 +278,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         logger.info('skipped %s secondary alignments (0x100), alignment that failed quality check (0x200) or PCR duplicates (0x400)', n_secondary)
     if unmapped > 0:
         logger.info('ignored %s reads marked as unaligned', unmapped)
+    if n_lowqual > 0:
+        logger.info('ignored %s reads with mapping quality < %s', n_lowqual, min_mapqual)
     # merge chimeric reads and assign gene names
     n_chimeric = dict()
     n_nonchimeric = 0
@@ -579,13 +586,14 @@ def _add_novel_genes(t, novel, chrom, sa, spj_iou_th=0, reg_iou_th=.5, gene_pref
     t.infos['novel_counter'] = n_novel
 
 
-def _find_matching_gene(genes_ol, exons, min_exon_coverage=.5):
+def _find_matching_gene(genes_ol, exons, min_exon_coverage):
     '''check the splice site intersect of all overlapping genes and return
             1) the gene with most shared splice sites,
             2) names of genes that cover additional splice sites, and
             3) splice sites that are not covered.
         If no splice site is shared (and for mono-exon genes) return the gene with largest exonic overlap
         :param min_exon_coverage: minimum exonic coverage with genes that do not share splice sites to be considered'''
+    trlen = sum(e[1]-e[0] for e in exons)
     if genes_ol:
         if len(exons) > 1:
             nomatch = np.zeros((len(exons) - 1) * 2, dtype=bool)
@@ -623,28 +631,31 @@ def _find_matching_gene(genes_ol, exons, min_exon_coverage=.5):
             best_idx = ol.argmax()
             if ol[best_idx] >= min_exon_coverage * sum(e[1] - e[0] for e in exons):
                 return genes_ol[best_idx], None, list(range((len(exons) - 1) * 2))
-
         else:
             # len(exons)==1 check all ref transcripts for monoexon gene with overlap>=50% (or min_exon_coverage)
-            trlen = exons[0][1]-exons[0][0]
             ol = []
             for g in genes_ol:
-                ol_g = [overlap(exons[0], tr['exons'][0]) for tr in g.transcripts if len(tr['exons']) == 1]
+                ol_g = [get_overlap(exons[0], tr['exons'][0]) for tr in g.ref_transcripts if len(tr['exons']) == 1]
                 ol.append(max(ol_g, default=0))
             best_idx = np.argmax(ol)
             if ol[best_idx] >= min_exon_coverage * trlen:
                 return genes_ol[best_idx], None, []
-
-        # else return best novel (also >50% ol, but in both directions )
-        ol_both = [(0, []) if g.is_annotated else g.segment_graph.get_overlap(exons) for g in genes_ol]
-        max_other = [0 if ol[0] == 0 else max(ol_tr / sum(e[1] - e[0] for e in tr["exons"])
-                                              for ol_tr, tr in zip(ol[1], g.transcripts)) for g, ol in zip(genes_ol, ol_both)]
-        ol = np.array([max(ol[0] / sum(e[1] - e[0] for e in exons), other) for ol, other in zip(ol_both, max_other)])
-        best_idx = ol.argmax()
-        if ol[best_idx] >= min_exon_coverage:
-            return genes_ol[best_idx], None, list(range((len(exons) - 1) * 2))
+        # else return best overlapping reference gene if more than minimum overlap fraction
+        ol = [(0, []) if not g.is_annotated else g.ref_segment_graph.get_overlap(exons) for g in genes_ol]
+        max_ol_frac = np.array([0 if ol[0] == 0 else max(ol_tr / min(trlen, sum(e[1] - e[0] for e in tr["exons"]))
+                                                         for ol_tr, tr in zip(ol[1], g.ref_transcripts)) for g, ol in zip(genes_ol, ol)])
+        best_idx = max_ol_frac.argmax()
+        if max_ol_frac[best_idx] >= min_exon_coverage:
+            return genes_ol[best_idx], None, list(range((len(exons) - 1) * 2))  # none of the junctions are covered
+        # else return best overlapping novel gene if more than minimum overlap fraction
+        ol = [(0, []) if g.is_annotated else g.segment_graph.get_overlap(exons) for g in genes_ol]
+        max_ol_frac = np.array([0 if ol[0] == 0 else max(ol_tr / sum(e[1] - e[0] for e in tr["exons"])
+                                                         for ol_tr, tr in zip(ol[1], g.transcripts)) for g, ol in zip(genes_ol, ol)])
+        best_idx = max_ol_frac.argmax()
+        if max_ol_frac[best_idx] >= min_exon_coverage:
+            return genes_ol[best_idx], None, list(range((len(exons) - 1) * 2))  # none of the junctions are covered
         # TODO: Issue: order matters here, if more than one novel gene with >50%ol, join them all?)
-    return None, None, list(range((len(exons) - 1) * 2))
+    return None, None, list(range((len(exons) - 1) * 2))  # none of the junctions are covered
 
 
 def _read_gtf_file(file_name, transcriptome, chromosomes, infer_genes=False, progress_bar=True):
@@ -1322,7 +1333,7 @@ class IntervalArray:
         except IndexError:
             logger.error('requesting interval between %s and %s, but array is allocated only until position %s', begin, end, len(self.data)*self.bin_size)
             raise
-        return (self.obj[obj_id] for obj_id in candidates if overlap((begin, end), self.obj[obj_id]))  # this assumes object has range obj[0] to obj[1]
+        return (self.obj[obj_id] for obj_id in candidates if has_overlap((begin, end), self.obj[obj_id]))  # this assumes object has range obj[0] to obj[1]
 
     def add(self, obj):
         self.obj[id(obj)] = obj

@@ -2,7 +2,7 @@ from tracemalloc import Statistic
 import numpy as np
 import logging
 from sortedcontainers import SortedDict  # for SpliceGraph
-from ._utils import pairwise, overlap, _interval_dist
+from ._utils import pairwise, has_overlap, _interval_dist
 from .decorators import deprecated, experimental
 from typing import Union
 
@@ -193,6 +193,7 @@ class SegmentGraph():
 
         :param exons: A list of exon tuples representing the transcript
         :type exons: list
+        :param alternative: list of splice site indices that match other genes
         :return: pair with the squanti category number and the subcategories as list of novel splicing events
             that produce the provided transcript from the transcripts in splce graph
         :rtype: tuple'''
@@ -285,7 +286,7 @@ class SegmentGraph():
             else:
                 altsplice = {'novel exon': [e]}
             j2 = j1
-        elif (is_first and is_last):  # mono-exon
+        elif (is_first and is_last):  # mono-exon (should not overlap a reference monoexon transcript, this is caught earlier)
             altsplice['mono-exon'] = []
             category = 1
         else:  # check splice sites
@@ -299,7 +300,7 @@ class SegmentGraph():
                 elif self[j1][0] > e[0] and not any(j in self._tss for j in range(j1, j2 + 1)):  # exon start is intronic in ref
                     site = 'PAS' if is_reverse else 'TSS'
                     altsplice.setdefault(f'novel exonic {site}', []).append((e[0], self[j1][0]))
-                    category = max(2, category)
+                    category = max(1, category)
             if self[j2][1] != e[1]:  # second splice site missmatch
                 if not is_last:
                     # pos="intronic" if self[j2][1]<e[1] else "exonic"
@@ -308,10 +309,10 @@ class SegmentGraph():
                     dist = min((self[j][1] - e[1] for j in range(j1, j2 + 1)), key=abs)  # the distance to next junction
                     altsplice.setdefault(f"novel {kind}' splice site", []).append((e[1], dist))
                     category = 3
-                elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1, j2 + 1)):  # exon end is intronic in ref & not overlapping tss
+                elif self[j2][1] < e[1] and not any(j in self._pas for j in range(j1, j2 + 1)):  # exon end is intronic in ref & not overlapping pas
                     site = 'TSS' if is_reverse else 'PAS'
                     altsplice.setdefault(f'novel exonic {site}', []).append((self[j2][1], e[1]))
-                    category = max(2, category)
+                    category = max(1, category)
 
         # find intron retentions
         if j1 < j2 and any(self[ji + 1].start - self[ji].end > 0 for ji in range(j1, j2)):
@@ -520,14 +521,14 @@ class SegmentGraph():
         esm = np.zeros((len(self._tss), len(exons)), np.bool)  # the intron support matrix
         for tr_nr, tss in enumerate(self._tss):  # check overlap of first exon
             for j in range(tss, len(self)):
-                if overlap(self[j], exons[0]):
+                if has_overlap(self[j], exons[0]):
                     esm[tr_nr, 0] = True
                 elif self[j].suc.get(tr_nr, None) == j + 1 and j - 1 < len(self) and self[j].end == self[j + 1].start:
                     continue
                 break
         for tr_nr, pas in enumerate(self._pas):  # check overlap of last exon
             for j in range(pas, -1, -1):
-                if overlap(self[j], exons[-1]):
+                if has_overlap(self[j], exons[-1]):
                     esm[tr_nr, -1] = True
                 elif self[j].pre.get(tr_nr, None) == j - 1 and j > 0 and self[j].start == self[j - 1].end:
                     continue

@@ -1,6 +1,6 @@
-from scipy.stats import binom, norm, chi2, betabinom  # pylint: disable-msg=E0611
+from scipy.stats import binom, norm, chi2, betabinom, nbinom  # pylint: disable-msg=E0611
 from scipy.special import gammaln, polygamma  # pylint: disable-msg=E0611
-from scipy.optimize import minimize
+from scipy.optimize import minimize, minimize_scalar
 import statsmodels.stats.multitest as multi
 import logging
 import numpy as np
@@ -8,7 +8,6 @@ import pandas as pd
 import itertools
 from scipy.stats import chi2_contingency, fisher_exact
 
-# from ._utils import overlap
 # from .decorators import deprecated, debug, experimental
 from ._utils import _filter_function
 
@@ -133,6 +132,28 @@ TESTS = {'betabinom_lr': betabinom_lr_test,
          'proportions': proportion_test}
 
 
+def _check_groups(transcriptome, groups):
+    assert len(groups) == 2, "length of groups should be 2, but found %i" % len(groups)
+    # find groups and sample indices
+    if isinstance(groups, dict):
+        groupnames = list(groups)
+        groups = list(groups.values())
+    elif all(isinstance(gn, str) and gn in transcriptome.groups() for gn in groups):
+        groupnames = list(groups)
+        groups = [transcriptome.groups()[gn] for gn in groupnames]
+    elif all(isinstance(grp, list) for grp in groups):
+        groupnames = ['group{i+1}' for i in range(len(groups))]
+    else:
+        raise ValueError('groups not found in dataset')
+    notfound = [sa for grp in groups for sa in grp if sa not in transcriptome.samples]
+    if notfound:
+        raise ValueError(f"Cannot find the following samples: {notfound}")
+    assert not (groupnames[0] in groupnames[1] or groupnames[1] in groupnames[0]), 'group names must not be contained in other group names'
+    sa_idx = {sa: idx[0] for sa, idx in transcriptome._get_sample_idx().items()}
+    grp_idx = [[sa_idx[sa] for sa in grp] for grp in groups]
+    return groupnames, groups, grp_idx
+
+
 def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto', padj_method='fdr_bh', types=None, progress_bar=True):
     '''Performs the alternative splicing event test.
 
@@ -146,22 +167,10 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
     :param test: The name of one of the implemented statistical tests ('betabinom_lr','binom_lr','proportions').
     :param padj_method: Specify the method for multiple testing correction.
     :param types: Restrict the analysis on types of events. If ommited, all types are tested.'''
-    # assert len(groups) == 2 , "length of groups should be 2, but found %i" % len(groups)
-    # find groups and sample indices
-    if isinstance(groups, dict):
-        groupnames = list(groups)
-        groups = list(groups.values())
-    elif all(isinstance(gn, str) and gn in self.groups() for gn in groups):
-        groupnames = list(groups)
-        groups = [self.groups()[gn] for gn in groupnames]
-    elif all(isinstance(grp, list) for grp in groups):
-        groupnames = ['group{i+1}' for i in range(len(groups))]
-    else:
-        raise ValueError('groups not found in dataset')
-    notfound = [sa for grp in groups for sa in grp if sa not in self.samples]
-    if notfound:
-        raise ValueError(f"Cannot find the following samples: {notfound}")
-    assert not (groupnames[0] in groupnames[1] or groupnames[1] in groupnames[0]), 'group names must not be contained in other group names'
+
+    groupnames, groups, grp_idx = _check_groups(self, groups)
+    sidx = grp_idx[0] + grp_idx[1]
+
     if isinstance(test, str):
         if test == 'auto':
             test = 'betabinom_lr' if min(len(g) for g in groups[:2]) > 1 else 'proportions'
@@ -174,9 +183,7 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
         test_name = 'custom'
 
     logger.info('testing differential splicing for %s using %s test', ' vs '.join(f'{groupnames[i]} ({len(groups[i])})' for i in range(2)), test_name)
-    sa_idx = {sa: idx[0] for sa, idx in self._get_sample_idx().items()}
-    grp_idx = [[sa_idx[sa] for sa in grp] for grp in groups]
-    sidx = grp_idx[0] + grp_idx[1]
+
     if min_sa < 1:
         min_sa *= sum(len(gr) for gr in groups[:2])
     res = []
@@ -237,6 +244,31 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
     return df
 
 
+def die_test(self, groups, min_cov=25, n_isoforms=10, padj_method='fdr_bh', progress_bar=True):
+    ''' Reimplementation of the DIE test, suggested by Joglekar et al in Nat Commun 12, 463 (2021):
+    "A spatially resolved brain region- and cell type-specific isoform atlas of the postnatal mouse brain"
+
+    Syntax and parameters follow the original implementation in
+    https://github.com/noush-joglekar/scisorseqr/blob/master/inst/RScript/IsoformTest.R
+    :param groups: Dict with groupnames as keys and lists of samplenames as values, defining the two groups for the test.
+    If more then two groups are provided, test is performed between first two groups, but maximum likelihood parameters
+    (expected PSI and dispersion) will be computet for the other groups as well.
+    :param min_cov: Minimal number of reads per group for each gene.
+    :param n_isoforms: Number of isoforms to consider in the test for each gene. All additional least expressed isoforms get summarized.'''
+
+    groupnames, groups, grp_idx = _check_groups(self, groups)
+    logger.info('testing differential isoform expression (DIE) for %s.', ' vs '.join(f'{groupnames[i]} ({len(groups[i])})' for i in range(2)))
+
+    result = [(g.id, g.name, g.chrom, g.strand, g.start, g.end)+g.die_test(grp_idx, min_cov, n_isoforms) for g in self.iter_genes(progress_bar=progress_bar)]
+    result = pd.DataFrame(result, columns=['gene_id', 'gene_name', 'chrom', 'strand', 'start', 'end', 'pvalue', 'deltaPI', 'transcript_ids'])
+    mask = np.isfinite(result['pvalue'])
+    padj = np.empty(mask.shape)
+    padj.fill(np.nan)
+    padj[mask] = multi.multipletests(result.loc[mask, 'pvalue'], method=padj_method)[1]
+    result.insert(6, 'padj', padj)
+    return result
+
+
 def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1, samples=None, region=None, query=None, progress_bar=False):
     '''Finds alternative splicing events.
 
@@ -293,6 +325,25 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1, sample
                         [f'{sa}_{what}' for what in ['in_cov', 'total_cov'] for sa in samples])
 
 # summary tables (can be used as input to plot_bar / plot_dist)
+
+# function to optimize (inverse nbinom cdf)
+
+
+def _tpm_fun(tpm_th, n_reads, cov_th=2, p=.8):
+    return (p-nbinom.cdf(n_reads - cov_th, n=cov_th, p=tpm_th * 1e-6))**2
+
+
+def estimate_tpm_threshold(n_reads, cov_th=2, p=.8):
+    '''Estimate the minimum expression level of obervable transcripts at given coverage.
+
+    The function returns the expression level in transcripts per million (TPM), that can be observed
+    at the given sequencing depth.
+
+    :param n_reads: The sequencing depth (total number of reads) for the sample.
+    :param cov_th: The requested minimum number of reads per transcripts.
+    :param p: The probability of a transcript at threshold expression level to be observed.
+    '''
+    return minimize_scalar(_tpm_fun,  bounds=(.01, 1000), args=(n_reads, cov_th, p))['x']
 
 
 def altsplice_stats(self, groups=None, weight_by_coverage=True, min_coverage=2, tr_filter={}):

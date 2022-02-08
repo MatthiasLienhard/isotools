@@ -49,6 +49,7 @@ def basequal_hist(bam_fn, qual_bins=10**(np.linspace(-7, 0, 30)), len_bins=None,
         with tqdm(total=n, unit=' reads') as pbar:
             for read in align:
                 if read.query_qualities is None:
+                    pbar.update(1)
                     continue
                 readl = len(read.query_qualities)
                 if len_bins is not None:
@@ -58,7 +59,7 @@ def basequal_hist(bam_fn, qual_bins=10**(np.linspace(-7, 0, 30)), len_bins=None,
                 qual[q_i, len_i] += 1
                 pbar.update(1)
                 i += 1
-                if i+1 >= n:
+                if i >= n:
                     break
     idx = [f'<{th:.2E} %' for th in qual_bins]+[f'>={qual_bins[-1]:.2E} %']
     if len_bins is None:
@@ -117,7 +118,7 @@ def splice_identical(tr1, tr2):
     # all splice sites are equal
     if len(tr1) != len(tr2):  # different number of exons
         return False
-    if len(tr1) == 1 and overlap(tr1[0], tr2[0]):  # single exon genes
+    if len(tr1) == 1 and has_overlap(tr1[0], tr2[0]):  # single exon genes
         return True
     if tr1[0][1] != tr2[0][1] or tr1[-1][0] != tr2[-1][0]:  # check first and last exons
         return False
@@ -127,13 +128,19 @@ def splice_identical(tr1, tr2):
     return True
 
 
-def overlap(r1, r2):
+def has_overlap(r1, r2):
     "check the overlap of two intervals"
     # assuming start < end
     if r1[1] < r2[0] or r2[1] < r1[0]:
         return False
     else:
         return True
+
+
+def get_overlap(r1, r2):
+    "check the overlap of two intervals"
+    # assuming start < end
+    return max(0, min(r1[1], r2[1]) - max(r1[0], r2[0]))
 
 
 def get_intersects(tr1, tr2):
@@ -151,7 +158,7 @@ def get_intersects(tr1, tr2):
                 sjintersect += 1
             if tr2_exon[1] == tr1_exon[1] and i < len(tr2)-1 and j < len(tr1)-1:
                 sjintersect += 1
-            if overlap(tr1_exon, tr2_exon):
+            if has_overlap(tr1_exon, tr2_exon):
                 # region intersect
                 i_end = min(tr1_exon[1], tr2_exon[1])
                 i_start = max(tr1_exon[0], tr2_exon[0])

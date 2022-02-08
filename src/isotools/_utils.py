@@ -179,3 +179,39 @@ def _filter_function(expression):
 
     # potential issue: g.coverage gets detected as ["g", "coverage"], e.g. coverage is added. Probably not causing trubble
     return eval(f'lambda {",".join([arg+"=None" for arg in args]+["**kwargs"])}: bool({expression})\n', {}, {}), args
+
+
+def _interval_dist(a, b):
+    '''compute the distance between two intervals a and b.'''
+    return max([a[0], b[0]])-min([a[1], b[1]])
+
+
+def _filter_event(gene, event, min_total=100, min_alt_fraction=.1):
+    '''
+    return True if the event satisfies the filter conditions and False otherwise
+
+    :param gene: Gene object corresponding to the gene in which the event happened
+    :param event: Event obtained from .find_splice_bubbles()
+    :param min_total: The minimum total number of reads for an event to pass the filter
+    :type min_total: int
+    :param min_alt_fraction: The minimum fraction of read supporting the alternative
+    :type min_alt_frction: float
+
+    '''
+
+    coverage = gene.coverage.sum(axis=0) if len(gene.coverage.shape) > 1 else gene.coverage
+
+    tr_IDs = event[0]+event[1]
+    tot_cov = sum([coverage[ID] for ID in tr_IDs])
+
+    if tot_cov < min_total:
+        return False
+
+    pri_cov = sum([coverage[ID] for ID in event[0]])
+    alt_cov = sum([coverage[ID] for ID in event[1]])
+    frac = min(pri_cov, alt_cov)/max(pri_cov, alt_cov)
+
+    if frac < min_alt_fraction:
+        return False
+
+    return True

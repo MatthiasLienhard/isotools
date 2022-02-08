@@ -418,7 +418,6 @@ class Gene(Interval):
         'Returns a shallow copy of self.'
         return self.__copy__()
 
-
     def gene_coordination_test(self, test="chi2", min_dist=1, min_total=100,
                                min_alt_fraction=.1, event_type=("ES", "5AS", "3AS", "IR", "ME")):
         '''
@@ -441,7 +440,7 @@ class Gene(Interval):
         :param min_alt_fraction: The minimum fraction of read supporting the alternative
         :type min_alt_frction: float
         :param event_type:  A tuple with event types to test. Valid types are
-        (‘ES’,’3AS’, ‘5AS’,’IR’ or ‘ME’, ‘TSS’, ‘PAS’). Default is ("ES", "5AS", "3AS", "IR", "ME")
+        ("ES", "3AS", "5AS", "IR", "ME", "TSS", "PAS"). Default is ("ES", "5AS", "3AS", "IR", "ME")
 
         :return: a list of tuples (p_value, stat, gene_id, gene_name, ASE1_type, ASE2_type,
         ASE1_start, ASE1_end, ASE2_start, ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB),
@@ -530,7 +529,6 @@ class Gene(Interval):
             return pval, deltaPI_pos, idx[pos_idx]
         else:
             return pval, deltaPI_neg, idx[neg_idx]
-
 
 
 def _coding_len(exons, cds):

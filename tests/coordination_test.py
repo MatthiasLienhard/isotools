@@ -1,11 +1,9 @@
+import numpy as np
 
-def test_coordination_T(example_gene_coor, res_coor):
-    res = example_gene_coor.gene_coordination_test(test="fisher")
-    assert all([res[0][i] == res_coor[0][i] for i in range(2, 14)])
-    assert res[0][0] > 0 and res[0][0] < .05
-
-
-def test_coordination_F(example_gene_uncoor, res_uncoor):
-    res = example_gene_uncoor.gene_coordination_test(test="fisher")
-    assert all([res[0][i] == res_uncoor[0][i] for i in range(2, 14)])
-    assert res[0][0] > .3 and res[0][0] < .5
+def test_coordination(example_gene_coor):
+    example_gene_coor.data['coverage'] = np.array([300, 60, 100, 350])
+    res_pos = example_gene_coor.gene_coordination_test(test="fisher")
+    assert res_pos[0][0] >= 0 and res_pos[0][0] < .05 , 'Test should yield significant p-value'
+    example_gene_coor.data['coverage'] = np.array([310, 380, 310, 350])
+    res_neg = example_gene_coor.gene_coordination_test(test="fisher")
+    assert res_neg[0][0] > .1 and res_neg[0][0] <= 1, 'Test should not yield significant p-value'

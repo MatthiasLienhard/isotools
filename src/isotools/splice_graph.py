@@ -1,4 +1,3 @@
-from tracemalloc import Statistic
 import numpy as np
 import logging
 from sortedcontainers import SortedDict  # for SpliceGraph

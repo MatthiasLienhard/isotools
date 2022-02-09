@@ -418,7 +418,7 @@ class Gene(Interval):
         'Returns a shallow copy of self.'
         return self.__copy__()
 
-    def gene_coordination_test(self, test="chi2", min_dist=1, min_total=100,
+    def coordination_test(self, test="chi2", samples=None, min_dist=1, min_total=100,
                                min_alt_fraction=.1, event_type=("ES", "5AS", "3AS", "IR", "ME")):
         '''
         Performs pairwise independence test for all pairs of Alternative Splicing Events (ASEs) in a gene.
@@ -450,22 +450,35 @@ class Gene(Interval):
         the ending coordinate of the second ASE, and the four entries of the contingency table for each test performed.
         '''
 
+        if samples is None:
+            cov = self.coverage.sum(axis=0)
+        else:
+            try:
+                # Fast mode when testing several genes
+                cov = self.coverage[samples].sum(0)
+            except IndexError:
+                # Fall back to looking up the sample indices
+                from isotools._transcriptome_stats import _check_groups
+                _, _, groups = _check_groups(self._transcriptome, [samples],1)
+                cov = self.coverage[groups[0]].sum(0)
+
         sg = self.segment_graph
 
         events = sg.find_splice_bubbles(types=event_type)
-        events = [e for e in events if _filter_event(self, e, min_total=min_total,
+        events = [e for e in events if _filter_event(cov, e, min_total=min_total,
                                                      min_alt_fraction=min_alt_fraction)]
 
         test_res = []
+
 
         for i, j in itertools.combinations(range(len(events)), 2):
 
             if sg.events_dist(events[i], events[j]) < min_dist:
                 continue
 
-            attr = pairwise_event_test(events[i], events[j], self, test=test)  # append to test result
-            attr = attr+(self.id, self.name, events[i][4], events[j][4], sg[events[i][2]].start,
-                         sg[events[i][3]].end, sg[events[j][2]].start, sg[events[j][3]].end)
+            attr = pairwise_event_test(events[i], events[j], cov, test=test)  # append to test result
+            attr = (self.id, self.name, events[i][4], events[j][4], sg[events[i][2]].start,
+                    sg[events[i][3]].end, sg[events[j][2]].start, sg[events[j][3]].end) + attr
 
             # events[i][4] is the events[i] type
             # sg[events[i][2]].start is starting coordinate of event 1
@@ -474,9 +487,6 @@ class Gene(Interval):
             # sg[events[j][3]].end ending coordinate of event 2
 
             test_res.append(attr)
-
-        if len(test_res) == 0:
-            return None
 
         return test_res
 

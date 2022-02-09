@@ -144,7 +144,7 @@ def _check_groups(transcriptome, groups, n_groups=2):
     elif all(isinstance(grp, list) for grp in groups):
         groupnames = ['group{i+1}' for i in range(len(groups))]
     else:
-        raise ValueError('groups not found in dataset')
+        raise ValueError('groups not found in dataset (samples must be a str, list or dict)')
     notfound = [sa for grp in groups for sa in grp if sa not in transcriptome.samples]
     if notfound:
         raise ValueError(f"Cannot find the following samples: {notfound}")
@@ -778,8 +778,8 @@ def pairwise_event_test(e1, e2, coverage, test="chi2"):
     return p_value, test_stat, int(priA_priB-0.01), int(priA_altB-0.01), int(altA_priB-0.01), int(altA_altB-0.01)
 
 
-def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100,
-                      min_alt_fraction=.1, event_type=("ES", "5AS", "3AS", "IR", "ME")):
+def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1,
+                      event_type=("ES", "5AS", "3AS", "IR", "ME"), region=None, progress_bar=True):
     '''
     Performs gene_coordination_test on all genes.
 
@@ -805,12 +805,12 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
     test_res = []
 
     if samples is not None:
-        _, _, groups = _check_groups(self._transcriptome, [samples],1)
-        samples=groups[0]
+        _, _, groups = _check_groups(self, [samples], 1)
+        samples = groups[0]
 
-    for g in self.iter_genes():
+    for g in self.iter_genes(region=region, progress_bar=progress_bar):
         next_test_res = g.coordination_test(test=test, samples=samples, min_dist=min_dist, min_total=min_total,
-                                                 min_alt_fraction=min_alt_fraction, event_type=event_type)
+                                            min_alt_fraction=min_alt_fraction, event_type=event_type)
         test_res.extend(next_test_res)
 
     col_names = ("gene_id", "gene_name", "ase1_type", "ase2_type", "ase1_start", "ase1_end", "ase2_start",

@@ -186,11 +186,11 @@ def _interval_dist(a, b):
     return max([a[0], b[0]])-min([a[1], b[1]])
 
 
-def _filter_event(gene, event, min_total=100, min_alt_fraction=.1):
+def _filter_event(coverage, event, min_total=100, min_alt_fraction=.1):
     '''
     return True if the event satisfies the filter conditions and False otherwise
 
-    :param gene: Gene object corresponding to the gene in which the event happened
+    :param coverage: list of counts per transcript
     :param event: Event obtained from .find_splice_bubbles()
     :param min_total: The minimum total number of reads for an event to pass the filter
     :type min_total: int
@@ -199,8 +199,7 @@ def _filter_event(gene, event, min_total=100, min_alt_fraction=.1):
 
     '''
 
-    coverage = gene.coverage.sum(axis=0) if len(gene.coverage.shape) > 1 else gene.coverage
-
+    
     tr_IDs = event[0]+event[1]
     tot_cov = sum([coverage[ID] for ID in tr_IDs])
 

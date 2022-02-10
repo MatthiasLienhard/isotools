@@ -132,8 +132,8 @@ TESTS = {'betabinom_lr': betabinom_lr_test,
          'proportions': proportion_test}
 
 
-def _check_groups(transcriptome, groups):
-    assert len(groups) == 2, "length of groups should be 2, but found %i" % len(groups)
+def _check_groups(transcriptome, groups, n_groups=2):
+    assert len(groups) == n_groups, f"length of groups should be {n_groups}, but found {len(groups)}"
     # find groups and sample indices
     if isinstance(groups, dict):
         groupnames = list(groups)
@@ -144,11 +144,11 @@ def _check_groups(transcriptome, groups):
     elif all(isinstance(grp, list) for grp in groups):
         groupnames = ['group{i+1}' for i in range(len(groups))]
     else:
-        raise ValueError('groups not found in dataset')
+        raise ValueError('groups not found in dataset (samples must be a str, list or dict)')
     notfound = [sa for grp in groups for sa in grp if sa not in transcriptome.samples]
     if notfound:
         raise ValueError(f"Cannot find the following samples: {notfound}")
-    assert not (groupnames[0] in groupnames[1] or groupnames[1] in groupnames[0]), 'group names must not be contained in other group names'
+    assert all((gn1 not in gn2 for gn1, gn2 in itertools.permutations(groupnames, 2))), 'group names must not be contained in other group names'
     sa_idx = {sa: idx[0] for sa, idx in transcriptome._get_sample_idx().items()}
     grp_idx = [[sa_idx[sa] for sa in grp] for grp in groups]
     return groupnames, groups, grp_idx
@@ -738,14 +738,14 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
     return pd.DataFrame(curves, index=fractions), total
 
 
-def pairwise_event_test(e1, e2, gene, test="chi2"):
+def pairwise_event_test(e1, e2, coverage, test="chi2"):
     '''
     performs an independence test among the joint frequencies of two events
 
     :param e1: event obtained from .find_splice_bubbles()
     :param e2: event obtained from .find_splice_bubbles()
     :param transcriptome: the Transcriptome object on which the events were computed
-    :param gene: Gene object corresponding to the gene in which the event happened
+    :param coverage: list of counts per transcript
     :param min_dist: minimum distance (in nucleotides) between the two Alternative Splicing Events for the pair to be tested
     :type min_dist: int
     :param test: test to be performed. One of ("chi2", "fisher")
@@ -753,16 +753,14 @@ def pairwise_event_test(e1, e2, gene, test="chi2"):
     :param sg: segment graph
     '''
 
-    coverage = gene.coverage.sum(axis=0) if len(gene.coverage.shape) > 1 else gene.coverage
+    con_tab = pd.DataFrame({"A_pri": (0, 0), "A_alt": (0, 0)})
 
-    C = pd.DataFrame({"A_pri": (0, 0), "A_alt": (0, 0)})
-
-    C.index = ("B_pri", "B_alt")
+    con_tab.index = ("B_pri", "B_alt")
 
     for m, n in itertools.product(range(2), range(2)):
         tr_IDs = list(set(e1[m]) & set(e2[n]))
         c_mn = sum([coverage[ID] for ID in tr_IDs])+0.01
-        C.iloc[n, m] = c_mn
+        con_tab.iloc[n, m] = c_mn
 
     if test == 'chi2':
         test_fun = chi2_contingency
@@ -770,18 +768,18 @@ def pairwise_event_test(e1, e2, gene, test="chi2"):
     elif test == 'fisher':
         test_fun = fisher_exact
 
-    test_res = test_fun(C)
+    test_res = test_fun(con_tab)
 
-    priA_priB, altA_altB = C.iloc[0, 0], C.iloc[1, 1]
-    priA_altB, altA_priB = C.iloc[1, 0], C.iloc[0, 1]
+    priA_priB, altA_altB = con_tab.iloc[0, 0], con_tab.iloc[1, 1]
+    priA_altB, altA_priB = con_tab.iloc[1, 0], con_tab.iloc[0, 1]
     p_value = test_res[1]
     test_stat = test_res[0]
 
     return p_value, test_stat, int(priA_priB-0.01), int(priA_altB-0.01), int(altA_priB-0.01), int(altA_altB-0.01)
 
 
-def coordination_test(self, test="chi2", min_dist=1, min_total=100,
-                      min_alt_fraction=.1, event_type=("ES", "5AS", "3AS", "IR", "ME")):
+def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1,
+                      event_type=("ES", "5AS", "3AS", "IR", "ME"), region=None, progress_bar=True):
     '''
     Performs gene_coordination_test on all genes.
 
@@ -806,31 +804,22 @@ def coordination_test(self, test="chi2", min_dist=1, min_total=100,
 
     test_res = []
 
-    for g in self.iter_genes():
-        next_test_res = g.gene_coordination_test(test=test, min_dist=min_dist, min_total=min_total,
-                                                 min_alt_fraction=min_alt_fraction, event_type=event_type)
-        if next_test_res is not None:
-            test_res.extend(next_test_res)
+    if samples is not None:
+        _, _, groups = _check_groups(self, [samples], 1)
+        samples = groups[0]
 
-    p_value = [t[0] for t in test_res]
-    stat = [t[1] for t in test_res]
-    priA_priB = [t[2] for t in test_res]
-    priA_altB = [t[3] for t in test_res]
-    altA_priB = [t[4] for t in test_res]
-    altA_altB = [t[5] for t in test_res]
-    gene_id = [t[6] for t in test_res]
-    gene_name = [t[7] for t in test_res]
-    ase1_type = [t[8] for t in test_res]
-    ase2_type = [t[9] for t in test_res]
-    ase1_start = [t[10] for t in test_res]
-    ase1_end = [t[11] for t in test_res]
-    ase2_start = [t[12] for t in test_res]
-    ase2_end = [t[13] for t in test_res]
+    for g in self.iter_genes(region=region, progress_bar=progress_bar):
+        next_test_res = g.coordination_test(test=test, samples=samples, min_dist=min_dist, min_total=min_total,
+                                            min_alt_fraction=min_alt_fraction, event_type=event_type)
+        test_res.extend(next_test_res)
 
-    adj_p_value = multi.multipletests(p_value)[1]
+    col_names = ("gene_id", "gene_name", "ase1_type", "ase2_type", "ase1_start", "ase1_end", "ase2_start",
+                 "ase2_end", "p_value", "stat", "priA_priB", "priA_altB", "altA_priB", "altA_altB")
 
-    res = pd.DataFrame({"adj_p_value": adj_p_value, "p_value": p_value, "stat": stat, "gene_id": gene_id, "gene_name": gene_name,
-                        "ASE1_type": ase1_type, "ASE2_type": ase2_type, "ASE1_start": ase1_start, "ASE1_end": ase1_end,
-                        "ASE2_start": ase2_start, "ASE2_end": ase2_end, "priA_priB": priA_priB, "priA_altB": priA_altB,
-                        "altA_priB": altA_priB, "altA_altB": altA_altB})
+    res = pd.DataFrame(test_res, columns=col_names)
+
+    adj_p_value = multi.multipletests(res.p_value)[1]
+
+    res.insert(9, "adj_p_value", adj_p_value)
+
     return res

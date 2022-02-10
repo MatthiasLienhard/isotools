@@ -418,10 +418,9 @@ class Gene(Interval):
         'Returns a shallow copy of self.'
         return self.__copy__()
 
-    def coordination_test(self, test="chi2", samples=None, min_dist=1, min_total=100,
-                               min_alt_fraction=.1, event_type=("ES", "5AS", "3AS", "IR", "ME")):
-        '''
-        Performs pairwise independence test for all pairs of Alternative Splicing Events (ASEs) in a gene.
+    def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1,
+                          event_type=("ES", "5AS", "3AS", "IR", "ME")):
+        '''Performs pairwise independence test for all pairs of Alternative Splicing Events (ASEs) in a gene.
 
         For all pairs of ASEs in a gene creates a contingency table and performs an indeppendence test.
         All ASEs A have two states, pri_A and alt_A, the primary and the alternative state respectivley.
@@ -430,19 +429,20 @@ class Gene(Interval):
         These four values can be put in a contingency table and independence, or coordination,
         between the two events can be tested.
 
+        :param samples: Specify the samples that should be considdered in the test.
+            The samples can be provided either as a single group name, a list of sample names, or a list of sample indices.
         :param test: Test to be performed. One of ("chi2", "fisher")
         :type test: str
         :param min_dist: Minimum distance (in nucleotides) between the two
-        Alternative Splicing Events for the pair to be tested
+            alternative splicing events for the pair to be tested.
         :type min_dist: int
-        :param min_total: The minimum total number of reads for an event to pass the filter
+        :param min_total: The minimum total number of reads for an event to pass the filter.
         :type min_total: int
-        :param min_alt_fraction: The minimum fraction of read supporting the alternative
+        :param min_alt_fraction: The minimum fraction of read supporting the alternative.
         :type min_alt_frction: float
         :param event_type:  A tuple with event types to test. Valid types are
-        ("ES", "3AS", "5AS", "IR", "ME", "TSS", "PAS"). Default is ("ES", "5AS", "3AS", "IR", "ME")
-
-        :return: a list of tuples (p_value, stat, gene_id, gene_name, ASE1_type, ASE2_type,
+        ("ES", "3AS", "5AS", "IR", "ME", "TSS", "PAS"). Default is ("ES", "5AS", "3AS", "IR", "ME").
+        :return: A list of tuples (gene_id, gene_name, ASE1_type, ASE2_type,
         ASE1_start, ASE1_end, ASE2_start, ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB),
         where each entrance in the tuple corresponds to the p_value, the statistic, the gene name,
         the type of the first ASE, the type of the second ASE, the starting coordinate of the first ASE,
@@ -459,7 +459,7 @@ class Gene(Interval):
             except IndexError:
                 # Fall back to looking up the sample indices
                 from isotools._transcriptome_stats import _check_groups
-                _, _, groups = _check_groups(self._transcriptome, [samples],1)
+                _, _, groups = _check_groups(self._transcriptome, [samples], 1)
                 cov = self.coverage[groups[0]].sum(0)
 
         sg = self.segment_graph
@@ -470,12 +470,9 @@ class Gene(Interval):
 
         test_res = []
 
-
         for i, j in itertools.combinations(range(len(events)), 2):
-
             if sg.events_dist(events[i], events[j]) < min_dist:
                 continue
-
             attr = pairwise_event_test(events[i], events[j], cov, test=test)  # append to test result
             attr = (self.id, self.name, events[i][4], events[j][4], sg[events[i][2]].start,
                     sg[events[i][3]].end, sg[events[j][2]].start, sg[events[j][3]].end) + attr

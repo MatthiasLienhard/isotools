@@ -753,29 +753,26 @@ def pairwise_event_test(e1, e2, coverage, test="chi2"):
     :param sg: segment graph
     '''
 
-    con_tab = pd.DataFrame({"A_pri": (0, 0), "A_alt": (0, 0)})
-
-    con_tab.index = ("B_pri", "B_alt")
+    con_tab = np.zeros((2, 2), dtype=int)
 
     for m, n in itertools.product(range(2), range(2)):
-        tr_IDs = list(set(e1[m]) & set(e2[n]))
-        c_mn = sum([coverage[ID] for ID in tr_IDs])+0.01
-        con_tab.iloc[n, m] = c_mn
+        tr_IDs = set(e1[m]) & set(e2[n])
+        c_mn = sum([coverage[trid] for trid in tr_IDs])
+        con_tab[n, m] = c_mn
 
     if test == 'chi2':
         test_fun = chi2_contingency
-
     elif test == 'fisher':
         test_fun = fisher_exact
 
-    test_res = test_fun(con_tab)
+    test_res = test_fun(con_tab+.01)  # add some small value (TODO: is this also for fisher test?)
 
-    priA_priB, altA_altB = con_tab.iloc[0, 0], con_tab.iloc[1, 1]
-    priA_altB, altA_priB = con_tab.iloc[1, 0], con_tab.iloc[0, 1]
+    priA_priB, altA_altB = con_tab[0, 0], con_tab[1, 1]
+    priA_altB, altA_priB = con_tab[1, 0], con_tab[0, 1]
     p_value = test_res[1]
     test_stat = test_res[0]
 
-    return p_value, test_stat, int(priA_priB-0.01), int(priA_altB-0.01), int(altA_priB-0.01), int(altA_altB-0.01)
+    return p_value, test_stat, priA_priB, priA_altB, altA_priB, altA_altB
 
 
 def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1,
@@ -783,6 +780,8 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
     '''
     Performs gene_coordination_test on all genes.
 
+    :param samples: Specify the samples that should be considdered in the test.
+            The samples can be provided either as a single group name, a list of sample names, or a list of sample indices.
     :param test: Test to be performed. One of ("chi2", "fisher")
     :type test: str
     :param min_dist: Minimum distance (in nucleotides) between the two Alternative Splicing Events for the pair to be tested
@@ -791,7 +790,7 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
     :type min_total: int
     :param min_alt_fraction: The minimum fraction of read supporting the alternative
     :type min_alt_frction: float
-    :param event_type:  A tuple with event types to test. Valid types are (‘ES’,’3AS’, ‘5AS’,’IR’ or ‘ME’, ‘TSS’, ‘PAS’).
+    :param event_type:  A tuple with event types to test. Valid types are ("ES","3AS", "5AS","IR" or "ME", "TSS", "PAS").
     Default is ("ES", "5AS", "3AS", "IR", "ME")
 
     :return: a Pandas dataframe, where each column corresponds to the p_values, the statistics

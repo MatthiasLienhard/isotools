@@ -190,25 +190,22 @@ def _filter_event(coverage, event, min_total=100, min_alt_fraction=.1):
     '''
     return True if the event satisfies the filter conditions and False otherwise
 
-    :param coverage: list of counts per transcript
+    :param coverage: 1D array of counts per transcript
     :param event: Event obtained from .find_splice_bubbles()
     :param min_total: The minimum total number of reads for an event to pass the filter
     :type min_total: int
     :param min_alt_fraction: The minimum fraction of read supporting the alternative
-    :type min_alt_frction: float
+    :type min_alt_frction: float'''
 
-    '''
-
-    
     tr_IDs = event[0]+event[1]
-    tot_cov = sum([coverage[ID] for ID in tr_IDs])
+    tot_cov = coverage[tr_IDs].sum()
 
     if tot_cov < min_total:
         return False
 
-    pri_cov = sum([coverage[ID] for ID in event[0]])
-    alt_cov = sum([coverage[ID] for ID in event[1]])
-    frac = min(pri_cov, alt_cov)/max(pri_cov, alt_cov)
+    pri_cov = coverage[event[0]].sum()
+    alt_cov = coverage[event[1]].sum()
+    frac = min(pri_cov, alt_cov)/tot_cov
 
     if frac < min_alt_fraction:
         return False

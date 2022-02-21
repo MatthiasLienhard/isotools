@@ -812,13 +812,13 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
                                             min_alt_fraction=min_alt_fraction, event_type=event_type)
         test_res.extend(next_test_res)
 
-    col_names = ("gene_id", "gene_name", "ase1_type", "ase2_type", "ase1_start", "ase1_end", "ase2_start",
-                 "ase2_end", "p_value", "stat", "priA_priB", "priA_altB", "altA_priB", "altA_altB")
+    col_names = ("gene_id", "gene_name", "strand", "ase1_type", "ase2_type", "ase1_start", "ase1_end",
+                 "ase2_start", "ase2_end", "p_value", "stat", "priA_priB", "priA_altB", "altA_priB", "altA_altB")
 
     res = pd.DataFrame(test_res, columns=col_names)
 
     adj_p_value = multi.multipletests(res.p_value)[1]
 
-    res.insert(9, "adj_p_value", adj_p_value)
+    res.insert(10, "adj_p_value", adj_p_value)
 
     return res

@@ -442,7 +442,7 @@ class Gene(Interval):
         :type min_alt_frction: float
         :param event_type:  A tuple with event types to test. Valid types are
         ("ES", "3AS", "5AS", "IR", "ME", "TSS", "PAS"). Default is ("ES", "5AS", "3AS", "IR", "ME").
-        :return: A list of tuples (gene_id, gene_name, ASE1_type, ASE2_type,
+        :return: A list of tuples (gene_id, gene_name, strand, ASE1_type, ASE2_type,
         ASE1_start, ASE1_end, ASE2_start, ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB),
         where each entrance in the tuple corresponds to the p_value, the statistic, the gene name,
         the type of the first ASE, the type of the second ASE, the starting coordinate of the first ASE,
@@ -473,8 +473,10 @@ class Gene(Interval):
         for i, j in itertools.combinations(range(len(events)), 2):
             if sg.events_dist(events[i], events[j]) < min_dist:
                 continue
+            if (events[i][4], events[j][4]) == ("TSS", "TSS") or (events[i][4], events[j][4]) == ("PAS", "PAS"):
+                continue
             attr = pairwise_event_test(events[i], events[j], cov, test=test)  # append to test result
-            attr = (self.id, self.name, events[i][4], events[j][4], sg[events[i][2]].start,
+            attr = (self.id, self.name, self.strand, events[i][4], events[j][4], sg[events[i][2]].start,
                     sg[events[i][3]].end, sg[events[j][2]].start, sg[events[j][3]].end) + attr
 
             # events[i][4] is the events[i] type

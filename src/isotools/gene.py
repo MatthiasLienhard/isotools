@@ -419,7 +419,7 @@ class Gene(Interval):
         return self.__copy__()
 
     def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1,
-                          event_type=("ES", "5AS", "3AS", "IR", "ME")):
+                          min_cov_pair=100, event_type=("ES", "5AS", "3AS", "IR", "ME")):
         '''Performs pairwise independence test for all pairs of Alternative Splicing Events (ASEs) in a gene.
 
         For all pairs of ASEs in a gene creates a contingency table and performs an indeppendence test.
@@ -439,15 +439,18 @@ class Gene(Interval):
         :param min_total: The minimum total number of reads for an event to pass the filter.
         :type min_total: int
         :param min_alt_fraction: The minimum fraction of read supporting the alternative.
-        :type min_alt_frction: float
+        :type min_alt_fraction: float
+        :param min_cov_pair: the minimum total number of a pair of the joint occurrence of a pair of event for it to be reported in the result
+        :type min_cov_pair: int
         :param event_type:  A tuple with event types to test. Valid types are
         ("ES", "3AS", "5AS", "IR", "ME", "TSS", "PAS"). Default is ("ES", "5AS", "3AS", "IR", "ME").
-        :return: A list of tuples (gene_id, gene_name, ASE1_type, ASE2_type,
+        :return: A list of tuples (gene_id, gene_name, strand, ASE1_type, ASE2_type,
         ASE1_start, ASE1_end, ASE2_start, ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB),
         where each entrance in the tuple corresponds to the p_value, the statistic, the gene name,
         the type of the first ASE, the type of the second ASE, the starting coordinate of the first ASE,
         the ending coordinate of the first ASE, the starting coordinate of the second ASE,
-        the ending coordinate of the second ASE, and the four entries of the contingency table for each test performed.
+        the ending coordinate of the second ASE, the four entries of the contingency table for each test performed (a column for each),
+        and the four lists of the transcript IDs sorted by coverage (a column for each list).
         '''
 
         if samples is None:
@@ -473,8 +476,15 @@ class Gene(Interval):
         for i, j in itertools.combinations(range(len(events)), 2):
             if sg.events_dist(events[i], events[j]) < min_dist:
                 continue
+            if (events[i][4], events[j][4]) == ("TSS", "TSS") or (events[i][4], events[j][4]) == ("PAS", "PAS"):
+                continue
+
             attr = pairwise_event_test(events[i], events[j], cov, test=test)  # append to test result
-            attr = (self.id, self.name, events[i][4], events[j][4], sg[events[i][2]].start,
+
+            if sum(attr[2:6]) < min_cov_pair:  # check that the joint occurrence of the two events passes the threshold
+                continue
+
+            attr = (self.id, self.name, self.strand, events[i][4], events[j][4], sg[events[i][2]].start,
                     sg[events[i][3]].end, sg[events[j][2]].start, sg[events[j][3]].end) + attr
 
             # events[i][4] is the events[i] type

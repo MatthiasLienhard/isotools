@@ -754,10 +754,15 @@ def pairwise_event_test(e1, e2, coverage, test="chi2"):
     '''
 
     con_tab = np.zeros((2, 2), dtype=int)
+    tr_ID_tab = np.zeros((2, 2), dtype=object)
 
     for m, n in itertools.product(range(2), range(2)):
         tr_IDs = set(e1[m]) & set(e2[n])
-        c_mn = sum([coverage[trid] for trid in tr_IDs])
+        cov_tr_IDs = [(coverage[trid], trid) for trid in tr_IDs]  # get coverage and tr_ID
+        cov_tr_IDs.sort()  # sort by coverage
+        tr_ID_tab[n, m] = [trid for _, trid in cov_tr_IDs]
+
+        c_mn = sum([cov for cov, _ in cov_tr_IDs])
         con_tab[n, m] = c_mn
 
     if test == 'chi2':
@@ -767,15 +772,17 @@ def pairwise_event_test(e1, e2, coverage, test="chi2"):
 
     test_res = test_fun(con_tab+.01)  # add some small value (TODO: is this also for fisher test?)
 
+    priA_priB_trID, altA_altB_trID = tr_ID_tab[0, 0], tr_ID_tab[1, 1]
+    priA_altB_trID, altA_priB_trID = tr_ID_tab[1, 0], tr_ID_tab[0, 1]
     priA_priB, altA_altB = con_tab[0, 0], con_tab[1, 1]
     priA_altB, altA_priB = con_tab[1, 0], con_tab[0, 1]
     p_value = test_res[1]
     test_stat = test_res[0]
 
-    return p_value, test_stat, priA_priB, priA_altB, altA_priB, altA_altB
+    return p_value, test_stat, priA_priB, priA_altB, altA_priB, altA_altB, priA_priB_trID, priA_altB_trID, altA_priB_trID, altA_altB_trID
 
 
-def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1,
+def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1, min_cov_pair=100,
                       event_type=("ES", "5AS", "3AS", "IR", "ME"), region=None, progress_bar=True):
     '''
     Performs gene_coordination_test on all genes.
@@ -790,8 +797,11 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
     :type min_total: int
     :param min_alt_fraction: The minimum fraction of read supporting the alternative
     :type min_alt_frction: float
+    :param min_cov_pair: the minimum total number of a pair of the joint occurrence of a pair of event for it to be reported in the result
+    :type min_cov_pair: int
     :param event_type:  A tuple with event types to test. Valid types are ("ES","3AS", "5AS","IR" or "ME", "TSS", "PAS").
     Default is ("ES", "5AS", "3AS", "IR", "ME")
+    :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional.
 
     :return: a Pandas dataframe, where each column corresponds to the p_values, the statistics
     (the chi squared statistic if the chi squared test is used and the odds-ratio if the Fisher
@@ -809,16 +819,17 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
 
     for g in self.iter_genes(region=region, progress_bar=progress_bar):
         next_test_res = g.coordination_test(test=test, samples=samples, min_dist=min_dist, min_total=min_total,
-                                            min_alt_fraction=min_alt_fraction, event_type=event_type)
+                                            min_alt_fraction=min_alt_fraction, min_cov_pair=min_cov_pair, event_type=event_type)
         test_res.extend(next_test_res)
 
-    col_names = ("gene_id", "gene_name", "ase1_type", "ase2_type", "ase1_start", "ase1_end", "ase2_start",
-                 "ase2_end", "p_value", "stat", "priA_priB", "priA_altB", "altA_priB", "altA_altB")
+    col_names = ("gene_id", "gene_name", "strand", "ase1_type", "ase2_type", "ase1_start", "ase1_end",
+                 "ase2_start", "ase2_end", "p_value", "stat", "priA_priB", "priA_altB", "altA_priB", "altA_altB",
+                 "priA_priB_trID", "priA_altB_trID", "altA_priB_trID", "altA_altB_trID")
 
     res = pd.DataFrame(test_res, columns=col_names)
 
     adj_p_value = multi.multipletests(res.p_value)[1]
 
-    res.insert(9, "adj_p_value", adj_p_value)
+    res.insert(10, "adj_p_value", adj_p_value)
 
     return res

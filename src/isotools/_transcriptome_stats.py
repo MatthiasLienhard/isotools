@@ -759,7 +759,7 @@ def pairwise_event_test(e1, e2, coverage, test="chi2"):
     for m, n in itertools.product(range(2), range(2)):
         tr_IDs = set(e1[m]) & set(e2[n])
         cov_tr_IDs = [(coverage[trid], trid) for trid in tr_IDs]  # get coverage and tr_ID
-        cov_tr_IDs.sort()  # sort by coverage
+        cov_tr_IDs.sort(reverse=True)  # sort by coverage
         tr_ID_tab[n, m] = [trid for _, trid in cov_tr_IDs]
 
         c_mn = sum([cov for cov, _ in cov_tr_IDs])

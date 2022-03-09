@@ -904,6 +904,12 @@ class SegmentGraph():
             if node.end == coordinate:
                 return i
 
+    def _get_event_coordinate(self, event):
+        if event[4] in ("TSS", "PAS"):
+            return (self[event[2]].start, self[event[3]].end)
+        else:
+            return (self[event[2]].end, self[event[3]].start)
+
 
 class SegGraphNode(tuple):
     '''A node in a segment graph represents an exonic segment.'''

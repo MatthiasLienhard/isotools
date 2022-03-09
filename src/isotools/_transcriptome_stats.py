@@ -778,8 +778,20 @@ def pairwise_event_test(e1, e2, coverage, test="chi2"):
     priA_altB, altA_priB = con_tab[1, 0], con_tab[0, 1]
     p_value = test_res[1]
     test_stat = test_res[0]
+    log2fc = np.log2((con_tab[0, 0]+con_tab[1, 1])) -np.log2((con_tab[0, 1]+con_tab[1, 0]))
 
-    return p_value, test_stat, priA_priB, priA_altB, altA_priB, altA_altB, priA_priB_trID, priA_altB_trID, altA_priB_trID, altA_altB_trID
+
+    # log2fc is a measure of the effect size. coordination between the events is either positive or negative. When positive, one event tends
+    # to occur when the other does and not to occur when the other doesn't, and when negative, one event tends to occur when the other doesn't
+    # and not to occur when the other does. When coordination is positive, con_tab[0,0]+con_tab[1,1] will be bigger than
+    # con_tab[0,1]+con_tab[1,0] and vice versa when coordination is negative.
+    # The fold change (con_tab[0, 0]+con_tab[1, 1])/(con_tab[0, 1]+con_tab[1, 0]) will tell us how strong positive over negative coordination
+    # is and provide a measure of the effect size of the coordination
+
+    return_tuple = (p_value, test_stat, log2fc, priA_priB, priA_altB, altA_priB, altA_altB,
+                    priA_priB_trID, priA_altB_trID, altA_priB_trID, altA_altB_trID)
+
+    return return_tuple
 
 
 def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1, min_cov_pair=100,
@@ -805,7 +817,7 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
 
     :return: a Pandas dataframe, where each column corresponds to the p_values, the statistics
     (the chi squared statistic if the chi squared test is used and the odds-ratio if the Fisher
-    test is used), the gene Id, the gene name, the type of the first ASE, the type of the second ASE, the
+    test is used), the log2 fold change, the gene Id, the gene name, the type of the first ASE, the type of the second ASE, the
     starting coordinate of the first ASE, the ending coordinate of the first ASE, the starting
     coordinate of the second ASE, the ending coordinate of the second ASE,
     and the four entries of the contingency table.
@@ -823,8 +835,8 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
         test_res.extend(next_test_res)
 
     col_names = ("gene_id", "gene_name", "strand", "ase1_type", "ase2_type", "ase1_start", "ase1_end",
-                 "ase2_start", "ase2_end", "p_value", "stat", "priA_priB", "priA_altB", "altA_priB", "altA_altB",
-                 "priA_priB_trID", "priA_altB_trID", "altA_priB_trID", "altA_altB_trID")
+                 "ase2_start", "ase2_end", "p_value", "stat", "log2fc", "priA_priB", "priA_altB", "altA_priB",
+                 "altA_altB", "priA_priB_trID", "priA_altB_trID", "altA_priB_trID", "altA_altB_trID")
 
     res = pd.DataFrame(test_res, columns=col_names)
 

@@ -481,7 +481,7 @@ class Gene(Interval):
 
             attr = pairwise_event_test(events[i], events[j], cov, test=test)  # append to test result
 
-            if sum(attr[2:6]) < min_cov_pair:  # check that the joint occurrence of the two events passes the threshold
+            if sum(attr[3:7]) < min_cov_pair:  # check that the joint occurrence of the two events passes the threshold
                 continue
 
             coordinate1=sg._get_event_coordinate(events[i])

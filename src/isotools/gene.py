@@ -484,8 +484,8 @@ class Gene(Interval):
             if sum(attr[3:7]) < min_cov_pair:  # check that the joint occurrence of the two events passes the threshold
                 continue
 
-            coordinate1=sg._get_event_coordinate(events[i])
-            coordinate2=sg._get_event_coordinate(events[j])
+            coordinate1 = sg._get_event_coordinate(events[i])
+            coordinate2 = sg._get_event_coordinate(events[j])
 
             attr = (self.id, self.name, self.strand, events[i][4], events[j][4], coordinate1[0],
                     coordinate1[1], coordinate2[0], coordinate2[1]) + attr

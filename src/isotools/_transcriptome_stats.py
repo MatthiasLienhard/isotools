@@ -778,8 +778,7 @@ def pairwise_event_test(e1, e2, coverage, test="chi2"):
     priA_altB, altA_priB = con_tab[1, 0], con_tab[0, 1]
     p_value = test_res[1]
     test_stat = test_res[0]
-    log2fc = np.log2((con_tab[0, 0]+con_tab[1, 1])) -np.log2((con_tab[0, 1]+con_tab[1, 0]))
-
+    log2fc = np.log2((con_tab[0, 0]+con_tab[1, 1])) - np.log2((con_tab[0, 1]+con_tab[1, 0]))
 
     # log2fc is a measure of the effect size. coordination between the events is either positive or negative. When positive, one event tends
     # to occur when the other does and not to occur when the other doesn't, and when negative, one event tends to occur when the other doesn't

@@ -100,6 +100,7 @@ def sashimi_figure(self, samples=None, short_read_samples=None, draw_gene_track=
 
 
 def sashimi_plot_short_reads(self, samples=None, title='short read coverage', ax=None, junctions_of_interest=None, x_range=None,
+                             y_range=None, log_y=True,
                              jparams=None, min_cov_th=.001, high_cov_th=.05, text_width=.02, arc_type='both', text_height=1,
                              exon_color='green'):
     '''Draws short read Sashimi plot of the gene.
@@ -111,6 +112,9 @@ def sashimi_plot_short_reads(self, samples=None, title='short read coverage', ax
     :param ax: Specify the axis.
     :param junctions_of_interest: List of int pairs to define junctions of interest (which are highlighed in the plots)
     :param x_range: Genomic positions to specify the x range of the plot.
+    :param y_range: Range for the coverage axis of the plot. Note to include space for the junction arcs.
+        If not specified, the range will be determined automatically.
+    :param log_y: Log scale for the coverage.
     :param jparams: Define the apperance of junctions, depending on their priority.
         A list with three dicts, defining parameters for low coverage junctions, high coverage junctions, and junctions of interest.
         For default values, see isotools._gene_plots.DEFAULT_JPARAMS
@@ -146,10 +150,12 @@ def sashimi_plot_short_reads(self, samples=None, title='short read coverage', ax
         high_cov_th *= max(cov)
     if min_cov_th < 1:
         min_cov_th *= max(cov)
+    if log_y:
+        cov = np.log10(cov, where=cov > 0, out=np.nan * cov)
     # exons
     if ax is None:
         _, ax = plt.subplots()
-    ax.fill_between(range(start, end), 0, np.log10(cov, where=cov > 0, out=np.nan * cov), facecolor=exon_color)
+    ax.fill_between(range(start, end), 0, cov, facecolor=exon_color)
     # junctions
     textpositions = []
     for (x1, x2), w in junctions.items():
@@ -161,39 +167,43 @@ def sashimi_plot_short_reads(self, samples=None, title='short read coverage', ax
             priority = 0
         else:
             priority = 1
-        y1 = cov[x1 - start - 1] + .5
-        y2 = cov[x2 - start] + .5
+        y1 = cov[x1 - start - 1]
+        y2 = cov[x2 - start]
         center = (x1 + x2) / 2
         width = x2 - x1
         bow_height = text_height
-        while any(_label_overlap((center, log10(max(y1, y2)) + bow_height), tp, text_width, text_height) for tp in textpositions):
-            bow_height += text_height
-        textpositions.append((center, log10(max(y1, y2)) + bow_height))
+        if jparams[priority]['draw_label']:
+            while any(_label_overlap((center, max(y1, y2) + bow_height), tp, text_width, text_height) for tp in textpositions):
+                bow_height += text_height
+            textpositions.append((center, max(y1, y2) + bow_height))
         if y1 < y2:
-            bow_height = (log10(y2 / y1) + bow_height, bow_height)
+            bow_height = (y2 - y1 + bow_height, bow_height)
         elif y1 > y2:
-            bow_height = (bow_height, bow_height + log10(y1 / y2))
+            bow_height = (bow_height, bow_height + y1 - y2)
         else:
             bow_height = (bow_height, bow_height)
-        bow1 = patches.Arc((center, log10(y1)), width=width, height=bow_height[0] * 2, theta1=90, theta2=180,
+        bow1 = patches.Arc((center, y1), width=width, height=bow_height[0] * 2, theta1=90, theta2=180,
                            linewidth=jparams[priority]['lwd'], edgecolor=jparams[priority]['color'], zorder=priority)
-        bow2 = patches.Arc((center, log10(y2)), width=width, height=bow_height[1] * 2, theta1=0, theta2=90,
+        bow2 = patches.Arc((center, y2), width=width, height=bow_height[1] * 2, theta1=0, theta2=90,
                            linewidth=jparams[priority]['lwd'], edgecolor=jparams[priority]['color'], zorder=priority)
         ax.add_patch(bow1)
         ax.add_patch(bow2)
         if jparams[priority]['draw_label']:
-            _ = ax.text(center, log10(max(y1, y2)) + min(bow_height) + text_height / 3, w, horizontalalignment='center', verticalalignment='bottom',
+            _ = ax.text(center, max(y1, y2) + min(bow_height) + text_height / 3, w, horizontalalignment='center', verticalalignment='bottom',
                         bbox=dict(boxstyle='round', facecolor='wheat', edgecolor=None, alpha=0.5)).set_clip_on(True)
         # bbox_list.append(txt.get_tightbbox(renderer = fig.canvas.renderer))
 
     ax.set_xlim(*x_range)
+    if y_range is not None:
+        ax.set_ylim(*y_range)
     if textpositions:
         ax.set_ylim(-text_height, max(tp[1] for tp in textpositions) + 2 * text_height)
     else:
         ax.set_ylim(-text_height, 3)  # todo: adjust y axis and ticklabels to coverage
     ax.set(frame_on=False)
-    ax.set_yticks([0, 1, 2, 3])
-    ax.set_yticklabels([1, 10, 100, 1000])
+    if log_y:
+        ax.set_yticks([0, 1, 2, 3])
+        ax.set_yticklabels([1, 10, 100, 1000])
     # ax.ticklabel_format(axis='x', style='sci',scilimits=(6,6))
     ax.set_title(title)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos=None: f'{x:,.0f}'))
@@ -201,7 +211,8 @@ def sashimi_plot_short_reads(self, samples=None, title='short read coverage', ax
 
 
 def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, junctions_of_interest=None, x_range=None, select_transcripts=None,
-                 jparams=None, exon_color='green', min_cov_th=.001, high_cov_th=.05, text_width=.02,
+                 y_range=None, log_y=True,
+                 jparams=None, exon_color='green', min_cov_th=.001, high_cov_th=.05, text_width=1,
                  arc_type='both', text_height=1):
     '''Draws long read Sashimi plot of the gene.
 
@@ -213,6 +224,10 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
     :param ax: Specify the axis.
     :param junctions_of_interest: List of int pairs to define junctions of interest (which are highlighed in the plots)
     :param x_range: Genomic positions to specify the x range of the plot.
+        If not specified, the range will be determined to include the complete gene.
+    :param y_range: Range for the coverage axis of the plot. Note to include space for the junction arcs.
+        If not specified, the range will be determined automatically.
+    :param log_y: Log scale for the coverage.
     :param select_transcripts: A list of transcript numbers from which the coverage is to be depicted.
         If obmitted, all transcripts are displayed.
     :param jparams: Define the apperance of junctions, depending on their priority.
@@ -221,10 +236,12 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
     :param exon_color: Specify the color of the genomic coverage blocks (e.g. the exons)
     :param high_cov_th: Minimum coverage for a junction to be considdered high coverage.
     :param min_cov_th: Coverage threshold for a junction to be considdered at all.
-    :param text_width: Control the horizontal space that gets reserved for labels on the arcs. This affects the height of the arcs.
+    :param text_width: Scaling factor for the horizontal space that gets reserved for labels on the arcs.
+        This affects the height of the arcs.
     :param arc_type: Label the junction arcs with  the "coverage" (e.g. number of supporting reads),
         "fraction" (e.g. fraction of supporting reads in %), or "both".
-    :param text_height: Control the vertical space that gets reserved for labels on the arcs. This affects the height of the arcs.'''
+    :param text_height: Scaling factor for the vertical space that gets reserved for labels on the arcs.
+        This affects the height of the arcs.'''
 
     sg = self.segment_graph
     if jparams is None:
@@ -233,6 +250,7 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
         samples = self._transcriptome.samples
     if ax is None:
         _, ax = plt.subplots()
+
     sidx = get_index(samples, self._transcriptome.samples)  # pylint: disable=W0212
     if junctions_of_interest is None:
         junctions_of_interest = []
@@ -248,9 +266,12 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
         mask[select_transcripts] = False
         node_matrix[mask, :] = 0
     boxes = [(node[0], node[1], self.coverage[np.ix_(sidx, node_matrix[:, i])].sum()) for i, node in enumerate(sg)]
+    if log_y:
+        boxes = [(s,e,log10(c) if c>1 else c/10) for s,e,c in boxes]
+    max_height=max(1,max(h for s,e,h in boxes if x_range[0]<s<x_range[1] or x_range[0]<e<x_range[1]))
+    text_height=(max_height/10)*text_height
+    text_width = (x_range[1] - x_range[0])* .02 *  text_width
 
-    if text_width < 1:
-        text_width = (sg[-1][1] - sg[0][0]) * text_width
     total_weight = self.coverage[sidx, :].sum()
     if high_cov_th < 1:
         high_cov_th = high_cov_th * total_weight
@@ -272,11 +293,13 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
         _, ax = plt.subplots(1)
 
     for st, end, h in boxes:
-        if h > 0:
-            rect = patches.Rectangle((st, 0), (end - st), log10(h), linewidth=1, edgecolor=exon_color, facecolor=exon_color, zorder=5)
+        if h > 0 &  x_range[0]<st<x_range[1] or x_range[0]<end<x_range[1]:
+            rect = patches.Rectangle((st, 0), (end - st), h, linewidth=1, edgecolor=exon_color, facecolor=exon_color, zorder=5)
             ax.add_patch(rect)
     textpositions = []
     for x1, y1, x2, y2, w in arcs:
+        if  not (x_range[0]<x1<x_range[1] or x_range[0]<x2<x_range[1]):
+            continue
         if junctions_of_interest is not None and (x1, x2) in junctions_of_interest:
             priority = 2
         elif w < min_cov_th:
@@ -285,43 +308,57 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
             priority = 0
         else:
             priority = 1
-        center = (x1 + x2) / 2
+        text_x = (x1 + x2) / 2
+        textalign='center'
+        if text_x>x_range[1]:
+            text_x=x_range[1]
+            textalign='right'
+        elif text_x<x_range[0]:
+            text_x=x_range[0]
+            textalign='left'
         width = x2 - x1
         bow_height = text_height
-        while any(_label_overlap((center, log10(max(y1, y2)) + bow_height), tp, text_width, text_height) for tp in textpositions):
-            bow_height += text_height
-        textpositions.append((center, log10(max(y1, y2)) + bow_height))
+        
+        if jparams[priority]['draw_label']:
+            while any(_label_overlap((text_x, max(y1, y2) + bow_height), tp, text_width, text_height) for tp in textpositions):
+                bow_height += text_height
+            textpositions.append((text_x, max(y1, y2) + bow_height))
         if y1 < y2:
-            bow_height = (log10(y2 / y1) + bow_height, bow_height)
+            bow_height = (y2 - y1 + bow_height, bow_height)
         elif y1 > y2:
-            bow_height = (bow_height, bow_height + log10(y1 / y2))
+            bow_height = (bow_height, bow_height + y1 - y2)
         else:
             bow_height = (bow_height, bow_height)
-        bow1 = patches.Arc((center, log10(y1)), width=width, height=bow_height[0] * 2, theta1=90, theta2=180,
+        bow1 = patches.Arc(((x1 + x2) / 2, y1), width=width, height=bow_height[0] * 2, theta1=90, theta2=180,
                            linewidth=jparams[priority]['lwd'], edgecolor=jparams[priority]['color'], zorder=priority)
-        bow2 = patches.Arc((center, log10(y2)), width=width, height=bow_height[1] * 2, theta1=0, theta2=90,
+        bow2 = patches.Arc(((x1 + x2) / 2, y2), width=width, height=bow_height[1] * 2, theta1=0, theta2=90,
                            linewidth=jparams[priority]['lwd'], edgecolor=jparams[priority]['color'], zorder=priority)
         ax.add_patch(bow1)
         ax.add_patch(bow2)
-        if arc_type == 'coverage':
-            lab = str(w)
-        else:  # fraction
-            lab = f'{w/total_weight:.1%}'
-            if arc_type == 'both':
-                lab = str(w) + ' / ' + lab
+
         if jparams[priority]['draw_label']:
-            _ = ax.text(center, log10(max(y1, y2)) + min(bow_height) + text_height / 3, lab,
-                        horizontalalignment='center', verticalalignment='bottom', zorder=10 + priority,
+            if arc_type == 'coverage':
+                lab = str(w)
+            else:  # fraction
+                lab = f'{w/total_weight:.1%}'
+                if arc_type == 'both':
+                    lab = str(w) + ' / ' + lab
+            _ = ax.text(text_x, max(y1, y2) + min(bow_height) + text_height / 3, lab,
+                        horizontalalignment=textalign, verticalalignment='bottom', zorder=10 + priority,
                         bbox=dict(boxstyle='round', facecolor='wheat', edgecolor=None, alpha=0.5)).set_clip_on(True)
         # bbox_list.append(txt.get_tightbbox(renderer = fig.canvas.renderer))
-    if textpositions:
+    if y_range:
+        ax.set_ylim(*y_range)  
+    elif textpositions:
         ax.set_ylim(-text_height, max(tp[1] for tp in textpositions) + 2 * text_height)
     else:
-        ax.set_ylim(-text_height, 3)  # todo: adjust y axis and ticklabels to coverage
+        ax.set_ylim(-text_height, max_height+text_height)  
+
     ax.set_xlim(*x_range)
     ax.set(frame_on=False)
-    ax.set_yticks([0, 1, 2, 3])
-    ax.set_yticklabels([1, 10, 100, 1000])
+    if log_y:
+        ax.set_yticks([0, 1, 2, 3])
+        ax.set_yticklabels([1, 10, 100, 1000])
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos=None: f'{x:,.0f}'))
     # ax.ticklabel_format(axis='x', style='sci',scilimits=(6,6))
     # ax.set_xscale(1e-6, 'linear')

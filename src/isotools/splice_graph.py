@@ -888,6 +888,28 @@ class SegmentGraph():
 
         return _interval_dist(e1_coor, e2_coor)
 
+    def _get_node_starting_at(self, coordinate):
+        '''
+        return the index of the node in the splice graph starting at the given coordinate.
+        '''
+        for i, node in enumerate(self):
+            if node.start == coordinate:
+                return i
+
+    def _get_node_ending_at(self, coordinate):
+        '''
+        return the index of the node in the splice graph ending at the given coordinate.
+        '''
+        for i, node in enumerate(self):
+            if node.end == coordinate:
+                return i
+
+    def _get_event_coordinate(self, event):
+        if event[4] in ("TSS", "PAS"):
+            return (self[event[2]].start, self[event[3]].end)
+        else:
+            return (self[event[2]].end, self[event[3]].start)
+
 
 class SegGraphNode(tuple):
     '''A node in a segment graph represents an exonic segment.'''

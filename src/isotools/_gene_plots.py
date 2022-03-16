@@ -267,10 +267,10 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
         node_matrix[mask, :] = 0
     boxes = [(node[0], node[1], self.coverage[np.ix_(sidx, node_matrix[:, i])].sum()) for i, node in enumerate(sg)]
     if log_y:
-        boxes = [(s,e,log10(c) if c>1 else c/10) for s,e,c in boxes]
-    max_height=max(1,max(h for s,e,h in boxes if x_range[0]<s<x_range[1] or x_range[0]<e<x_range[1]))
-    text_height=(max_height/10)*text_height
-    text_width = (x_range[1] - x_range[0])* .02 *  text_width
+        boxes = [(s, e, log10(c) if c > 1 else c/10) for s, e, c in boxes]
+    max_height = max(1, max(h for s, e, h in boxes if x_range[0] < s < x_range[1] or x_range[0] < e < x_range[1]))
+    text_height = (max_height/10)*text_height
+    text_width = (x_range[1] - x_range[0]) * .02 * text_width
 
     total_weight = self.coverage[sidx, :].sum()
     if high_cov_th < 1:
@@ -293,12 +293,12 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
         _, ax = plt.subplots(1)
 
     for st, end, h in boxes:
-        if h > 0 &  x_range[0]<st<x_range[1] or x_range[0]<end<x_range[1]:
+        if h > 0 & x_range[0] < st < x_range[1] or x_range[0] < end < x_range[1]:
             rect = patches.Rectangle((st, 0), (end - st), h, linewidth=1, edgecolor=exon_color, facecolor=exon_color, zorder=5)
             ax.add_patch(rect)
     textpositions = []
     for x1, y1, x2, y2, w in arcs:
-        if  not (x_range[0]<x1<x_range[1] or x_range[0]<x2<x_range[1]):
+        if not (x_range[0] < x1 < x_range[1] or x_range[0] < x2 < x_range[1]):
             continue
         if junctions_of_interest is not None and (x1, x2) in junctions_of_interest:
             priority = 2
@@ -309,16 +309,16 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
         else:
             priority = 1
         text_x = (x1 + x2) / 2
-        textalign='center'
-        if text_x>x_range[1]:
-            text_x=x_range[1]
-            textalign='right'
-        elif text_x<x_range[0]:
-            text_x=x_range[0]
-            textalign='left'
+        textalign = 'center'
+        if text_x > x_range[1]:
+            text_x = x_range[1]
+            textalign = 'right'
+        elif text_x < x_range[0]:
+            text_x = x_range[0]
+            textalign = 'left'
         width = x2 - x1
         bow_height = text_height
-        
+
         if jparams[priority]['draw_label']:
             while any(_label_overlap((text_x, max(y1, y2) + bow_height), tp, text_width, text_height) for tp in textpositions):
                 bow_height += text_height
@@ -348,11 +348,11 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
                         bbox=dict(boxstyle='round', facecolor='wheat', edgecolor=None, alpha=0.5)).set_clip_on(True)
         # bbox_list.append(txt.get_tightbbox(renderer = fig.canvas.renderer))
     if y_range:
-        ax.set_ylim(*y_range)  
+        ax.set_ylim(*y_range)
     elif textpositions:
         ax.set_ylim(-text_height, max(tp[1] for tp in textpositions) + 2 * text_height)
     else:
-        ax.set_ylim(-text_height, max_height+text_height)  
+        ax.set_ylim(-text_height, max_height+text_height)
 
     ax.set_xlim(*x_range)
     ax.set(frame_on=False)

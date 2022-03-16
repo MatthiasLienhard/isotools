@@ -1157,7 +1157,8 @@ def write_gtf(self, fn, source='isotools', gzip=False, **filter_args):
             _ = f.write('\n'.join(('\t'.join(str(field) for field in line) for line in lines)) + '\n')
 
 
-def export_alternative_splicing(self, out_dir, out_format='mats', reference=False, min_total=100, min_alt_fraction=.1, samples=None, region=None, query=None, progress_bar=True):
+def export_alternative_splicing(self, out_dir, out_format='mats', reference=False, min_total=100,
+                                min_alt_fraction=.1, samples=None, region=None, query=None, progress_bar=True):
     '''Exports alternative splicing events defined by the transcriptome.
 
     This is intended to integrate splicing event analysis from short read data.

@@ -1157,7 +1157,8 @@ def write_gtf(self, fn, source='isotools', gzip=False, **filter_args):
             _ = f.write('\n'.join(('\t'.join(str(field) for field in line) for line in lines)) + '\n')
 
 
-def export_alternative_splicing(self, out_dir, out_format='mats', reference=False, min_total=100, min_alt_fraction=.1, samples=None, region=None, query=None):
+def export_alternative_splicing(self, out_dir, out_format='mats', reference=False, min_total=100,
+                                min_alt_fraction=.1, samples=None, region=None, query=None, progress_bar=True):
     '''Exports alternative splicing events defined by the transcriptome.
 
     This is intended to integrate splicing event analysis from short read data.
@@ -1172,14 +1173,12 @@ def export_alternative_splicing(self, out_dir, out_format='mats', reference=Fals
     :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string.
         If omitted specify the complete genome.
     :param query: Specify gene filter query.
-
+    :param progress_bar: Show the progress.
     :param reference: If set to True, the LRTS data is ignored and the events are called from the reference.
         In this case the following parameters are ignored
     :param samples: Specify the samples to consider
     :param min_total: Minimum total coverage over all selected samples.
-    :param min_alt_fraction: Minimum fraction of reads supporting the alternative.
-
-    '''
+    :param min_alt_fraction: Minimum fraction of reads supporting the alternative.'''
     if out_format == 'miso':
         fn = 'isotools_miso_{}.gff'
         alt_splice_export = _miso_alt_splice_export
@@ -1211,7 +1210,7 @@ def export_alternative_splicing(self, out_dir, out_format='mats', reference=Fals
                           'A5SS': ['longExonStart_0base', 'longExonEnd', 'shortES', 'shortEE', 'flankingES', 'flankingEE']}
             for st in fh:
                 fh[st].write('\t'.join(base_header + add_header[st]) + '\n')
-        for g in self.iter_genes(region, query):
+        for g in self.iter_genes(region, query, progress_bar=progress_bar):
             if reference and not g.is_annotated:
                 continue
             elif not reference and g.coverage[sidx, :].sum() < min_total:

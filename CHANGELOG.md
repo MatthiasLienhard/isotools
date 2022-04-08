@@ -10,6 +10,7 @@
 * fixed plot_diff_result (Key error due to incorrect parsing of group names)
 * New function estimate_tpm_threshold, to estimate the minimal abundance level of observable transcripts, given a sequencing depth. 
 * New function coordination_test, to test coordination of splicing events within a gene. 
+* Optional log or linear scale for the coverage axis in sashimi plots.
 
 ## [0.2.9]
 * added DIE test

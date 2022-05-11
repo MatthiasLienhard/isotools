@@ -82,6 +82,14 @@ def remove_samples(self, sample_names):
         g.data['segment_graph'] = None  # gets recomputed on next request
         g.data['coverage'] = None
 
+def add_sample_from_csv(self, coverage_csv_file,transcripts_gtf_file=None  ):
+    if transcripts_gtf_file is not None:
+        file_format=
+        if file_format == 'gtf':
+            exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gtf_file(fn, transcriptome, chromosomes, **kwargs)
+        else:  # gff/gff3
+            exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gff_file(fn, transcriptome, chromosomes, **kwargs)
+
 
 def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_junction=5, add_chromosomes=True, min_mapqual=0,
                         min_align_fraction=.75, chimeric_mincov=2, min_exonic_ref_coverage=.25, use_satag=False, save_readnames=False, progress_bar=True,

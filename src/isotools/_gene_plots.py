@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import numpy as np
 from math import log10
+from ._utils import has_overlap
 import logging
 logger = logging.getLogger('isotools')
 
@@ -53,7 +54,7 @@ def get_index(samples, names):
 # sashimi plots
 
 
-def sashimi_figure(self, samples=None, short_read_samples=None, draw_gene_track=True,
+def sashimi_figure(self, samples=None, short_read_samples=None, draw_gene_track=True, draw_other_genes=True,
                    long_read_params=None, short_read_params=None, junctions_of_interest=None, x_range=None):
     '''Arranges multiple Sashimi plots of the gene.
 
@@ -63,6 +64,7 @@ def sashimi_figure(self, samples=None, short_read_samples=None, draw_gene_track=
     :param samples: Definition of samples (as a list) or groups of samples (as a dict) for long read plots.
     :param short_read_samples: Definition of samples (as a list) or groups of samples (as a dict) for short read plots.
     :param draw_gene_track: Specify whether to plot the reference gene track.
+    :param draw_other_genes: Specify, whether to draw other genes in the gene track.
     :param long_read_params: Dict with parameters for the long read plots, get passed to self.sashimi_plot.
         See isotools._gene_plots.DEFAULT_PARAMS and isotools._gene_plots.DEFAULT_JPARAMS
     :param short_read_params: Dict with parameters for the short read plots, get passed to self.sashimi_plot_short_reads.
@@ -88,7 +90,7 @@ def sashimi_figure(self, samples=None, short_read_samples=None, draw_gene_track=
     axes = np.atleast_1d(axes)  # in case there was only one subplot
 
     if draw_gene_track:
-        self.gene_track(ax=axes[0], x_range=x_range)
+        self.gene_track(ax=axes[0], x_range=x_range, draw_other_genes=draw_other_genes)
 
     for i, (sname, sidx) in enumerate(samples.items()):
         self.sashimi_plot(sidx, sname, axes[i + draw_gene_track], junctions_of_interest, x_range=x_range, **long_read_params)
@@ -268,7 +270,7 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
     boxes = [(node[0], node[1], self.coverage[np.ix_(sidx, node_matrix[:, i])].sum()) for i, node in enumerate(sg)]
     if log_y:
         boxes = [(s, e, log10(c) if c > 1 else c/10) for s, e, c in boxes]
-    max_height = max(1, max(h for s, e, h in boxes if x_range[0] < s < x_range[1] or x_range[0] < e < x_range[1]))
+    max_height = max(1, max(h for s, e, h in boxes if has_overlap(x_range, (s, e))))
     text_height = (max_height/10)*text_height
     text_width = (x_range[1] - x_range[0]) * .02 * text_width
 
@@ -282,23 +284,26 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
     for i, (_, ee, _, suc) in enumerate(sg):
         weights = {}
         for tr, next_i in suc.items():
+            if sg[next_i][0] == ee or not has_overlap(x_range, (ee, sg[next_i][0])):
+                continue
             if select_transcripts is not None and tr not in select_transcripts:
                 continue
-            weights.setdefault(next_i, 0)
-            weights[next_i] += self.coverage[np.ix_(sidx, [tr])].sum()
-        arcs_new = [(ee, boxes[i][2], sg[next_i][0], boxes[next_i][2], w) for next_i, w in weights.items() if sg[next_i][0] > ee and w > 0]
+            tr_j_cov = self.coverage[np.ix_(sidx, [tr])].sum()
+            if tr_j_cov:
+                weights[next_i] = weights.get(next_i, 0)+tr_j_cov
+        arcs_new = [(ee, boxes[i][2], sg[next_i][0], boxes[next_i][2], w) for next_i, w in weights.items()]
         if arcs_new:
             arcs.extend(arcs_new)
     if ax is None:
         _, ax = plt.subplots(1)
 
     for st, end, h in boxes:
-        if h > 0 & x_range[0] < st < x_range[1] or x_range[0] < end < x_range[1]:
+        if h > 0 & has_overlap(x_range, (st, end)):
             rect = patches.Rectangle((st, 0), (end - st), h, linewidth=1, edgecolor=exon_color, facecolor=exon_color, zorder=5)
             ax.add_patch(rect)
     textpositions = []
     for x1, y1, x2, y2, w in arcs:
-        if not (x_range[0] < x1 < x_range[1] or x_range[0] < x2 < x_range[1]):
+        if not has_overlap(x_range, (x1, x2)):
             continue
         if junctions_of_interest is not None and (x1, x2) in junctions_of_interest:
             priority = 2

@@ -9,7 +9,7 @@ import itertools
 from scipy.stats import chi2_contingency, fisher_exact
 
 # from .decorators import deprecated, debug, experimental
-from ._utils import _filter_function
+from ._utils import _filter_function, _corrected_log2OR
 
 logger = logging.getLogger('isotools')
 
@@ -778,7 +778,7 @@ def pairwise_event_test(e1, e2, coverage, test="chi2"):
     priA_altB, altA_priB = con_tab[1, 0], con_tab[0, 1]
     p_value = test_res[1]
     test_stat = test_res[0]
-    log2OR = np.log2((con_tab[0, 0]*con_tab[1, 1])) - np.log2((con_tab[0, 1]*con_tab[1, 0]))
+    log2OR = _corrected_log2OR(con_tab)
 
     # logOR is a measure of the effect size. coordination between the events is either positive or negative.
 
@@ -788,7 +788,7 @@ def pairwise_event_test(e1, e2, coverage, test="chi2"):
     return return_tuple
 
 
-def precompute_events_dict(self, event_type=("ES", "5AS", "3AS", "IR", "ME"), region=None, progress_bar=True):
+def precompute_events_dict(self, event_type=("ES", "5AS", "3AS", "IR", "ME"), min_cov=100, region=None, progress_bar=True):
     '''
     Precomputes the evvents_dict, i.e. a dictionary of splice bubbles. Each key is a gene and each value is the splice bubbles
     object corresponding to that gene.
@@ -801,13 +801,14 @@ def precompute_events_dict(self, event_type=("ES", "5AS", "3AS", "IR", "ME"), re
     for g in self.iter_genes(region=region, progress_bar=progress_bar):
         sg = g.segment_graph
         events = sg.find_splice_bubbles(types=event_type)
-        events_dict[g.id] = tuple(events)
+        events_dict[g.id] = [e for e in events if g.coverage.sum(axis=0)[e[0]+e[1]].sum() >= min_cov]
 
     return events_dict
 
 
 def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1, min_cov_pair=100,
-                      events_dict={}, event_type=("ES", "5AS", "3AS", "IR", "ME"), region=None, progress_bar=True):
+                      events_dict={}, event_type=("ES", "5AS", "3AS", "IR", "ME"), query=None, region=None, method="fdr_bh",
+                      progress_bar=True):
     '''
     Performs gene_coordination_test on all genes.
 
@@ -827,7 +828,9 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
      gene.
     :param event_type:  A tuple with event types to test. Valid types are ("ES","3AS", "5AS","IR" or "ME", "TSS", "PAS").
     Default is ("ES", "5AS", "3AS", "IR", "ME")
+    :param query: If provided, query string is evaluated on all genes for filtering
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional.
+    :param method: The multiple tet adjustment method. Any value allowed by statsmodels.stats.multitest.multipletests (std: Benjamini-Hochberg)
 
     :return: a Pandas dataframe, where each column corresponds to the p_values, the statistics
     (the chi squared statistic if the chi squared test is used and the odds-ratio if the Fisher
@@ -843,16 +846,16 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
         _, _, groups = _check_groups(self, [samples], 1)
         samples = groups[0]
 
-    for g in self.iter_genes(region=region, progress_bar=progress_bar):
-        
+    for g in self.iter_genes(region=region, progress_bar=progress_bar, query=query):
+
         try:
             next_test_res = g.coordination_test(test=test, samples=samples, min_dist=min_dist, min_total=min_total,
                                                 min_alt_fraction=min_alt_fraction, min_cov_pair=min_cov_pair,
                                                 events=events_dict.get(g.id), event_type=event_type)
             test_res.extend(next_test_res)
-        
+
         except:
-            logger.error(f"Error encounter on {g.id}   :  {g.name}.")
+            logger.error(f"\nError encounter on {print(g)} {g.id}   :  {g.name}.")
             raise
 
     col_names = ("gene_id", "gene_name", "strand", "ase1_type", "ase2_type", "ase1_start", "ase1_end",
@@ -861,7 +864,7 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
 
     res = pd.DataFrame(test_res, columns=col_names)
 
-    adj_p_value = multi.multipletests(res.p_value)[1]
+    adj_p_value = multi.multipletests(res.p_value, method=method)[1]
 
     res.insert(10, "adj_p_value", adj_p_value)
 

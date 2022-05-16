@@ -211,3 +211,15 @@ def _filter_event(coverage, event, min_total=100, min_alt_fraction=.1):
         return False
 
     return True
+
+
+def _corrected_log2OR(con_tab):
+    con_tab_copy = np.zeros((2, 2), dtype=float)
+
+    for m, n in itertools.product(range(2), range(2)):
+        if con_tab[n, m] == 0:
+            con_tab_copy[n, m] = 10**-9
+        else:
+            con_tab_copy[n, m] = con_tab[n, m]
+    log2OR = np.log2((con_tab_copy[0, 0]*con_tab_copy[1, 1])) - np.log2((con_tab_copy[0, 1]*con_tab_copy[1, 0]))
+    return log2OR

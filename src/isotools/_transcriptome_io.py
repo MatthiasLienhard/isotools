@@ -8,7 +8,8 @@ from pysam import TabixFile, AlignmentFile, FastaFile
 from tqdm import tqdm
 from contextlib import ExitStack
 from .short_read import Coverage
-from ._utils import junctions_from_cigar, splice_identical, is_same_gene, has_overlap, get_overlap, pairwise, cigar_string2tuples, rc, get_intersects
+from ._utils import junctions_from_cigar, splice_identical, is_same_gene, has_overlap, get_overlap, pairwise, \
+        cigar_string2tuples, rc, get_intersects, _find_splice_sites, _get_overlap, _get_exonic_region
 from .gene import Gene
 from .decorators import experimental
 import logging
@@ -82,13 +83,70 @@ def remove_samples(self, sample_names):
         g.data['segment_graph'] = None  # gets recomputed on next request
         g.data['coverage'] = None
 
-def add_sample_from_csv(self, coverage_csv_file,transcripts_gtf_file=None  ):
-    if transcripts_gtf_file is not None:
-        file_format=
-        if file_format == 'gtf':
-            exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gtf_file(fn, transcriptome, chromosomes, **kwargs)
-        else:  # gff/gff3
-            exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gff_file(fn, transcriptome, chromosomes, **kwargs)
+
+def add_sample_from_csv(self, coverage_csv_file, transcripts_file, samples=None, add_chromosomes=True, fuzzy_junction=5, min_exonic_ref_coverage=.25):
+    '''Imports expressed transcripts from coverage table and gtf/gff file, and adds it to the 'Transcriptome' object.
+
+    :param coverage_csv_file: The name of the csv file with coverage information for all samples to be added.
+        The file contains 3 columns "chr", "gene_id", and either "transcript_id" or "transcript_nr",
+        and one column "<sample>_coverage" for each sample with the number of reads supporting the transcript.
+    :param transcripts_file: Transcripts to be added to the 'Transcriptome' object, in gtf or gff/gff3 format.
+        Ids should correspond to ids provided in the coverage_csv_file.'''
+
+    cov_tab = pd.read_csv(coverage_csv_file)
+    if samples is None:
+        samples = [c.replace('_coverage', '') for c in cov_tab.columns if '_coverage' in c]
+    required_cols = ["chr", "gene_id"]+[f'{s}_coverage' for s in samples]
+    missing_cols = [c for c in required_cols if c not in cov_tab.columns]
+    if 'transcript_id' not in cov_tab.columns:
+        cov_tab['transcript_id'] = cov_tab.gene_id+'_'+cov_tab.transcript_nr.astype(str)
+    assert not missing_cols, 'missing columns in coverage table: %s' % missing_cols
+    # cov_tab.set_index('transcript_id')
+    # assert cov_tab.index.is_unique, 'ambigous transcript ids in %s' % coverage_csv_file
+
+    logger.info('adding samples %s from csv', ' and '.join(samples))
+    if add_chromosomes:
+        chromosomes = None
+    else:
+        chromosomes = self.chromosomes
+    file_format = path.splitext(transcripts_file)[1].lstrip('.')
+    if file_format == 'gz':
+        file_format = path.splitext(transcripts_file[:-3])[1].lstrip('.')
+    if file_format == 'gtf':
+        exons, transcripts, gene_infos, cds_start, cds_stop, skipped = _read_gtf_file(transcripts_file, chromosomes=chromosomes)
+    elif file_format in ('gff', 'gff3'):  # gff/gff3
+        exons, transcripts, gene_infos, cds_start, cds_stop, skipped = _read_gff_file(transcripts_file, chromosomes=chromosomes)
+    else:
+        logger.warning('unknown file format %s of the transcriptome file', file_format)
+
+    novel = {}
+    # for chr in gene_infos:
+        # for gid, (g,start, end) in gene_infos[chr].items():
+            # only transcripts with coverage
+        #    tr_dict={trid:tr for trid, tr in transcripts[gid].items() if trid in cov_tab}
+            # find best matching overlapping ref gene
+            # if found, add to it
+            # else: Novel gene
+    for idx, row in cov_tab.iterrows():
+        # this approach is not ideal as it ignores gene structure, and reassigns transcripts
+        tr = transcripts[row.gene_id][row.transcript_id]
+        tr['exons'] = exons[row.transcript_id]
+        tr['coverage'] = {sa: row[f'{sa}_coverage'] for sa in samples if row[f'{sa}_coverage'] > 0}
+        tr['strand'] = gene_infos[row.chr][row.gene_id][0]['strand']  # gene_infos is a 3 tuple (info, start, end)
+        tr['TSS'] = {sa: {tr['exons'][0][0]: row[f'{sa}_coverage']} for sa in samples if row[f'{sa}_coverage'] > 0}
+        tr['PAS'] = {sa: {tr['exons'][-1][1]: row[f'{sa}_coverage']} for sa in samples if row[f'{sa}_coverage'] > 0}
+        if tr['strand'] == '-':
+            tr['TSS'], tr['PAS'] = tr['PAS'], tr['TSS']
+
+        gene = _add_sample_transcript(self, tr, row.chr,'gtf', fuzzy_junction, min_exonic_ref_coverage)
+        if gene is None:
+            novel.setdefault(row.chr, []).append(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr))
+
+    for chrom in novel:
+        _add_novel_genes(self, IntervalTree(novel[chrom]), chrom)
+    # todo: extend sample_table
+
+    self.make_index()
 
 
 def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_junction=5, add_chromosomes=True, min_mapqual=0,
@@ -193,16 +251,16 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
 
                     if 'SA' in tags or read.flag & 0x800:  # part of a chimeric alignment
                         if chimeric_mincov > 0:  # otherwise ignore chimeric read
-                            chimeric.setdefault(s_name, dict()).setdefault(read.query_name, [cov, []])
-                            assert chimeric[s_name][read.query_name][0] == cov, \
+                            chimeric.setdefault(read.query_name, [{s_name: cov}, []])
+                            assert chimeric[read.query_name][0][s_name] == cov, \
                                 'error in bam: parts of chimeric alignment for read %s has different coverage information %s != %s' % (
                                     read.query_name, chimeric[read.query_name][0], cov)
-                            chimeric[s_name][read.query_name][1].append([chrom, strand, exons, aligned_part(read.cigartuples, read.is_reverse), None])
+                            chimeric[read.query_name][1].append([chrom, strand, exons, aligned_part(read.cigartuples, read.is_reverse), None])
                             if use_satag and 'SA' in tags:
                                 for snd_align in (sa.split(',') for sa in tags['SA'].split(';') if sa):
                                     snd_cigartuples = cigar_string2tuples(snd_align[3])
                                     snd_exons = junctions_from_cigar(snd_cigartuples, int(snd_align[1]))
-                                    chimeric[s_name][read.query_name][1].append(
+                                    chimeric[read.query_name][1].append(
                                         [snd_align[0], snd_align[2], snd_exons, aligned_part(snd_cigartuples, snd_align[2] == '-'), None])
                                     # logging.debug(chimeric[read.query_name])
                         continue
@@ -256,14 +314,14 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                     for r, cov in tr_ranges.items():
                         starts[r[0]] = starts.get(r[0], 0) + cov
                         ends[r[1]] = ends.get(r[1], 0) + cov
-                    tr['TSS'] = starts if tr['strand'] == '+' else ends
-                    tr['PAS'] = starts if tr['strand'] == '-' else ends
                     # get the median TSS/PAS
                     tr['exons'][0][0] = get_quantile(starts.items(), 0.5)
                     tr['exons'][-1][1] = get_quantile(ends.items(), 0.5)
                     cov = sum(tr_ranges.values())
-                    tr['coverage'] = cov
                     s_name = tr.get('bc_group', sample_name)
+                    tr['coverage'] = {s_name: cov}
+                    tr['TSS'] = {s_name: starts if tr['strand'] == '+' else ends}
+                    tr['PAS'] = {s_name: starts if tr['strand'] == '-' else ends}
 
                     gene = _add_sample_transcript(self, tr, chrom, s_name, fuzzy_junction, min_exonic_ref_coverage)
                     if gene is None:
@@ -272,7 +330,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                         _ = tr.pop('bc_group', None)
                     n_reads -= cov
                     pbar.update(cov / 2)
-                _add_novel_genes(self, novel, chrom, sample_name)
+                _add_novel_genes(self, novel, chrom)
 
                 pbar.update(n_reads / 2)  # some reads are not processed here, add them to the progress: chimeric, unmapped, secondary alignment
                 # logger.debug(f'imported {total_nc_reads_chr[chrom]} nonchimeric reads for {chrom}')
@@ -290,19 +348,19 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         logger.info('ignored %s reads with mapping quality < %s', n_lowqual, min_mapqual)
     # merge chimeric reads and assign gene names
     n_chimeric = dict()
-    n_nonchimeric = 0
     non_chimeric = dict()
-    for sa, chim in chimeric.items():
-        chim, non_chim = _check_chimeric(chim)
-        if non_chim:
-            non_chimeric[sa] = non_chim
-        n_chimeric[sa] = _add_chimeric(self, chim, chimeric_mincov, sa, min_exonic_ref_coverage)
-        n_nonchimeric += sum(nc[0] for nc in non_chim.values())  # this adds long introns
-        sample_nc_reads[sa] += sum(nc[0] for nc in non_chim.values())
+    chim, non_chimeric = _check_chimeric(chimeric)
+    sample_nc_reads[sa]
+
+    n_chimeric = _add_chimeric(self, chim, chimeric_mincov, min_exonic_ref_coverage)
+    for nc_cov_dict, _ in non_chimeric.values():
+        for sa, nc_cov in nc_cov_dict.items():
+            sample_nc_reads.setdefault(sa, 0)
+            sample_nc_reads[sa] += nc_cov[sa]
     chim_ignored = sum(len(chim) for chim in chimeric.values()) - sum(n_chimeric.values())
     if chim_ignored > 0:
         logger.info('ignoring %s chimeric alignments with less than %s reads', chim_ignored, chimeric_mincov)
-    chained_msg = '' if not n_nonchimeric else f' (including  {n_nonchimeric} chained chimeric alignments)'
+    chained_msg = '' if not sum(sample_nc_reads.values()) else f' (including  {sum(sample_nc_reads.values())} chained chimeric alignments)'
     chimeric_msg = '' if sum(n_chimeric.values()) == 0 else f' and {sum(n_chimeric.values())} chimeric reads with coverage of at least {chimeric_mincov}'
     logger.info('imported %s nonchimeric reads%s%s.', sum(sample_nc_reads.values()), chained_msg, chimeric_msg)
 
@@ -311,18 +369,18 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         for readname, (cov, (chrom, strand, exons, _, _), introns) in non_chim.items():
             try:
                 tss, pas = (exons[0][0], exons[-1][1]) if strand == '+' else (exons[-1][1], exons[0][0])
-                tr = {'exons': exons, 'coverage': cov, 'TSS': {tss: cov}, 'PAS': {pas: cov},
+                tr = {'exons': exons, 'coverage': {s_name: cov}, 'TSS': {s_name: {tss: cov}}, 'PAS': {s_name: {pas: cov}},
                       'strand': strand, 'chr': chrom, 'long_intron_chimeric': {s_name: {introns: cov}}}
                 if save_readnames:
-                    tr['reads'] = [readname]
+                    tr['reads'] = {s_name: [readname]}
             except BaseException:
                 logger.error('\n\n-->%s\n\n', (exons[0][0], exons[-1][1]) if strand == "+" else (exons[-1][1], exons[0][0]))
                 raise
-            gene = _add_sample_transcript(self, tr, chrom, s_name, fuzzy_junction)  # tr is not updated
+            gene = _add_sample_transcript(self, tr, chrom, s_name, fuzzy_junction, min_exonic_ref_coverage)  # tr is not updated
             if gene is None:
                 novel.setdefault(chrom, []).append(tr)
         for chrom in novel:
-            _add_novel_genes(self, IntervalTree(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr) for tr in novel[chrom]), chrom, s_name)
+            _add_novel_genes(self, IntervalTree(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr) for tr in novel[chrom]), chrom)
         # self.infos.setdefault('chimeric',{})[s_name]=chimeric # save all chimeric reads (for debugging)
     for g in self:
         if 'coverage' in g.data and g.data['coverage'] is not None:  # still valid splice graphs no new transcripts - add a row of zeros to coveage
@@ -336,24 +394,31 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
     return total_nc_reads_chr
 
 
-def _add_chimeric(t, new_chimeric, min_cov, sa, min_exonic_ref_coverage):
+def _add_chimeric(t, new_chimeric, min_cov, min_exonic_ref_coverage):
     ''' add new chimeric transcripts to transcriptome, if covered by > min_cov reads
     '''
-    total = 0
+    total = {}
     for new_bp, new_chim_dict in new_chimeric.items():
-        n_reads = sum(cov for cov, _ in new_chim_dict.values())
-        if n_reads < min_cov:
+        n_reads = {}
+        for cov_all, _ in new_chim_dict.values():
+            for sa, cov in cov_all.items():
+                n_reads[sa] = n_reads.get(sa, 0)+cov
+        n_reads = {sa: cov for sa, cov in n_reads.items() if cov >= min_cov}
+        if not n_reads:
             continue
-        total += n_reads
+        for sa in n_reads:
+            total[sa] += n_reads[sa]
         for _, new_chim in new_chim_dict.items():  # ignore the readname for now
-            # should not contain: long intron, one part only (filtered by _check_chimeric),
+            # should not contain: long intron, one part only (filtered by check_chimeric function),
             # todo: discard invalid (large overlaps, large gaps)
             # find equivalent chimeric reads
             for found in t.chimeric.setdefault(new_bp, []):
                 if all(splice_identical(ch1[2], ch2[2]) for ch1, ch2 in zip(new_chim[1], found[1])):
-                    # for sa in new_chim[0]: # add coverage
-                    found[0][sa] = found[0].get(sa, 0) + new_chim[0]
-                    # adjust start
+                    # add coverage
+                    for sa in n_reads:
+                        found[0][sa] = found[0].get(sa, 0) + n_reads[sa]
+                    # adjust start using the maximum range
+                    # this part deviates from normal transcripts, where the median tss/pas is used
                     if found[1][0][1] == '+':  # strand of first part
                         found[1][0][2][0][0] = min(found[1][0][2][0][0], new_chim[1][0][2][0][0])
                     else:
@@ -365,7 +430,6 @@ def _add_chimeric(t, new_chimeric, min_cov, sa, min_exonic_ref_coverage):
                         found[1][-1][2][-1][0] = min(found[1][-1][2][-1][0], new_chim[1][-1][2][-1][0])
                     break
             else:  # not seen
-                new_chim[0] = {sa: new_chim[0]}
                 t.chimeric[new_bp].append(new_chim)
                 for part in new_chim[1]:
                     if part[0] in t.data:
@@ -404,7 +468,7 @@ def _check_chimeric(chimeric):
         3) check if the chimeric read is actually a long introns - return list as nonchimeric
         4) sort into dict by breakpoint - return dict as chimeric
 
-        chimeric[0] is the coverage
+        chimeric[0] is the coverage dict
         chimeric[1] is a list of tuples: chrom,strand,exons,[aligned start, end] '''
 
     chimeric_dict = {}
@@ -412,7 +476,7 @@ def _check_chimeric(chimeric):
     skip = 0
     for readname, new_chim in chimeric.items():
         if len(new_chim[1]) < 2:
-            skip += new_chim[0]
+            skip += sum(new_chim[0].values())
             continue
         merged_introns = []
 
@@ -455,18 +519,21 @@ def _check_chimeric(chimeric):
     return chimeric_dict, non_chimeric
 
 
-def _add_sample_transcript(t, tr, chrom, sample_name, fuzzy_junction=5, min_exonic_ref_coverage=.5):
-    'add transcript to gene in chrom - return gene on success and None if no Gene was found'
+def _add_sample_transcript(t, tr, chrom, sample_name, fuzzy_junction, min_exonic_ref_coverage, genes_ol=None):
+    '''add transcript to gene in chrom - return gene on success and None if no Gene was found.
+    If matching transcript is found in gene, transcripts are merged. Coverage, tr TSS/PAS need to be reset.
+    Otherwise, a new transcript is added. In this case, splice graph and coverage have to be reset.'''
     if chrom not in t.data:
         tr['annotation'] = (4, {'intergenic': []})
         return None
-    genes_ol = t.data[chrom][tr['exons'][0][0]: tr['exons'][-1][1]]
+    if genes_ol == None:
+        genes_ol = t.data[chrom][tr['exons'][0][0]: tr['exons'][-1][1]]
     genes_ol_strand = [g for g in genes_ol if g.strand == tr['strand']]
     # check if transcript is already there (e.g. from other sample, or in case of long intron chimeric alignments also same sample):
     for g in genes_ol_strand:
         for tr2 in g.transcripts:
             if splice_identical(tr2['exons'], tr['exons']):
-                _combine_transcripts(tr2, tr, sample_name)
+                _combine_transcripts(tr2, tr)
                 return g
     # we have a new transcript (not seen in this or other samples)
     # check if gene is already there (e.g. from same or other sample):
@@ -479,7 +546,7 @@ def _add_sample_transcript(t, tr, chrom, sample_name, fuzzy_junction=5, min_exon
                 for tr2 in g.transcripts:  # check if correction made it identical to existing
                     if splice_identical(tr2['exons'], tr['exons']):
                         tr2.setdefault('fuzzy_junction', {}).setdefault(sample_name, []).append(shifts)  # keep the info, mainly for testing/statistics
-                        _combine_transcripts(tr2, tr, sample_name)
+                        _combine_transcripts(tr2, tr)
                         return g
             tr['annotation'] = g.ref_segment_graph.get_alternative_splicing(tr['exons'], additional)
 
@@ -500,10 +567,10 @@ def _add_sample_transcript(t, tr, chrom, sample_name, fuzzy_junction=5, min_exon
         # if additional:
         #    tr['annotation']=(4,tr['annotation'][1]) #fusion transcripts... todo: overrule tr['annotation']
         # this transcript is seen for the first time. Asign sample specific attributes to sample name
-        for what in 'coverage', 'TSS', 'PAS':
-            tr[what] = {sample_name: tr[what]}
-        if 'reads' in tr:
-            tr['reads'] = {sample_name: tr['reads']}
+        # for what in 'coverage', 'TSS', 'PAS':
+        #    tr[what] = {sample_name: tr[what]}
+        # if 'reads' in tr:
+        #    tr['reads'] = {sample_name: tr['reads']}
         g.data.setdefault('transcripts', []).append(tr)
         g.data['segment_graph'] = None  # gets recomputed on next request
         g.data['coverage'] = None
@@ -513,15 +580,18 @@ def _add_sample_transcript(t, tr, chrom, sample_name, fuzzy_junction=5, min_exon
     return g
 
 
-def _combine_transcripts(established, new_tr, sample_name):
+def _combine_transcripts(established, new_tr):
     'merge new_tr into splice identical established transcript'
     try:
-        established['coverage'][sample_name] = established['coverage'].get(sample_name, 0) + new_tr['coverage']
-        if 'reads' in new_tr:
+        for sample_name in new_tr['coverage']:
+            established['coverage'][sample_name] = established['coverage'].get(sample_name, 0) + new_tr['coverage'][sample_name]
+        for sample_name in new_tr.get('reads', {}):
             established['reads'].setdefault(sample_name, []).extend(new_tr['reads'])
         for side in 'TSS', 'PAS':
-            for pos, cov in new_tr[side].items():
-                established[side].setdefault(sample_name, {})[pos] = established[side].get(sample_name, {}).get(pos, 0) + cov
+            for sample_name in new_tr[side]:
+                for pos, cov in new_tr[side][sample_name].items():
+                    established[side].setdefault(sample_name, {}).setdefault(pos, 0)
+                    established[side][sample_name][pos] += cov
         # find median tss and pas
         starts = [v for sa in established['TSS'] for v in established['TSS'][sa].items()]
         ends = [v for sa in established['PAS'] for v in established['PAS'][sa].items()]
@@ -530,9 +600,10 @@ def _combine_transcripts(established, new_tr, sample_name):
         established['exons'][0][0] = get_quantile(starts, 0.5)
         established['exons'][-1][1] = get_quantile(ends, 0.5)
         if 'long_intron_chimeric' in new_tr:
-            for introns in new_tr['long_intron_chimeric'][sample_name]:
-                established.setdefault('long_intron_chimeric', {}).setdefault(sample_name, {}).setdefault(introns, 0)
-                established['long_intron_chimeric'][sample_name][introns] += new_tr['long_intron_chimeric'][sample_name][introns]
+            for sample_name in new_tr['long_intron_chimeric']:
+                for introns in new_tr['long_intron_chimeric'][sample_name]:
+                    established.setdefault('long_intron_chimeric', {}).setdefault(sample_name, {}).setdefault(introns, 0)
+                    established['long_intron_chimeric'][sample_name][introns] += new_tr['long_intron_chimeric'][sample_name][introns]
     except BaseException:
         logger.error('error when merging %s of sample %s into %s', new_tr, sample_name, established)
         raise
@@ -551,7 +622,7 @@ def _get_novel_type(exons, genes_ol, genes_ol_strand):
         return {'intergenic': []}
 
 
-def _add_novel_genes(t, novel, chrom, sa, spj_iou_th=0, reg_iou_th=.5, gene_prefix='PB_novel_'):
+def _add_novel_genes(t, novel, chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix='PB_novel_'):
     '"novel" is a tree of transcript intervals (not Gene objects) ,e.g. from one chromosome, that do not overlap any annotated or unanntoated gene'
     n_novel = t.novel_genes
     idx = {id(tr): i for i, tr in enumerate(novel)}
@@ -579,13 +650,13 @@ def _add_novel_genes(t, novel, chrom, sa, spj_iou_th=0, reg_iou_th=.5, gene_pref
         end = max(tr['exons'][-1][1] for tr in trL)
         if start >= end:
             logger.error('start>=end (%s>=%s): %s', start, end, trL)
-        for tr in trL:
-            sample_name = tr.pop('bc_group', sa)
-            tr['coverage'] = {sample_name: tr['coverage']}
-            tr['TSS'] = {sample_name: tr['TSS']}
-            tr['PAS'] = {sample_name: tr['PAS']}
-            if 'reads' in tr:
-                tr['reads'] = {sample_name: tr['reads']}
+        # for tr in trL:
+        #    sample_name = tr.pop('bc_group', sa)
+        #    tr['coverage'] = {sample_name: tr['coverage']}
+        #    tr['TSS'] = {sample_name: tr['TSS']}
+        #    tr['PAS'] = {sample_name: tr['PAS']}
+        #    if 'reads' in tr:
+        #        tr['reads'] = {sample_name: tr['reads']}
         n_novel += 1
         new_data = {'chr': chrom, 'ID': f'{gene_prefix}{n_novel:05d}', 'strand': strand, 'transcripts': trL}
         t.data.setdefault(chrom, IntervalTree()).add(Gene(start, end, new_data, t))
@@ -611,7 +682,7 @@ def _find_matching_gene(genes_ol, exons, min_exon_coverage):
             # resolved issue with tie here, missing FSM due to overlappnig gene with extention of FSM transcript
             covered_splice = np.max(sum_ol)
             if covered_splice == 0:  # none found, consider novel genes
-                splice_sites = np.array([g.segment_graph.find_splice_sites(exons) if not g.is_annotated else nomatch for g in genes_ol])
+                splice_sites = np.array([_find_splice_sites(exons,  g.transcripts) if not g.is_annotated else nomatch for g in genes_ol])
                 sum_ol = splice_sites.sum(1)
                 covered_splice = np.max(sum_ol)
             if covered_splice > 0:
@@ -648,7 +719,7 @@ def _find_matching_gene(genes_ol, exons, min_exon_coverage):
             best_idx = np.argmax(ol)
             if ol[best_idx] >= min_exon_coverage * trlen:
                 return genes_ol[best_idx], None, []
-        # else return best overlapping reference gene if more than minimum overlap fraction
+        # else return best overlapping novel gene if more than minimum overlap fraction
         ol = [(0, []) if not g.is_annotated else g.ref_segment_graph.get_overlap(exons) for g in genes_ol]
         max_ol_frac = np.array([0 if ol[0] == 0 else max(ol_tr / min(trlen, sum(e[1] - e[0] for e in tr["exons"]))
                                                          for ol_tr, tr in zip(ol[1], g.ref_transcripts)) for g, ol in zip(genes_ol, ol)])
@@ -656,9 +727,8 @@ def _find_matching_gene(genes_ol, exons, min_exon_coverage):
         if max_ol_frac[best_idx] >= min_exon_coverage:
             return genes_ol[best_idx], None, list(range((len(exons) - 1) * 2))  # none of the junctions are covered
         # else return best overlapping novel gene if more than minimum overlap fraction
-        ol = [(0, []) if g.is_annotated else g.segment_graph.get_overlap(exons) for g in genes_ol]
-        max_ol_frac = np.array([0 if ol[0] == 0 else max(ol_tr / sum(e[1] - e[0] for e in tr["exons"])
-                                                         for ol_tr, tr in zip(ol[1], g.transcripts)) for g, ol in zip(genes_ol, ol)])
+        ol = [0 if g.is_annotated else _get_overlap(exons, g.transcripts) for g in genes_ol]
+        max_ol_frac = np.array([0 if ol == 0 else ol_gene / sum(e[1] - e[0] for e in exons) for ol_gene in ol])
         best_idx = max_ol_frac.argmax()
         if max_ol_frac[best_idx] >= min_exon_coverage:
             return genes_ol[best_idx], None, list(range((len(exons) - 1) * 2))  # none of the junctions are covered
@@ -666,52 +736,64 @@ def _find_matching_gene(genes_ol, exons, min_exon_coverage):
     return None, None, list(range((len(exons) - 1) * 2))  # none of the junctions are covered
 
 
-def _read_gtf_file(file_name, transcriptome, chromosomes, infer_genes=False, progress_bar=True):
+
+def _read_gtf_file(file_name, chromosomes, infer_genes=False, progress_bar=True):
     exons = dict()  # transcript id -> exons
     transcripts = dict()  # gene_id -> transcripts
     skipped = set()
     gene_infos = dict()  # 4 tuple: info_dict, gene_start, gene_end, fixed_flag==True if start/end are fixed
+    inferred_genes = dict()
     cds_start = dict()
     cds_stop = dict()
-    chrom_found = set()
-    with tqdm(total=path.getsize(file_name), unit_scale=True, unit='B', unit_divisor=1024, disable=not progress_bar) as pbar, TabixFile(file_name) as gtf:
-        for line in gtf.fetch():
-            file_pos = gtf.tell() >> 16
-            if pbar.n < file_pos:
-                pbar.update(file_pos-pbar.n)
-            ls = line.split(sep="\t")
-            if chromosomes is not None and ls[0] not in chromosomes:
-                # warnings.warn('skipping line from chr '+ls[0])
+    # with tqdm(total=path.getsize(file_name), unit_scale=True, unit='B', unit_divisor=1024, disable=not progress_bar) as pbar, TabixFile(file_name) as gtf:
+    # for line in gtf.fetch():
+    #    file_pos = gtf.tell() >> 16
+    #    if pbar.n < file_pos:
+    #       pbar.update(file_pos-pbar.n)
+    openfun = gziplib.open if file_name.endswith('.gz') else open
+
+    with openfun(file_name, "rt") as gtf:
+        for line in gtf:
+            if line[0]=='#': # ignore header lines
                 continue
-            chrom_found.add(ls[0])
-            info = dict([pair.lstrip().split(' ', 1) for pair in ls[8].replace('"', '').split(";") if pair])
+            ls = line.split(sep="\t")
+            assert len(ls)==9, 'unexpected number of fields in gtf line:\n%s' % line
+            if chromosomes is not None and ls[0] not in chromosomes:
+                logger.debug('skipping line from chr '+ls[0])
+                continue
+            try:
+                info = dict([pair.lstrip().split(maxsplit=1) for pair in ls[8].strip().replace('"', '').split(";") if pair])
+            except ValueError:
+                logger.error('issue with key value pairs from gtf:\n%s', ls[8])
+                raise
             start, end = [int(i) for i in ls[3:5]]
             start -= 1  # to make 0 based
             if ls[2] == "exon":
                 # logger.debug(line)
                 try:
                     _ = exons.setdefault(info['transcript_id'], list()).append((start, end))
-                    if infer_genes and 'gene_id' in info:
-                        if info['gene_id'] not in gene_infos:  # new gene
-                            info['strand'] = ls[6]
-                            info['chr'] = ls[0]
-                            _set_alias(info, {'ID': ['gene_id']})
-                            _set_alias(info, {'name': ['gene_name', 'Name']}, required=False)
-                            ref_info = {k: v for k, v in info.items() if k not in Gene.required_infos + ['name']}
-                            info = {k: info[k] for k in Gene.required_infos + ['name'] if k in info}
-                            info['reference'] = ref_info
-                            gene_infos[info['ID']] = (info, start, end, False)  # start/end not fixed yet (initially set to exon start end)
-                        else:
-                            known_info = gene_infos[info['gene_id']]
-                            if not known_info[3]:  # not fixed - update start/end
-                                gene_infos[info['gene_id']] = (known_info[0], min(known_info[1], start), max(known_info[2], end), False)
-                            if 'transcript_id' in info and info['transcript_id'] not in transcripts.get(info['gene_id'], {}):
-                                # new transcript
-                                tr_info = {k: v for k, v in info.items() if 'transcript' in k and k != 'transcript_id'}
-                                _ = transcripts.setdefault(info["gene_id"], dict())[info["transcript_id"]] = tr_info
                 except KeyError:  # should not happen if GTF is OK
                     logger.error("gtf format error: exon without transcript_id\n%s", line)
                     raise
+                if infer_genes and 'gene_id' in info:
+                    inferred_genes.setdefault(ls[0], {})
+                    if info['gene_id'] not in gene_infos[ls[0]]:  # new gene
+                        info['strand'] = ls[6]
+                        info['chr'] = ls[0]
+                        _set_alias(info, {'ID': ['gene_id']})
+                        _set_alias(info, {'name': ['gene_name', 'Name']}, required=False)
+                        ref_info = {k: v for k, v in info.items() if k not in Gene.required_infos + ['name']}
+                        info = {k: info[k] for k in Gene.required_infos + ['name'] if k in info}
+                        info['properties'] = ref_info
+                        inferred_genes[ls[0]][info['ID']] = (info, start, end)  # start/end not fixed yet (initially set to exon start end)
+                    else:
+                        known_info = inferred_genes[ls[0]][info['gene_id']]
+                        gene_infos[info['gene_id']] = (known_info[0], min(known_info[1], start), max(known_info[2], end))
+                        if 'transcript_id' in info and info['transcript_id'] not in transcripts.setdefault(info['gene_id'], {}):
+                            # new transcript
+                            tr_info = {k: v for k, v in info.items() if 'transcript' in k and k != 'transcript_id'}
+                            transcripts[info["gene_id"]][info["transcript_id"]] = tr_info
+
             elif ls[2] == 'gene':
                 if 'gene_id' not in info:
                     logger.warning("gtf format error: gene without gene_id. Skipping line\n%s", line)
@@ -722,10 +804,8 @@ def _read_gtf_file(file_name, transcriptome, chromosomes, infer_genes=False, pro
                     _set_alias(info, {'name': ['gene_name', 'Name']}, required=False)
                     ref_info = {k: v for k, v in info.items() if k not in Gene.required_infos + ['name']}
                     info = {k: info[k] for k in Gene.required_infos + ['name'] if k in info}
-                    info['reference'] = ref_info
-                    gene_infos[info['ID']] = (info, start, end, True)  # this is fixed now -exons cannot overrule
-                    # new_gene=Gene(start, end, info, transcriptome)
-                    # genes[ls[0]].add(new_gene)
+                    info['properties'] = ref_info
+                    gene_infos.setdefault(ls[0], {})[info['ID']] = (info, start, end)
             elif ls[2] == 'transcript':  # overrule potential entries from exon line
                 try:
                     # keep only transcript related infos (to avoid redundant gene infos)
@@ -739,12 +819,8 @@ def _read_gtf_file(file_name, transcriptome, chromosomes, infer_genes=False, pro
                 cds_stop[info['transcript_id']] = start if ls[6] == '-' else end
             else:
                 skipped.add(ls[2])
-    genes = {}
 
-    for chrom in chrom_found:
-        genes[chrom] = IntervalTree(Gene(start, end, info, transcriptome) for info, start, end, _ in gene_infos.values() if info['chr'] == chrom)
-
-    return exons, transcripts, genes, set(gene_infos), cds_start, cds_stop, skipped
+    return exons, transcripts, gene_infos, cds_start, cds_stop, skipped
 
 
 def _get_tabix_end(tbx_fh):
@@ -755,15 +831,13 @@ def _get_tabix_end(tbx_fh):
     return end
 
 
-def _read_gff_file(file_name, transcriptome, chromosomes, progress_bar=True):
+def _read_gff_file(file_name, chromosomes, progress_bar=True):
     exons = dict()  # transcript id -> exons
     transcripts = dict()  # gene_id -> transcripts
     skipped = set()
     genes = dict()
-    gene_set = set()
     cds_start = dict()
     cds_stop = dict()
-
     # takes quite some time... add a progress bar?
     with tqdm(total=path.getsize(file_name), unit_scale=True, unit='B', unit_divisor=1024, disable=not progress_bar) as pbar, TabixFile(file_name) as gff:
         chrom_ids = get_gff_chrom_dict(gff, chromosomes)
@@ -775,7 +849,9 @@ def _read_gff_file(file_name, transcriptome, chromosomes, progress_bar=True):
             if ls[0] not in chrom_ids:
                 continue
             chrom = chrom_ids[ls[0]]
-            genes.setdefault(chrom, IntervalTree())
+            if chromosomes is not None and chrom not in chromosomes:
+                logger.debug('skipping line %s from chr %s', line, chrom)
+                continue
             try:
                 info = dict([pair.split('=', 1) for pair in ls[8].rstrip(';').split(";")])  # some gff lines end with ';' in gencode 36
             except ValueError:
@@ -791,14 +867,12 @@ def _read_gff_file(file_name, transcriptome, chromosomes, progress_bar=True):
             elif ls[2] == 'gene' or 'ID' in info and info['ID'].startswith('gene'):
                 info['strand'] = ls[6]
                 info['chr'] = chrom
-                # genes[chrom][start:end] = info
                 _set_alias(info, {'ID': ['gene_id']})
                 _set_alias(info, {'name': ['Name', 'gene_name']}, required=False)
-                gene_set.add(info['ID'])
                 ref_info = {k: v for k, v in info.items() if k not in Gene.required_infos + ['name']}
                 info = {k: info[k] for k in Gene.required_infos + ['name'] if k in info}
-                info['reference'] = ref_info
-                genes[chrom].add(Gene(start, end, info, transcriptome))
+                info['properties'] = ref_info
+                genes.setdefault(chrom, {})[info['ID']] = (info, start, end)
             elif all([v in info for v in ['Parent', "ID"]]) and (ls[2] == 'transcript' or info['Parent'].startswith('gene')):  # those denote transcripts
                 tr_info = {k: v for k, v in info.items() if k.startswith('transcript_')}
                 transcripts.setdefault(info["Parent"], {})[info['ID']] = tr_info
@@ -808,7 +882,7 @@ def _read_gff_file(file_name, transcriptome, chromosomes, progress_bar=True):
                 cds_stop[info['Parent']] = start if ls[6] == '-' else end
             else:
                 skipped.add(ls[2])  # transcript infos?
-    return exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped
+    return exons, transcripts, genes, cds_start, cds_stop, skipped
 
 
 def import_ref_transcripts(fn, transcriptome, file_format, chromosomes=None, gene_categories=None, short_exon_th=25, **kwargs):
@@ -817,17 +891,29 @@ def import_ref_transcripts(fn, transcriptome, file_format, chromosomes=None, gen
     if gene_categories is None:
         gene_categories = ['gene']
     if file_format == 'gtf':
-        exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gtf_file(fn, transcriptome, chromosomes, **kwargs)
+        exons, transcripts, gene_infos, cds_start, cds_stop, skipped = _read_gtf_file(fn, chromosomes, **kwargs)
     else:  # gff/gff3
-        exons, transcripts, genes, gene_set, cds_start, cds_stop, skipped = _read_gff_file(fn, transcriptome, chromosomes, **kwargs)
+        exons, transcripts, gene_infos, cds_start, cds_stop, skipped = _read_gff_file(fn, chromosomes, **kwargs)
 
     if skipped:
         logger.info('skipped the following categories: %s', skipped)
+
+    logger.debug('construct interval trees for genes...')
+    genes = {}
+    for chrom in gene_infos:
+        for info, _, _ in gene_infos[chrom].values():
+            try:
+                info['reference'] = info.pop('properties')
+            except KeyError:
+                logger.error(info)
+                raise
+        genes[chrom] = IntervalTree(Gene(start, end, info, transcriptome) for info, start, end in gene_infos[chrom].values())
+
     # sort the exons
     logger.debug('sorting exon positions...')
     for tid in exons:
         exons[tid].sort()
-    missed_genes = [gid for gid in transcripts.keys() if gid not in gene_set]
+    missed_genes = [gid for gid in transcripts.keys() if gid not in gene_infos]
     if missed_genes:
         # logger.debug('/n'.join(gid+str(tr) for gid, tr in missed_genes.items()))
         notfound = len(missed_genes)
@@ -898,7 +984,7 @@ def collapse_immune_genes(self, maxgap=300000):
 
 
 # io utility functions
-@experimental
+@ experimental
 def get_mutations_from_bam(bam_file, genome_file, region, min_cov=.05):
     '''not very efficient function to fetch mutations within a region from a bam file
     not exported so far'''
@@ -1096,7 +1182,7 @@ def transcript_table(self,  samples=None,  groups=None, coverage=False, tpm=Fals
     return(df)
 
 
-@experimental
+@ experimental
 def chimeric_table(self, region=None, query=None):  # , star_chimeric=None, illu_len=200):
     '''Creates a chimeric table
 
@@ -1118,7 +1204,7 @@ def chimeric_table(self, region=None, query=None):  # , star_chimeric=None, illu
         cov = tuple(sum(c.get(sa, 0) for c, _ in chimeric) for sa in self.samples)
         genes = [info[4] if info[4] is not None else 'intergenic' for info in chimeric[0][1]]
         for i, bp_i in enumerate(bp):
-            chim_tab.append(('_'.join(genes),) + bp_i[:3] + (genes[i],) + bp_i[3:] + (genes[i + 1],) + (sum(cov),) + cov)
+            chim_tab.append(('_'.join(genes),) + bp_i[: 3] + (genes[i],) + bp_i[3:] + (genes[i + 1],) + (sum(cov),) + cov)
     chim_tab = pd.DataFrame(chim_tab, columns=['name', 'chr1', 'strand1', 'breakpoint1', 'gene1', 'chr2', 'strand2',
                             'breakpoint2', 'gene2', 'total_cov'] + [s + '_cov' for s in self.infos['sample_table'].name])
 
@@ -1273,7 +1359,7 @@ def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
     # in case of 'A3SS':['long','short', 'flanking'],
     # in case of 'A5SS':['long','short', 'flanking']}
     lines = []
-    if g.chrom[:3] != 'chr':
+    if g.chrom[: 3] != 'chr':
         chrom = 'chr' + g.chrom
     else:
         chrom = g.chrom

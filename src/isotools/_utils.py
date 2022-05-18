@@ -211,3 +211,84 @@ def _filter_event(coverage, event, min_total=100, min_alt_fraction=.1):
         return False
 
     return True
+
+
+def _get_exonic_region(transcripts):
+    e_starts=iter(sorted([e[0] for tr in transcripts for e in tr['exons']]))
+    e_ends=iter(sorted([e[1] for tr in transcripts for e in tr['exons']]))
+    exon_reg=[[next(e_starts), next(e_ends)]]
+    for next_start in e_starts:
+        if next_start<=exon_reg[-1][1]:
+            exon_reg[-1][1]=next(e_ends)
+        else:
+            exon_reg.append([next_start, next(e_ends)])
+    return exon_reg
+
+
+def _get_overlap(exons, transcripts):
+    '''Compute the exonic overlap of a new transcript with the segment graph.
+    Avoids the computation of segment graph, which provides the same functionality.
+
+    :param exons: A list of exon tuples representing the new transcript
+    :type exons: list
+    :return: boolean array indicating whether the splice site is contained or not'''
+    if not transcripts:
+        return 0
+    # 1) get exononic regions in transcripts
+    exon_reg = _get_exonic_region(transcripts)
+    # 2) find overlap of exonic regions with exons
+    ol = 0
+    i = 0
+    for e in exons:
+        while(exon_reg[i][1] < e[0]):  # no overlap, go on
+            i += 1
+            if i == len(exon_reg):
+                return ol
+        while(exon_reg[i][0] < e[1]):
+            i_end = min(e[1], exon_reg[i][1])
+            i_start = max(e[0], exon_reg[i][0])
+            ol += (i_end - i_start)
+            if exon_reg[i][1] > e[1]: #might overlap with next exon
+                break
+            i += 1
+            if i == len(exon_reg):
+                return ol
+    return ol
+
+
+def _find_splice_sites(exons, transcripts):
+    '''Checks whether the splice sites of a new transcript are present in the set of transcripts.
+    Avoids the computation of segment graph, which provides the same functionality.
+
+    :param exons: A list of exon tuples representing the transcript
+    :type exons: list
+    :return: boolean array indicating whether the splice site is contained or not'''
+
+    sites = np.zeros((len(exons) - 1) * 2, dtype=bool)
+    # check exon ends
+    tr_list = [iter(tr['exons'][:-1]) for tr in transcripts if len(tr['exons']) > 1]
+    current = [next(tr) for tr in tr_list]
+    for i, e in enumerate(exons[:-1]):
+        for j, tr_iter in enumerate(tr_list):
+            try:
+                while(e[1] > current[j][1]):
+                    current[j] = next(tr_iter)
+                if current[j][1] == e[1]:
+                    sites[i * 2] = True
+                    break
+            except StopIteration:
+                continue
+    # check exon starts
+    tr_list = [iter(tr['exons'][1:]) for tr in transcripts if len(tr['exons']) > 1]
+    current = [next(tr) for tr in tr_list]
+    for i, e in enumerate(exons[1:]):
+        for j, tr_iter in enumerate(tr_list):
+            try:
+                while(e[0] > current[j][0]):
+                    current[j] = next(tr_iter)
+                if current[j][0] == e[0]:
+                    sites[i * 2 + 1] = True
+                    break
+            except StopIteration:
+                continue
+    return sites

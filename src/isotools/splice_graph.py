@@ -436,21 +436,29 @@ class SegmentGraph():
         :type exons: list
         :return: boolean array indicating whether the splice site is contained or not'''
 
-        j = 0
         sites = np.zeros((len(exons) - 1) * 2, dtype=bool)
-        for i, (e1, e2) in enumerate(pairwise(exons)):
-            while(self[j].end < e1[1]):
-                j += 1
-                if j == len(self):
-                    return sites
-            if self[j].end == e1[1]:
-                sites[i * 2] = True
-            while(self[j].start < e2[0]):
-                j += 1
-                if j == len(self):
-                    return sites
-            if self[j].start == e2[0]:
-                sites[i * 2 + 1] = True
+        nodes = iter(self)
+        n = next(nodes)
+        # check exon ends
+        for i, e in enumerate(exons[:-1]):
+            try:
+                while(e[1] > n.end):
+                    n = next(nodes)
+                if n.end == e[1] and any(self[s].start > n.end for s in n.suc.values()):
+                    sites[i * 2] = True
+            except StopIteration:
+                break
+        nodes = iter(self)
+        n = next(nodes)
+        # check exon starts
+        for i, e in enumerate(exons[1:]):
+            try:
+                while(e[0] > n.start):
+                    n = next(nodes)
+                if n.start == e[0] and any(self[p].end < n.start for p in n.pre.values()):
+                    sites[i * 2 + 1] = True
+            except StopIteration:
+                break
         return sites
 
     def get_overlap(self, exons):
@@ -544,6 +552,15 @@ class SegmentGraph():
                 if covered:
                     esm[covered, e_nr + 1] = True
         return esm
+
+    def get_exonic_region(self):
+        regs = [[self[0].start, self[0].end]]
+        for n in self[1:]:
+            if n.start == regs[-1][1]:
+                regs[-1][1] = n.end
+            else:
+                regs.append([n.start, n.end])
+        return regs
 
     def get_intersects(self, exons):
         '''Computes the splice junction exonic overlap of a new transcript with the segment graph.

@@ -1,7 +1,8 @@
 import pytest
 from isotools.transcriptome import Transcriptome
 from isotools._utils import splice_identical
-
+import logging
+logger = logging.getLogger('isotools')
 
 @pytest.mark.dependency()
 def test_import_gff():
@@ -25,7 +26,32 @@ def test_import_bam():
 @pytest.mark.dependency(depends=['test_import_bam'])
 def test_fsm():
     isoseq = Transcriptome.load('tests/data/example_1_isotools.pkl')
+    count=0
     for g, _, tr in isoseq.iter_transcripts(query='FSM'):
         assert tr['annotation'][0] == 0
+        count+=1
         for ref_id in tr['annotation'][1]['FSM']:
             assert splice_identical(tr['exons'], g.ref_transcripts[ref_id]['exons'])
+    assert count==22, 'expected 22 FSM transcripts'
+
+
+
+@pytest.mark.dependency(depends=['test_import_bam'])
+def test_import_csv():
+    isoseq = Transcriptome.load('tests/data/example_1_isotools.pkl')
+    cov_tab=isoseq.transcript_table(coverage=True)
+    cov_tab.to_csv('tests/data/example_1_cov.csv')
+    isoseq.write_gtf('tests/data/example_1.gtf')
+    isoseq_csv=Transcriptome.from_reference('tests/data/example_ref_isotools.pkl')
+    isoseq_csv.add_sample_from_csv('tests/data/example_1_cov.csv','tests/data/example_1.gtf' )
+    discrepancy=False
+    for g in isoseq:
+        if g.is_expressed and g.ref_transcripts:
+            if g.id not in isoseq_csv:
+                logger.error('gene missing after csv import: %s' % str(g))
+                discrepancy=True
+            g_csv=isoseq_csv[g.id]
+            if len(g.transcripts) != len(g_csv.transcripts):
+                logger.error('number of transcripts for %s changed after csv import: %s != %s', g.id,len(g.transcripts), len(g_csv.transcripts) )
+                discrepancy=True
+    assert not discrepancy, 'discrepancy found after csv import'

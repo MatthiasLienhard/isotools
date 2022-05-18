@@ -166,7 +166,7 @@ def iter_genes(self, region=None, query=None, progress_bar=False):
         else:
             raise ValueError('specified chromosome {} not found'.format(chrom))
     for g in tqdm(genes, disable=not progress_bar, unit='genes', smoothing=0):  # often few genes take much longer - smoothing 0 means avg
-        if query is None or query_fun({tag: fun(**g.data) for tag, fun in filter_fun.items()}):
+        if query is None or query_fun(**{tag: fun(**g.data) for tag, fun in filter_fun.items()}):
             yield g
 
 

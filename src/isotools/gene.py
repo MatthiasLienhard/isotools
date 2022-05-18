@@ -418,6 +418,28 @@ class Gene(Interval):
         'Returns a shallow copy of self.'
         return self.__copy__()
 
+    def _find_splice_sites(exons, transcripts):
+        '''Checks whether the splice sites of a new transcript are present in the set of transcripts.
+        avoids the computation of segment graph, which provides the same functionality.
+
+        :param exons: A list of exon tuples representing the transcript
+        :type exons: list
+        :return: boolean array indicating whether the splice site is contained or not'''
+
+        intron_iter = [pairwise(tr['exons']) for tr in transcripts]
+        current = [next(tr) for tr in intron_iter]
+        contained = np.zeros(len(exons)-1)
+        for j, (e1, e2) in enumerate(pairwise(exons)):
+            for i, tr in enumerate(intron_iter):
+                while current[i][0][1] < e1[1]:
+                    try:
+                        current[i] = next(tr)
+                    except StopIteration:
+                        continue
+                if e1[1] == current[i][0][1] and e2[0] == current[i][1][0]:
+                    contained[j] = True
+        return current
+
     def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1,
                           min_cov_pair=100, event_type=("ES", "5AS", "3AS", "IR", "ME")):
         '''Performs pairwise independence test for all pairs of Alternative Splicing Events (ASEs) in a gene.

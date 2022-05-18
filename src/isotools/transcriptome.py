@@ -226,7 +226,8 @@ class Transcriptome:
         return (gene for tree in self.data.values() for gene in tree)
 
     # IO: load new data from primary data files
-    from ._transcriptome_io import add_sample_from_bam, remove_samples, add_short_read_coverage, remove_short_read_coverage, collapse_immune_genes
+    from ._transcriptome_io import add_sample_from_bam, add_sample_from_csv, remove_samples, add_short_read_coverage, \
+        remove_short_read_coverage, collapse_immune_genes
 
     # IO: output data as tables or other human readable format
     from ._transcriptome_io import gene_table, transcript_table, chimeric_table, write_gtf, export_alternative_splicing

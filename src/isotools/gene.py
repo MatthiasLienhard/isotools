@@ -441,7 +441,7 @@ class Gene(Interval):
         return current
 
     def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1,
-                          min_cov_pair=100, event_type=("ES", "5AS", "3AS", "IR", "ME")):
+                          min_cov_pair=100, events=None, event_type=("ES", "5AS", "3AS", "IR", "ME")):
         '''Performs pairwise independence test for all pairs of Alternative Splicing Events (ASEs) in a gene.
 
         For all pairs of ASEs in a gene creates a contingency table and performs an indeppendence test.
@@ -464,8 +464,10 @@ class Gene(Interval):
         :type min_alt_fraction: float
         :param min_cov_pair: the minimum total number of a pair of the joint occurrence of a pair of event for it to be reported in the result
         :type min_cov_pair: int
+        :param events: a splice_bubble object
         :param event_type:  A tuple with event types to test. Valid types are
         ("ES", "3AS", "5AS", "IR", "ME", "TSS", "PAS"). Default is ("ES", "5AS", "3AS", "IR", "ME").
+        Not used if the event parameter is already given.
         :return: A list of tuples (gene_id, gene_name, strand, ASE1_type, ASE2_type,
         ASE1_start, ASE1_end, ASE2_start, ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB),
         where each entrance in the tuple corresponds to the p_value, the statistic, the gene name,
@@ -489,7 +491,9 @@ class Gene(Interval):
 
         sg = self.segment_graph
 
-        events = sg.find_splice_bubbles(types=event_type)
+        if events is None:
+            events = sg.find_splice_bubbles(types=event_type)
+
         events = [e for e in events if _filter_event(cov, e, min_total=min_total,
                                                      min_alt_fraction=min_alt_fraction)]
 

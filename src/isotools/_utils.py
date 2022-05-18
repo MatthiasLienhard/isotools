@@ -214,12 +214,12 @@ def _filter_event(coverage, event, min_total=100, min_alt_fraction=.1):
 
 
 def _get_exonic_region(transcripts):
-    e_starts=iter(sorted([e[0] for tr in transcripts for e in tr['exons']]))
-    e_ends=iter(sorted([e[1] for tr in transcripts for e in tr['exons']]))
-    exon_reg=[[next(e_starts), next(e_ends)]]
+    e_starts = iter(sorted([e[0] for tr in transcripts for e in tr['exons']]))
+    e_ends = iter(sorted([e[1] for tr in transcripts for e in tr['exons']]))
+    exon_reg = [[next(e_starts), next(e_ends)]]
     for next_start in e_starts:
-        if next_start<=exon_reg[-1][1]:
-            exon_reg[-1][1]=next(e_ends)
+        if next_start <= exon_reg[-1][1]:
+            exon_reg[-1][1] = next(e_ends)
         else:
             exon_reg.append([next_start, next(e_ends)])
     return exon_reg
@@ -248,7 +248,7 @@ def _get_overlap(exons, transcripts):
             i_end = min(e[1], exon_reg[i][1])
             i_start = max(e[0], exon_reg[i][0])
             ol += (i_end - i_start)
-            if exon_reg[i][1] > e[1]: #might overlap with next exon
+            if exon_reg[i][1] > e[1]:  # might overlap with next exon
                 break
             i += 1
             if i == len(exon_reg):
@@ -292,3 +292,15 @@ def _find_splice_sites(exons, transcripts):
             except StopIteration:
                 continue
     return sites
+
+
+def _corrected_log2OR(con_tab):
+    con_tab_copy = np.zeros((2, 2), dtype=float)
+
+    for m, n in itertools.product(range(2), range(2)):
+        if con_tab[n, m] == 0:
+            con_tab_copy[n, m] = 10**-9
+        else:
+            con_tab_copy[n, m] = con_tab[n, m]
+    log2OR = np.log2((con_tab_copy[0, 0]*con_tab_copy[1, 1])) - np.log2((con_tab_copy[0, 1]*con_tab_copy[1, 0]))
+    return log2OR

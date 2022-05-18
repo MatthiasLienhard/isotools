@@ -854,7 +854,7 @@ def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100
                                                 events=events_dict.get(g.id), event_type=event_type)
             test_res.extend(next_test_res)
 
-        except:
+        except Exception:
             logger.error(f"\nError encounter on {print(g)} {g.id}   :  {g.name}.")
             raise
 

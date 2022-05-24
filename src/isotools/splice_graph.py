@@ -429,34 +429,42 @@ class SegmentGraph():
                     fuzzy[i] = sorted(shift, key=abs)[0]  # if there are several possible shifts, provide the smallest
         return fuzzy
 
-    def find_splice_sites(self, exons):
+    def find_splice_sites(self, sj):
         '''Checks whether the splice sites of a new transcript are present in the segment graph.
 
-        :param exons: A list of exon tuples representing the transcript
+        :param sj: A list of 2 tuples with the splice site positions
         :type exons: list
         :return: boolean array indicating whether the splice site is contained or not'''
 
-        sites = np.zeros((len(exons) - 1) * 2, dtype=bool)
+        sites = np.zeros(len(sj) * 2, dtype=bool)
         nodes = iter(self)
         n = next(nodes)
+        splice_junction_starts = {}
+        splice_junction_ends = {}
+        for i, ss in enumerate(sj):
+            splice_junction_starts.setdefault(ss[0], []).append(i)
+            splice_junction_ends.setdefault(ss[1], []).append(i)
+
         # check exon ends
-        for i, e in enumerate(exons[:-1]):
+        for sjs, idx in sorted(splice_junction_starts.items()):
             try:
-                while(e[1] > n.end):
+                while(sjs > n.end):
                     n = next(nodes)
-                if n.end == e[1] and any(self[s].start > n.end for s in n.suc.values()):
-                    sites[i * 2] = True
+                if n.end == sjs and any(self[s].start > n.end for s in n.suc.values()):
+                    for i in idx:
+                        sites[i * 2] = True
             except StopIteration:
                 break
         nodes = iter(self)
         n = next(nodes)
         # check exon starts
-        for i, e in enumerate(exons[1:]):
+        for sje, idx in sorted(splice_junction_ends.items()):
             try:
-                while(e[0] > n.start):
+                while(sje > n.start):
                     n = next(nodes)
-                if n.start == e[0] and any(self[p].end < n.start for p in n.pre.values()):
-                    sites[i * 2 + 1] = True
+                if n.start == sje and any(self[p].end < n.start for p in n.pre.values()):
+                    for i in idx:
+                        sites[i * 2 + 1] = True
             except StopIteration:
                 break
         return sites

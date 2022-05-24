@@ -10,7 +10,6 @@ from ._transcriptome_filter import DEFAULT_GENE_FILTER, DEFAULT_TRANSCRIPT_FILTE
 from . import __version__
 logger = logging.getLogger('isotools')
 
-
 # as this class has diverse functionality, its split among:
 # transcriptome.py (this file- initialization and user level basic functions)
 # _transcriptome_io.py (input/output primary data files/tables)
@@ -64,6 +63,7 @@ class Transcriptome:
                 tr.filter['transcript'][tag] = f'"{subcat}" in annotation[1]'
             for i, cat in enumerate(SPLICE_CATEGORY):
                 tr.filter['transcript'][cat] = f'annotation[0]=={i}'
+            
 
         elif file_format == 'pkl':
             # warn if kwargs are specified: kwargs are ignored
@@ -75,6 +75,7 @@ class Transcriptome:
                 tr = tr._extract_reference()
         else:
             logger.error('unknown file format %s', file_format)
+        tr.make_index()
         return tr
 
     def save(self, pickle_file=None):
@@ -97,6 +98,7 @@ class Transcriptome:
         pickled_version = tr.infos.get('isotools_version', '<0.2.6')
         if pickled_version != __version__:
             logger.warning('This is isotools version %s, but data has been pickled with version %s, which may be incompatible', __version__, pickled_version)
+        tr.make_index()
         return tr
 
     def save_reference(self, pickle_file=None):
@@ -120,6 +122,7 @@ class Transcriptome:
         for chrom, tree in self.data.items():
             ref_tr.data[chrom] = IntervalTree(Gene(g.start, g.end, {k: v
                                               for k, v in g.data.items() if k in keep}, ref_tr) for g in tree if g.is_annotated)
+        ref_tr.make_index()
         return ref_tr
 
     def make_index(self):
@@ -215,6 +218,14 @@ class Transcriptome:
     def chromosomes(self) -> list:
         '''The list of chromosome names.'''
         return list(self.data)
+
+    def _add_novel_gene(self, chrom, start, end, strand, info, novel_prefix='PB_novel_'):
+        n_novel = self.novel_genes
+        info.update({'chr': chrom, 'ID': f'{novel_prefix}{n_novel:05d}', 'strand': strand})
+        self.infos['novel_counter'] += 1
+        g=Gene(start, end, info, self)
+        self.data.setdefault(chrom, IntervalTree()).add(g)
+        return g
 
     def __str__(self):
         return '{} object with {} genes and {} transcripts'.format(type(self).__name__, self.n_genes, self.n_transcripts)

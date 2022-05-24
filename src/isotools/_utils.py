@@ -256,38 +256,47 @@ def _get_overlap(exons, transcripts):
     return ol
 
 
-def _find_splice_sites(exons, transcripts):
+def _find_splice_sites(sj, transcripts):
     '''Checks whether the splice sites of a new transcript are present in the set of transcripts.
     Avoids the computation of segment graph, which provides the same functionality.
 
-    :param exons: A list of exon tuples representing the transcript
+    :param sj: A list of 2 tuples with the splice site positions
     :type exons: list
+    :param transcripts: transcripts to scan
     :return: boolean array indicating whether the splice site is contained or not'''
 
-    sites = np.zeros((len(exons) - 1) * 2, dtype=bool)
+    sites = np.zeros((len(sj)) * 2, dtype=bool)
     # check exon ends
+    splice_junction_starts = {}
+    splice_junction_ends = {}
+    for i, ss in enumerate(sj):
+        splice_junction_starts.setdefault(ss[0], []).append(i)
+        splice_junction_ends.setdefault(ss[1], []).append(i)
+
     tr_list = [iter(tr['exons'][:-1]) for tr in transcripts if len(tr['exons']) > 1]
     current = [next(tr) for tr in tr_list]
-    for i, e in enumerate(exons[:-1]):
+    for sjs, idx in sorted(splice_junction_starts.items()):  # splice junction starts, sorted by position
         for j, tr_iter in enumerate(tr_list):
             try:
-                while(e[1] > current[j][1]):
+                while(sjs > current[j][1]):
                     current[j] = next(tr_iter)
-                if current[j][1] == e[1]:
-                    sites[i * 2] = True
+                if current[j][1] == sjs:
+                    for i in idx:
+                        sites[i * 2] = True
                     break
             except StopIteration:
                 continue
     # check exon starts
     tr_list = [iter(tr['exons'][1:]) for tr in transcripts if len(tr['exons']) > 1]
     current = [next(tr) for tr in tr_list]
-    for i, e in enumerate(exons[1:]):
+    for sje, idx in sorted(splice_junction_ends.items()):  # splice junction ends, sorted by position
         for j, tr_iter in enumerate(tr_list):
             try:
-                while(e[0] > current[j][0]):
+                while(sje > current[j][0]):
                     current[j] = next(tr_iter)
-                if current[j][0] == e[0]:
-                    sites[i * 2 + 1] = True
+                if current[j][0] == sje:
+                    for i in idx:
+                        sites[i * 2 + 1] = True
                     break
             except StopIteration:
                 continue

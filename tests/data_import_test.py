@@ -43,17 +43,24 @@ def test_import_csv_reconstruct():  # reconstruct gene structure from scratch
     cov_tab.to_csv('tests/data/example_1_cov.csv')
     isoseq.write_gtf('tests/data/example_1.gtf')
     isoseq_csv = Transcriptome.from_reference('tests/data/example_ref_isotools.pkl')
-    isoseq_csv.add_sample_from_csv('tests/data/example_1_cov.csv', 'tests/data/example_1.gtf')
+    isoseq_csv._add_novel_gene('nix',10,20,'-', {'exons':[10,20]}) #make it a little harder
+    id_map=isoseq_csv.add_sample_from_csv('tests/data/example_1_cov.csv', 'tests/data/example_1.gtf', reconstruct_genes=True)
+    remapped_genes={gid:gid2 for gid2,id_dict in id_map.items() for gid in id_dict.values()}
+    logger.info('remapped %s transcripts', sum(len(d) for d in id_map))
     discrepancy = False
-    for g in isoseq:
-        if g.is_expressed and g.ref_transcripts:
-            if g.id not in isoseq_csv:
-                logger.error('gene missing after csv import: %s' % str(g))
-                discrepancy = True
-            g_csv = isoseq_csv[g.id]
-            if len(g.transcripts) != len(g_csv.transcripts):
-                logger.error('number of transcripts for %s changed after csv import: %s != %s', g.id, len(g.transcripts), len(g_csv.transcripts))
-                discrepancy = True
+    for g in isoseq.iter_genes(query='EXPRESSED'):
+        if (g.is_annotated and g.id in remapped_genes) or (g.id not in isoseq_csv and g.id not in remapped_genes):
+            logger.error('gene missing/renamed after csv import: %s' % str(g))
+            discrepancy = True
+    for g_csv in isoseq_csv.iter_genes(query='EXPRESSED'):
+        if not g_csv.is_annotated and g_csv.id in remapped_genes:
+            gene_id=remapped_genes[g_csv.id]
+        else:
+            gene_id=g_csv.id
+        g = isoseq[gene_id]
+        if len(g.transcripts) != len(g_csv.transcripts):
+            logger.error('number of transcripts for %s changed after csv import: %s != %s', g.id, len(g.transcripts), len(g_csv.transcripts))
+            discrepancy = True
     assert not discrepancy, 'discrepancy found after csv import'
 
 
@@ -64,15 +71,22 @@ def test_import_csv():  # use gene structure from gtf
     cov_tab.to_csv('tests/data/example_1_cov.csv')
     isoseq.write_gtf('tests/data/example_1.gtf')
     isoseq_csv = Transcriptome.from_reference('tests/data/example_ref_isotools.pkl')
-    isoseq_csv.add_sample_from_csv('tests/data/example_1_cov.csv', 'tests/data/example_1.gtf', reconstruct_genes=False)
+    isoseq_csv._add_novel_gene('nix',10,20,'-', {'exons':[10,20]}) #make it a little harder
+    id_map=isoseq_csv.add_sample_from_csv('tests/data/example_1_cov.csv', 'tests/data/example_1.gtf', reconstruct_genes=False)
+    remapped_genes={v:k for k,v in id_map.items()}
+    logger.info('remapped %s genes', len(id_map))
     discrepancy = False
-    for g in isoseq:
-        if g.is_expressed and g.ref_transcripts:
-            if g.id not in isoseq_csv:
-                logger.error('gene missing after csv import: %s' % str(g))
-                discrepancy = True
-            g_csv = isoseq_csv[g.id]
-            if len(g.transcripts) != len(g_csv.transcripts):
-                logger.error('number of transcripts for %s changed after csv import: %s != %s', g.id, len(g.transcripts), len(g_csv.transcripts))
-                discrepancy = True
+    for g in isoseq.iter_genes(query='EXPRESSED'):
+        if (g.is_annotated and g.id in remapped_genes) or (g.id not in isoseq_csv and g.id not in remapped_genes):
+            logger.error('gene missing/renamed after csv import: %s' % str(g))
+            discrepancy = True
+    for g_csv in isoseq_csv.iter_genes(query='EXPRESSED'):
+        if not g_csv.is_annotated and g_csv.id in remapped_genes:
+            gene_id=remapped_genes[g_csv.id]
+        else:
+            gene_id=g_csv.id
+        g = isoseq[gene_id]
+        if len(g.transcripts) != len(g_csv.transcripts):
+            logger.error('number of transcripts for %s changed after csv import: %s != %s', g.id, len(g.transcripts), len(g_csv.transcripts))
+            discrepancy = True
     assert not discrepancy, 'discrepancy found after csv import'

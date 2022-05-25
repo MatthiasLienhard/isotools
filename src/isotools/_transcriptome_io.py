@@ -88,6 +88,11 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, samples=None,
                         fuzzy_junction=5, min_exonic_ref_coverage=.25):
     '''Imports expressed transcripts from coverage table and gtf/gff file, and adds it to the 'Transcriptome' object.
 
+    Transcript to gene assignment is either taken from the transcript_file, or recreated, as specified by the reconstruct_genes parameter.
+    In the first case, the genes are then matched to overlapping genes from the reference annotation by gene id.
+    In absence of a overlapping gene with same id, the gene is matched by splice junction, and renamed.
+    A map reflecting the the renaming is returned as a dictionary.
+
     :param coverage_csv_file: The name of the csv file with coverage information for all samples to be added.
         The file contains 3 columns "chr", "gene_id", and either "transcript_id" or "transcript_nr",
         and one column "<sample>_coverage" for each sample with the number of reads supporting the transcript.
@@ -99,6 +104,7 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, samples=None,
     :param min_exonic_ref_coverage: Minimal fraction of exonic overlap to assign to reference transcript if no splice junctions match.
         Also applies to mono-exonic transcripts
     :param progress_bar: Show the progress.
+    :return: Dict with map of renamed gene ids.
 '''
 
     cov_tab = pd.read_csv(coverage_csv_file)
@@ -111,7 +117,7 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, samples=None,
     assert not missing_cols, 'missing columns in coverage table: %s' % missing_cols
     # cov_tab.set_index('transcript_id')
     # assert cov_tab.index.is_unique, 'ambigous transcript ids in %s' % coverage_csv_file
-
+    
     logger.info('adding samples %s from csv', ' and '.join(samples))
     if add_chromosomes:
         chromosomes = None
@@ -133,7 +139,7 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, samples=None,
         try:
             tr = transcripts[row.gene_id][row.transcript_id]
             tr['transcript_id'] = row.transcript_id
-            tr['exons'] = exons[row.transcript_id]
+            tr['exons'] = [list(e) for e in exons[row.transcript_id]] # needs to be mutable
             tr['coverage'] = {sa: row[f'{sa}_coverage'] for sa in samples if row[f'{sa}_coverage'] > 0}
             tr['strand'] = gene_infos[row.chr][row.gene_id][0]['strand']  # gene_infos is a 3 tuple (info, start, end)
             tr['TSS'] = {sa: {tr['exons'][0][0]: row[f'{sa}_coverage']} for sa in samples if row[f'{sa}_coverage'] > 0}
@@ -143,6 +149,7 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, samples=None,
         except KeyError:
             logger.warning('skipping transcript %s from gene %s, missing infos in gtf', row.transcript_id, row.gene_id)
 
+    id_map={}
     novel_prefix = 'PB_novel_'
     if reconstruct_genes:
         # this approach ignores gene structure, and reassigns transcripts
@@ -152,23 +159,35 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, samples=None,
                 continue
             tr = transcripts[row.gene_id][row.transcript_id]
             gene = _add_sample_transcript(self, tr, row.chr, 'gtf', fuzzy_junction, min_exonic_ref_coverage)
+            
             if gene is None:
+                tr['_original_ids']=(row.gene_id, row.transcript_id)
                 novel.setdefault(row.chr, []).append(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr))
+            elif gene.id != row.gene_id:
+                id_map.setdefault(row.gene_id, {})[row.transcript_id]=gene.id
         for chrom in novel:
-            _add_novel_genes(self, IntervalTree(novel[chrom]), chrom, gene_prefix=novel_prefix)
+            novel_genes=_add_novel_genes(self, IntervalTree(novel[chrom]), chrom, gene_prefix=novel_prefix)
+            for novel_g in novel_genes:
+                for novel_tr in novel_g.transcripts:
+                    import_id=novel_tr.pop('_original_ids')
+                    if novel_g.id != import_id[0]:
+                        id_map.setdefault(import_id[0], {})[import_id[1]]=novel_g.id
     else:
         # use gene structure from gtf
         used_transcripts = set(cov_tab.transcript_id)
         for chrom in gene_infos:
             for gid, (g, start, end) in gene_infos[chrom].items():
                 # only transcripts with coverage
+                import_id=g['ID']
                 tr_list = [tr for trid, tr in transcripts[gid].items() if trid in used_transcripts]
                 # find best matching overlapping ref gene
                 gene = _add_sample_gene(self, start, end, g, tr_list, chrom, 'PB_novel_')
-
+                if import_id != gene.id:
+                    id_map[import_id]=gene.id
     # todo: extend sample_table
 
     self.make_index()
+    return id_map
 
 
 def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_junction=5, add_chromosomes=True, min_mapqual=0,
@@ -352,7 +371,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                         _ = tr.pop('bc_group', None)
                     n_reads -= cov
                     pbar.update(cov / 2)
-                _add_novel_genes(self, novel, chrom)
+                _=_add_novel_genes(self, novel, chrom)
 
                 pbar.update(n_reads / 2)  # some reads are not processed here, add them to the progress: chimeric, unmapped, secondary alignment
                 # logger.debug(f'imported {total_nc_reads_chr[chrom]} nonchimeric reads for {chrom}')
@@ -402,7 +421,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
             if gene is None:
                 novel.setdefault(chrom, []).append(tr)
         for chrom in novel:
-            _add_novel_genes(self, IntervalTree(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr) for tr in novel[chrom]), chrom)
+            _=_add_novel_genes(self, IntervalTree(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr) for tr in novel[chrom]), chrom)
+            
         # self.infos.setdefault('chimeric',{})[s_name]=chimeric # save all chimeric reads (for debugging)
     for g in self:
         if 'coverage' in g.data and g.data['coverage'] is not None:  # still valid splice graphs no new transcripts - add a row of zeros to coveage
@@ -706,6 +726,7 @@ def _add_novel_genes(t, novel, chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix='
     '"novel" is a tree of transcript intervals (not Gene objects) ,e.g. from one chromosome, that do not overlap any annotated or unanntoated gene'
     n_novel = t.novel_genes
     idx = {id(tr): i for i, tr in enumerate(novel)}
+    novel_gene_list=[]
     merge = list()
     for i, tr in enumerate(novel):
         merge.append({tr})
@@ -736,9 +757,9 @@ def _add_novel_genes(t, novel, chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix='
         #    tr['PAS'] = {sample_name: tr['PAS']}
         #    if 'reads' in tr:
         #        tr['reads'] = {sample_name: tr['reads']}
-        t._add_novel_gene(chrom, start, end, strand, {'transcripts': trL}, gene_prefix)
+        novel_gene_list.append(t._add_novel_gene(chrom, start, end, strand, {'transcripts': trL}, gene_prefix))
         logging.debug('merging transcripts of novel gene %s: %s', n_novel, trL)
-
+    return novel_gene_list
 
 def _find_matching_gene(genes_ol, exons, min_exon_coverage):
     '''check the splice site intersect of all overlapping genes and return

@@ -667,7 +667,7 @@ def _add_sample_gene(t, g_start, g_end, g_infos, tr_list, chrom, novel_prefix):
                 _combine_transcripts(tr2, tr)  # potentially loosing information
                 break
         else:
-            if has_overlap((tr['exons'][0][0], tr['exons'][-1][1]), (best_gene.start, best_gene.end)):
+            if best_gene.is_annotated and has_overlap((tr['exons'][0][0], tr['exons'][-1][1]), (best_gene.start, best_gene.end)):
                 # potentially problematic: elsefound [(genename, idx),...] idx does not refere to transcript splice site
                 try:
                     tr['annotation'] = best_gene.ref_segment_graph.get_alternative_splicing(tr['exons'], elsefound)
@@ -675,7 +675,9 @@ def _add_sample_gene(t, g_start, g_end, g_infos, tr_list, chrom, novel_prefix):
                     logger.error('issue categorizing transcript %s with respect to %s', tr['exons'], str(best_gene))
                     raise
             else:
-                tr['annotation'] = (4,{'intergenic':[]}) # actually may overlap other genes...
+                genes_ol_strand = [g for g in t.data[chrom][g_start: g_end] if g.strand == g_infos['strand'] and g.is_annotated]
+                genes_ol_anti = [g for g in t.data[chrom][g_start: g_end] if g.strand != g_infos['strand'] and g.is_annotated]
+                tr['annotation'] = (4,_get_novel_type(tr['exons'], genes_ol_anti, genes_ol_strand)) # actually may overlap other genes...
             best_gene.data.setdefault('transcripts', []).append(tr)
     return best_gene
 

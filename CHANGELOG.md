@@ -2,10 +2,10 @@
 
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
-* think about adding / merging in transcripts/coverage from gtf file (maybe including a coverage table)
 
 ## [0.2.11]
 * added function to import samples from csv/gtf to import transcriptome reconstructions / quantifications from other tools.
+* dropped requirement for gtf files to be tabix indexed.
 
 
 ## [0.2.10]

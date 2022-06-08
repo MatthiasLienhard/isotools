@@ -3,7 +3,7 @@ from isotools.transcriptome import Transcriptome
 from isotools._utils import splice_identical
 import logging
 logger = logging.getLogger('isotools')
-
+logger.setLevel(logging.INFO)
 
 @pytest.mark.dependency()
 def test_import_gff():
@@ -43,10 +43,16 @@ def test_import_csv_reconstruct():  # reconstruct gene structure from scratch
     cov_tab.to_csv('tests/data/example_1_cov.csv')
     isoseq.write_gtf('tests/data/example_1.gtf')
     isoseq_csv = Transcriptome.from_reference('tests/data/example_ref_isotools.pkl')
-    isoseq_csv._add_novel_gene('nix',10,20,'-', {'exons':[10,20]}) #make it a little harder
-    id_map=isoseq_csv.add_sample_from_csv('tests/data/example_1_cov.csv', 'tests/data/example_1.gtf', reconstruct_genes=True)
+    isoseq_csv._add_novel_gene('nix',10,20,'-', {'exons':[10,20]}) # additional gene should not confuse/break the function
+    id_map=isoseq_csv.add_sample_from_csv('tests/data/example_1_cov.csv', 'tests/data/example_1.gtf', reconstruct_genes=True, sample_properties=isoseq.sample_table, sep=',')
     remapped_genes={gid:gid2 for gid2,id_dict in id_map.items() for gid in id_dict.values()}
     logger.info('remapped %s transcripts', sum(len(d) for d in id_map))
+    assert set(isoseq.samples) ==set(isoseq_csv.samples), 'discrepant samples after csv import'
+    stab1, stab2=isoseq.sample_table.set_index('name'),isoseq_csv.sample_table.set_index('name')
+    for sa in isoseq.samples:
+        assert stab1.loc[sa,'group']==stab2.loc[sa,'group'], 'wrong group after csv import for sample %s'%sa
+        assert stab1.loc[sa,'nonchimeric_reads']==stab2.loc[sa,'nonchimeric_reads'], 'wrong number of reads after csv import for sample %s'%sa
+
     discrepancy = False
     for g in isoseq.iter_genes(query='EXPRESSED'):
         if (g.is_annotated and g.id in remapped_genes) or (g.id not in isoseq_csv and g.id not in remapped_genes):
@@ -72,9 +78,14 @@ def test_import_csv():  # use gene structure from gtf
     isoseq.write_gtf('tests/data/example_1.gtf')
     isoseq_csv = Transcriptome.from_reference('tests/data/example_ref_isotools.pkl')
     isoseq_csv._add_novel_gene('nix',10,20,'-', {'exons':[10,20]}) #make it a little harder
-    id_map=isoseq_csv.add_sample_from_csv('tests/data/example_1_cov.csv', 'tests/data/example_1.gtf', reconstruct_genes=False)
-    remapped_genes={v:k for k,v in id_map.items()}
+    id_map=isoseq_csv.add_sample_from_csv('tests/data/example_1_cov.csv', 'tests/data/example_1.gtf', reconstruct_genes=True, sample_properties=isoseq.sample_table, sep=',')
+    remapped_genes={gid:k for k,v in id_map.items() for gid in v.values()}
     logger.info('remapped %s genes', len(id_map))
+    assert set(isoseq.samples) ==set(isoseq_csv.samples), 'discrepant samples after csv import'
+    stab1, stab2=isoseq.sample_table.set_index('name'),isoseq_csv.sample_table.set_index('name')
+    for sa in isoseq.samples:
+        assert stab1.loc[sa,'group']==stab2.loc[sa,'group'], 'wrong group after csv import for sample %s'%sa
+        assert stab1.loc[sa,'nonchimeric_reads']==stab2.loc[sa,'nonchimeric_reads'], 'wrong number of reads after csv import for sample %s'%sa
     discrepancy = False
     for g in isoseq.iter_genes(query='EXPRESSED'):
         if (g.is_annotated and g.id in remapped_genes) or (g.id not in isoseq_csv and g.id not in remapped_genes):

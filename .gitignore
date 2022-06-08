@@ -8,6 +8,7 @@
 *.pyc
 *.log
 
+
 #example data
 *.bam
 *.bam.bai

@@ -1,3 +1,4 @@
+from random import sample
 import numpy as np
 # from numpy.lib.function_base import percentile, quantile
 import pandas as pd
@@ -84,8 +85,8 @@ def remove_samples(self, sample_names):
         g.data['coverage'] = None
 
 
-def add_sample_from_csv(self, coverage_csv_file, transcripts_file, samples=None, add_chromosomes=True, reconstruct_genes=True,
-                        fuzzy_junction=5, min_exonic_ref_coverage=.25):
+def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id_col=None, sample_cov_cols=None, sample_properties=None, add_chromosomes=True, reconstruct_genes=True,
+                        fuzzy_junction=5, min_exonic_ref_coverage=.25, sep='\t'):
     '''Imports expressed transcripts from coverage table and gtf/gff file, and adds it to the 'Transcriptome' object.
 
     Transcript to gene assignment is either taken from the transcript_file, or recreated, as specified by the reconstruct_genes parameter.
@@ -94,35 +95,70 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, samples=None,
     A map reflecting the the renaming is returned as a dictionary.
 
     :param coverage_csv_file: The name of the csv file with coverage information for all samples to be added.
-        The file contains 3 columns "chr", "gene_id", and either "transcript_id" or "transcript_nr",
-        and one column "<sample>_coverage" for each sample with the number of reads supporting the transcript.
+        The file contains columns unique ids for the transcripts, and one column with the coverage for each sample 
     :param transcripts_file: Transcripts to be added to the 'Transcriptome' object, in gtf or gff/gff3 format.
-        Ids should correspond to ids provided in the coverage_csv_file.
-    :param samples: Name of the new sample. If specified, all reads are assumed to belong to this sample.
+        Gene and transcript ids should correspond to ids provided in the coverage_csv_file.
+    :param transcript_id_col: Column name with the transcript ids. 
+        Alternatively, a list of column names can be provided, in which case the transcript id is concatenated from the provided columns, 
+        seperated by an underscore ("_"). If not specified, checks for columns 'transcript_id' or ['gene_id', 'transcript_nr'].
+    :param sample_cov_cols: Dict with sample names for the new samples as keys, and corresponding coverage column names in coverage_csv_file as values.
+        If not specified, a new sample is added for each <name>_coverage column . 
+    :param sample_properties: Additional properties of the samples, that get added to the sample table, and can be used to group or stratify the samples. 
+        Can be provided either as a dict with sample names as keys, and the respective properties dicts as the values, 
+        or as a data frame with a column "name" or with the sample names in the index, and the properties in the additional columns. 
     :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added.
     :param reconstruct_genes: If True, transcript gene assignment from gtf is ignored, and transcripts are grouped to genes from scratch.
     :param min_exonic_ref_coverage: Minimal fraction of exonic overlap to assign to reference transcript if no splice junctions match.
         Also applies to mono-exonic transcripts
     :param progress_bar: Show the progress.
+    :param sep: Specify the seperator for the coverage_csv_file.
     :return: Dict with map of renamed gene ids.
 '''
 
-    cov_tab = pd.read_csv(coverage_csv_file)
-    if samples is None:
-        samples = [c.replace('_coverage', '') for c in cov_tab.columns if '_coverage' in c]
-    required_cols = ["chr", "gene_id"]+[f'{s}_coverage' for s in samples]
-    missing_cols = [c for c in required_cols if c not in cov_tab.columns]
-    if 'transcript_id' not in cov_tab.columns:
-        cov_tab['transcript_id'] = cov_tab.gene_id+'_'+cov_tab.transcript_nr.astype(str)
-    assert not missing_cols, 'missing columns in coverage table: %s' % missing_cols
+    cov_tab = pd.read_csv(coverage_csv_file, sep=sep)
+    if sample_cov_cols is None:
+        sample_cov_cols = {c.replace('_coverage', ''): c for c in cov_tab.columns if '_coverage' in c}
+    else:
+        assert all(c in cov_tab for c in sample_cov_cols.values()), 'coverage cols missing in %s: %s' % (
+            coverage_csv_file, ', '.join(c for c in sample_cov_cols.values() if c not in cov_tab))
+    samples = list(sample_cov_cols)
+
+    if transcript_id_col is None:
+        if 'transcript_id' in cov_tab.columns:
+            pass
+        elif 'gene_id' in cov_tab.columns  and 'transcript_nr' in cov_tab.columns:        
+            cov_tab['transcript_id'] = cov_tab.gene_id+'_'+cov_tab.transcript_nr.astype(str)
+        else:
+            raise ValueError('"transcript_id_cols" not specified, and coverage table does not contain "transcript_id", nor "gene_id" and "transcript_nr"')
+        transcript_id_cols='transcript_id'
+    elif isinstance(transcript_id_col,list):
+        assert all(c in cov_tab for c in transcript_id_col) ,'missing specified transcript_id_col'
+        cov_tab['transcript_id'] = ['_'.join(str(v) for v in row.values()) for _,row in cov_tab[transcript_id_col].iterrows()]
+        transcript_id_cols='transcript_id'
+    else:
+        assert transcript_id_col in cov_tab,'missing specified transcript_id_col'
+        cov_tab['transcript_id'] =cov_tab[transcript_id_col] 
+    known_sa = set(samples).intersection(self.samples)
+    assert not known_sa, 'Attempt to add known samples: %s' % known_sa
     # cov_tab.set_index('transcript_id')
     # assert cov_tab.index.is_unique, 'ambigous transcript ids in %s' % coverage_csv_file
-    
-    logger.info('adding samples %s from csv', ' and '.join(samples))
+    # check sample properties
+    if sample_properties is None:
+        sample_properties = {sa: {} for sa in samples}
+    elif isinstance(sample_properties, pd.DataFrame):
+        if 'name' in sample_properties:
+            sample_properties = sample_properties.set_index('name')
+        sample_properties = {sa: {k: v for k, v in row.items() if k not in {'file', 'nonchimeric_reads', 'chimeric_reads'}}
+                             for sa, row in sample_properties.iterrows()}
+    assert all(sa in sample_properties for sa in samples), 'missing sample_properties for samples %s' % ', '.join(
+        (sa for sa in samples if sa not in sample_properties))
+    logger.info('adding samples "%s" from csv', '", "'.join(samples))
+    # consider chromosomes not in the referernce?
     if add_chromosomes:
         chromosomes = None
     else:
         chromosomes = self.chromosomes
+
     file_format = path.splitext(transcripts_file)[1].lstrip('.')
     if file_format == 'gz':
         file_format = path.splitext(transcripts_file[:-3])[1].lstrip('.')
@@ -133,58 +169,78 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, samples=None,
     else:
         logger.warning('unknown file format %s of the transcriptome file', file_format)
 
+    logger.debug('sorting exon positions...')
+    for tid in exons:
+        exons[tid].sort()
+
+    if 'gene_id' not in cov_tab:
+        gene_id_dict={tid:gid for gid, tids in transcripts.items() for tid in tids }
+        try:
+            cov_tab['gene_id']=[gene_id_dict[tid] for tid in cov_tab.transcript_id]
+        except KeyError as e:
+            logger.warning('transcript_id %s from csv file not found in gtf.' % e.args[0])
+    if 'chr' not in cov_tab:
+        chrom_dict={gid:chrom for chrom, gids in gene_infos.items() for gid in gids}
+        try:
+            cov_tab['chr'] = [chrom_dict[gid] for gid in cov_tab.gene_id]
+        except KeyError as e:
+            logger.warning('gene_id %s from csv file not found in gtf.', e.args[0])
+
     for _, row in cov_tab.iterrows():
-        if chromosomes is not None and row.chrom not in chromosomes:
+        if chromosomes is not None and row.chr not in chromosomes:
             continue
         try:
             tr = transcripts[row.gene_id][row.transcript_id]
             tr['transcript_id'] = row.transcript_id
-            tr['exons'] = [list(e) for e in exons[row.transcript_id]] # needs to be mutable
-            tr['coverage'] = {sa: row[f'{sa}_coverage'] for sa in samples if row[f'{sa}_coverage'] > 0}
+            tr['exons'] = sorted([list(e) for e in exons[row.transcript_id]])  # needs to be mutable
+            tr['coverage'] = {sa: row[sample_cov_cols[sa]] for sa in samples if row[sample_cov_cols[sa]] > 0}
             tr['strand'] = gene_infos[row.chr][row.gene_id][0]['strand']  # gene_infos is a 3 tuple (info, start, end)
-            tr['TSS'] = {sa: {tr['exons'][0][0]: row[f'{sa}_coverage']} for sa in samples if row[f'{sa}_coverage'] > 0}
-            tr['PAS'] = {sa: {tr['exons'][-1][1]: row[f'{sa}_coverage']} for sa in samples if row[f'{sa}_coverage'] > 0}
+            tr['TSS'] = {sa: {tr['exons'][0][0]: row[sample_cov_cols[sa]]} for sa in samples if row[sample_cov_cols[sa]] > 0}
+            tr['PAS'] = {sa: {tr['exons'][-1][1]: row[sample_cov_cols[sa]]} for sa in samples if row[sample_cov_cols[sa]] > 0}
             if tr['strand'] == '-':
                 tr['TSS'], tr['PAS'] = tr['PAS'], tr['TSS']
-        except KeyError:
-            logger.warning('skipping transcript %s from gene %s, missing infos in gtf', row.transcript_id, row.gene_id)
+        except KeyError as e:
+            logger.warning('skipping transcript %s from gene %s, missing infos in gtf: %s', row.transcript_id, row.gene_id, e.args[0])
 
-    id_map={}
+    id_map = {}
     novel_prefix = 'PB_novel_'
     if reconstruct_genes:
         # this approach ignores gene structure, and reassigns transcripts
         novel = {}
         for _, row in cov_tab.iterrows():
-            if chromosomes is not None and row.chrom not in chromosomes:
+            if chromosomes is not None and row.chr not in chromosomes:
                 continue
             tr = transcripts[row.gene_id][row.transcript_id]
             gene = _add_sample_transcript(self, tr, row.chr, 'gtf', fuzzy_junction, min_exonic_ref_coverage)
-            
+
             if gene is None:
-                tr['_original_ids']=(row.gene_id, row.transcript_id)
+                tr['_original_ids'] = (row.gene_id, row.transcript_id)
                 novel.setdefault(row.chr, []).append(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr))
             elif gene.id != row.gene_id:
-                id_map.setdefault(row.gene_id, {})[row.transcript_id]=gene.id
+                id_map.setdefault(row.gene_id, {})[row.transcript_id] = gene.id
         for chrom in novel:
-            novel_genes=_add_novel_genes(self, IntervalTree(novel[chrom]), chrom, gene_prefix=novel_prefix)
+            novel_genes = _add_novel_genes(self, IntervalTree(novel[chrom]), chrom, gene_prefix=novel_prefix)
             for novel_g in novel_genes:
                 for novel_tr in novel_g.transcripts:
-                    import_id=novel_tr.pop('_original_ids')
+                    import_id = novel_tr.pop('_original_ids')
                     if novel_g.id != import_id[0]:
-                        id_map.setdefault(import_id[0], {})[import_id[1]]=novel_g.id
+                        id_map.setdefault(import_id[0], {})[import_id[1]] = novel_g.id
     else:
         # use gene structure from gtf
         used_transcripts = set(cov_tab.transcript_id)
         for chrom in gene_infos:
             for gid, (g, start, end) in gene_infos[chrom].items():
                 # only transcripts with coverage
-                import_id=g['ID']
+                import_id = g['ID']
                 tr_list = [tr for trid, tr in transcripts[gid].items() if trid in used_transcripts]
                 # find best matching overlapping ref gene
-                gene = _add_sample_gene(self, start, end, g, tr_list, chrom, 'PB_novel_')
+                gene = _add_sample_gene(self, start, end, g, tr_list, chrom, novel_prefix)
                 if import_id != gene.id:
-                    id_map[import_id]=gene.id
+                    id_map[import_id] = gene.id
     # todo: extend sample_table
+    for sa in samples:
+        sample_properties[sa].update({'name': sa, 'file': coverage_csv_file, 'nonchimeric_reads': cov_tab[sample_cov_cols[sa]].sum(), 'chimeric_reads': 0})
+        self.infos['sample_table'] = self.sample_table.append(sample_properties[sa], ignore_index=True)
 
     self.make_index()
     return id_map
@@ -371,7 +427,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                         _ = tr.pop('bc_group', None)
                     n_reads -= cov
                     pbar.update(cov / 2)
-                _=_add_novel_genes(self, novel, chrom)
+                _ = _add_novel_genes(self, novel, chrom)
 
                 pbar.update(n_reads / 2)  # some reads are not processed here, add them to the progress: chimeric, unmapped, secondary alignment
                 # logger.debug(f'imported {total_nc_reads_chr[chrom]} nonchimeric reads for {chrom}')
@@ -421,8 +477,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
             if gene is None:
                 novel.setdefault(chrom, []).append(tr)
         for chrom in novel:
-            _=_add_novel_genes(self, IntervalTree(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr) for tr in novel[chrom]), chrom)
-            
+            _ = _add_novel_genes(self, IntervalTree(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr) for tr in novel[chrom]), chrom)
+
         # self.infos.setdefault('chimeric',{})[s_name]=chimeric # save all chimeric reads (for debugging)
     for g in self:
         if 'coverage' in g.data and g.data['coverage'] is not None:  # still valid splice graphs no new transcripts - add a row of zeros to coveage
@@ -570,13 +626,12 @@ def _add_sample_gene(t, g_start, g_end, g_infos, tr_list, chrom, novel_prefix):
             tr['annotation'] = (4, {'intergenic': []})
         return t._add_novel_gene(chrom, g_start, g_end, g_infos['strand'], {'transcripts': tr_list}, novel_prefix)
 
-    
     # try matching the gene by id
     try:
         best_gene = t[g_infos['ID']]
         if not best_gene.is_annotated or not has_overlap((best_gene.start, best_gene.end), (g_start, g_end)):
             best_gene = None
-        elsefound=[] # todo: to annotate as fusion, we would need to check for uncovered splice sites, and wether other genes cover them
+        elsefound = []  # todo: to annotate as fusion, we would need to check for uncovered splice sites, and wether other genes cover them
     except KeyError:
         best_gene = None
 
@@ -612,8 +667,15 @@ def _add_sample_gene(t, g_start, g_end, g_infos, tr_list, chrom, novel_prefix):
                 _combine_transcripts(tr2, tr)  # potentially loosing information
                 break
         else:
-            # potentially problematic: elsefound [(genename, idx),...] idx does not refere to transcript splice site
-            tr['annotation'] = best_gene.ref_segment_graph.get_alternative_splicing(tr['exons'], elsefound)
+            if has_overlap((tr['exons'][0][0], tr['exons'][-1][1]), (best_gene.start, best_gene.end)):
+                # potentially problematic: elsefound [(genename, idx),...] idx does not refere to transcript splice site
+                try:
+                    tr['annotation'] = best_gene.ref_segment_graph.get_alternative_splicing(tr['exons'], elsefound)
+                except Exception:
+                    logger.error('issue categorizing transcript %s with respect to %s', tr['exons'], str(best_gene))
+                    raise
+            else:
+                tr['annotation'] = (4,{'intergenic':[]}) # actually may overlap other genes...
             best_gene.data.setdefault('transcripts', []).append(tr)
     return best_gene
 
@@ -726,7 +788,7 @@ def _add_novel_genes(t, novel, chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix='
     '"novel" is a tree of transcript intervals (not Gene objects) ,e.g. from one chromosome, that do not overlap any annotated or unanntoated gene'
     n_novel = t.novel_genes
     idx = {id(tr): i for i, tr in enumerate(novel)}
-    novel_gene_list=[]
+    novel_gene_list = []
     merge = list()
     for i, tr in enumerate(novel):
         merge.append({tr})
@@ -760,6 +822,7 @@ def _add_novel_genes(t, novel, chrom, spj_iou_th=0, reg_iou_th=.5, gene_prefix='
         novel_gene_list.append(t._add_novel_gene(chrom, start, end, strand, {'transcripts': trL}, gene_prefix))
         logging.debug('merging transcripts of novel gene %s: %s', n_novel, trL)
     return novel_gene_list
+
 
 def _find_matching_gene(genes_ol, exons, min_exon_coverage):
     '''check the splice site intersect of all overlapping genes and return
@@ -1179,10 +1242,10 @@ def gene_table(self, **filter_args):  # ideas: filter, extra_columns
 
     Exports all genes within region to a table.
 
-    :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string. If omitted specify the complete genome.'''
+    :param filter_args: Parameters (e.g. "region", "query") are passed to Transcriptome.iter_genes.'''
 
-    colnames = ['chr', 'start', 'end', 'strand', 'gene_name', 'n_transcripts']
-    rows = [(g.chrom, g.start, g.end, g.strand, g.id, g.n_transcripts) for g in self.iter_genes(**filter_args)]
+    colnames = ['chr', 'start', 'end', 'strand', 'gene_id', 'gene_name', 'n_transcripts']
+    rows = [(g.chrom, g.start, g.end, g.strand, g.id, g.name, g.n_transcripts) for g in self.iter_genes(**filter_args)]
     df = pd.DataFrame(rows, columns=colnames)
     return(df)
 
@@ -1196,13 +1259,10 @@ def transcript_table(self,  samples=None,  groups=None, coverage=False, tpm=Fals
     :param groups: provide groups as a dict (as from Transcriptome.groups()), for which coverage  / expression information is added.
     :param coverage: If set, coverage information is added for specified samples / groups.
     :param tpm: If set, expression information (in tpm) is added for specified samples / groups.
+    :param tpm_pseudocount: This value is added to the coverage for each transcript, before calculating tpm.
     :param extra_columns: Specify the additional information added to the table.
         These can be any transcrit property as defined by the key in the transcript dict.
-    :param region: Specify the region, either as (chr, start, end) tuple or as "chr:start-end" string.
-        If omitted specify the complete genome.
-    :param query: Specify transcript filter query.
-    :param min_coverage: minimum required total coverage.
-    :params max_coverage: maximal allowed total coverage.'''
+    :param filter_args: Parameters (e.g. "region", "query", "min_coverage",...) are passed to Transcriptome.iter_transcripts.'''
 
     if samples is None:
         if groups is None:

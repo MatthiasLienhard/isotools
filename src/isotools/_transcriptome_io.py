@@ -1,4 +1,5 @@
 from random import sample
+from matplotlib import use
 import numpy as np
 # from numpy.lib.function_base import percentile, quantile
 import pandas as pd
@@ -185,11 +186,15 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
             cov_tab['chr'] = [chrom_dict[gid] for gid in cov_tab.gene_id]
         except KeyError as e:
             logger.warning('gene_id %s from csv file not found in gtf.', e.args[0])
-
+    
+    used_transcripts = set()
     for _, row in cov_tab.iterrows():
         if chromosomes is not None and row.chr not in chromosomes:
             continue
+        if all(row[c] == 0 for c in sample_cov_cols.values()):
+            continue
         try:
+            assert row.transcript_id not in used_transcripts
             tr = transcripts[row.gene_id][row.transcript_id]
             tr['transcript_id'] = row.transcript_id
             tr['exons'] = sorted([list(e) for e in exons[row.transcript_id]])  # needs to be mutable
@@ -199,16 +204,18 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
             tr['PAS'] = {sa: {tr['exons'][-1][1]: row[sample_cov_cols[sa]]} for sa in samples if row[sample_cov_cols[sa]] > 0}
             if tr['strand'] == '-':
                 tr['TSS'], tr['PAS'] = tr['PAS'], tr['TSS']
+            used_transcripts.add(row.transcript_id)
         except KeyError as e:
             logger.warning('skipping transcript %s from gene %s, missing infos in gtf: %s', row.transcript_id, row.gene_id, e.args[0])
-
+        except AssertionError:
+            logger.warning('skipping transcript %s from gene %s: duplicate transcript id', row.transcript_id, row.gene_id)
     id_map = {}
     novel_prefix = 'PB_novel_'
     if reconstruct_genes:
         # this approach ignores gene structure, and reassigns transcripts
         novel = {}
         for _, row in cov_tab.iterrows():
-            if chromosomes is not None and row.chr not in chromosomes:
+            if row.transcript_id not in used_transcripts:
                 continue
             tr = transcripts[row.gene_id][row.transcript_id]
             gene = _add_sample_transcript(self, tr, row.chr, 'gtf', fuzzy_junction, min_exonic_ref_coverage)
@@ -227,7 +234,7 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
                         id_map.setdefault(import_id[0], {})[import_id[1]] = novel_g.id
     else:
         # use gene structure from gtf
-        used_transcripts = set(cov_tab.transcript_id)
+        
         for chrom in gene_infos:
             for gid, (g, start, end) in gene_infos[chrom].items():
                 # only transcripts with coverage
@@ -769,7 +776,7 @@ def _combine_transcripts(established, new_tr):
                     established.setdefault('long_intron_chimeric', {}).setdefault(sample_name, {}).setdefault(introns, 0)
                     established['long_intron_chimeric'][sample_name][introns] += new_tr['long_intron_chimeric'][sample_name][introns]
     except BaseException:
-        logger.error('error when merging %s of sample %s into %s', new_tr, sample_name, established)
+        logger.error('error when merging %s into %s', new_tr, established)
         raise
 
 

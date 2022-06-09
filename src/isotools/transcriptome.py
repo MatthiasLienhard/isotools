@@ -17,6 +17,7 @@ logger = logging.getLogger('isotools')
 # _trnascriptome_plots.py (plots)
 # _transcriptome_filter.py (gene/transcript iteration and filtering)
 
+
 class Transcriptome:
     '''Contains sequencing data and annotation for Long Read Transcriptome Sequencing (LRTS) Experiments.
     '''
@@ -63,7 +64,6 @@ class Transcriptome:
                 tr.filter['transcript'][tag] = f'"{subcat}" in annotation[1]'
             for i, cat in enumerate(SPLICE_CATEGORY):
                 tr.filter['transcript'][cat] = f'annotation[0]=={i}'
-            
 
         elif file_format == 'pkl':
             # warn if kwargs are specified: kwargs are ignored
@@ -221,10 +221,10 @@ class Transcriptome:
 
     def _add_novel_gene(self, chrom, start, end, strand, info, novel_prefix='PB_novel_'):
         n_novel = self.novel_genes
-        info.update({'chr': chrom, 'ID': f'{novel_prefix}{n_novel:05d}', 'strand': strand})
-        self.infos['novel_counter'] += 1
-        g=Gene(start, end, info, self)
+        info.update({'chr': chrom, 'ID': f'{novel_prefix}{n_novel+1:05d}', 'strand': strand})
+        g = Gene(start, end, info, self)
         self.data.setdefault(chrom, IntervalTree()).add(g)
+        self.infos['novel_counter'] += 1
         return g
 
     def __str__(self):

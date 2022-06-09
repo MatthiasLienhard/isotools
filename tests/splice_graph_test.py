@@ -8,10 +8,11 @@ from isotools._utils import _find_splice_sites, _get_overlap, _get_exonic_region
 def test_import_find_splice_site():
     isoseq = Transcriptome.load('tests/data/example_1_isotools.pkl')
     for g, _, tr in isoseq.iter_transcripts(query='not NOVEL_GENE'):
-        sj=[(e1[1], e2[0]) for e1, e2 in pairwise(tr['exons'])]
+        sj = [(e1[1], e2[0]) for e1, e2 in pairwise(tr['exons'])]
         c1 = g.ref_segment_graph.find_splice_sites(sj)
         c2 = _find_splice_sites(sj, g.ref_transcripts)
         assert all(c1 == c2), 'isotools._transcriptome_io._find_splice_sites and Segment_Graph.find_splice_sites yield different results'
+
 
 @pytest.mark.dependency()
 def test_exon_regions():

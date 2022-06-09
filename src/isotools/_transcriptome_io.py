@@ -1,5 +1,3 @@
-from random import sample
-from matplotlib import use
 import numpy as np
 # from numpy.lib.function_base import percentile, quantile
 import pandas as pd
@@ -86,27 +84,28 @@ def remove_samples(self, sample_names):
         g.data['coverage'] = None
 
 
-def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id_col=None, sample_cov_cols=None, sample_properties=None, add_chromosomes=True, reconstruct_genes=True,
-                        fuzzy_junction=5, min_exonic_ref_coverage=.25, sep='\t'):
+def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id_col=None, sample_cov_cols=None, sample_properties=None, add_chromosomes=True,
+                        reconstruct_genes=True, fuzzy_junction=5, min_exonic_ref_coverage=.25, sep='\t'):
     '''Imports expressed transcripts from coverage table and gtf/gff file, and adds it to the 'Transcriptome' object.
 
-    Transcript to gene assignment is either taken from the transcript_file, or recreated, as specified by the reconstruct_genes parameter.
+    Transcript to gene assignment is either taken from the transcript_file, or recreated,
+    as specified by the reconstruct_genes parameter.
     In the first case, the genes are then matched to overlapping genes from the reference annotation by gene id.
     In absence of a overlapping gene with same id, the gene is matched by splice junction, and renamed.
     A map reflecting the the renaming is returned as a dictionary.
 
     :param coverage_csv_file: The name of the csv file with coverage information for all samples to be added.
-        The file contains columns unique ids for the transcripts, and one column with the coverage for each sample 
+        The file contains columns unique ids for the transcripts, and one column with the coverage for each sample
     :param transcripts_file: Transcripts to be added to the 'Transcriptome' object, in gtf or gff/gff3 format.
         Gene and transcript ids should correspond to ids provided in the coverage_csv_file.
-    :param transcript_id_col: Column name with the transcript ids. 
-        Alternatively, a list of column names can be provided, in which case the transcript id is concatenated from the provided columns, 
+    :param transcript_id_col: Column name with the transcript ids.
+        Alternatively, a list of column names can be provided, in which case the transcript id is concatenated from the provided columns,
         seperated by an underscore ("_"). If not specified, checks for columns 'transcript_id' or ['gene_id', 'transcript_nr'].
     :param sample_cov_cols: Dict with sample names for the new samples as keys, and corresponding coverage column names in coverage_csv_file as values.
-        If not specified, a new sample is added for each <name>_coverage column . 
-    :param sample_properties: Additional properties of the samples, that get added to the sample table, and can be used to group or stratify the samples. 
-        Can be provided either as a dict with sample names as keys, and the respective properties dicts as the values, 
-        or as a data frame with a column "name" or with the sample names in the index, and the properties in the additional columns. 
+        If not specified, a new sample is added for each <name>_coverage column.
+    :param sample_properties: Additional properties of the samples, that get added to the sample table, and can be used to group or stratify the samples.
+        Can be provided either as a dict with sample names as keys, and the respective properties dicts as the values,
+        or as a data frame with a column "name" or with the sample names in the index, and the properties in the additional columns.
     :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added.
     :param reconstruct_genes: If True, transcript gene assignment from gtf is ignored, and transcripts are grouped to genes from scratch.
     :param min_exonic_ref_coverage: Minimal fraction of exonic overlap to assign to reference transcript if no splice junctions match.
@@ -127,19 +126,20 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
     if transcript_id_col is None:
         if 'transcript_id' in cov_tab.columns:
             pass
-        elif 'gene_id' in cov_tab.columns  and 'transcript_nr' in cov_tab.columns:        
+        elif 'gene_id' in cov_tab.columns and 'transcript_nr' in cov_tab.columns:
             cov_tab['transcript_id'] = cov_tab.gene_id+'_'+cov_tab.transcript_nr.astype(str)
         else:
             raise ValueError('"transcript_id_cols" not specified, and coverage table does not contain "transcript_id", nor "gene_id" and "transcript_nr"')
-        transcript_id_cols='transcript_id'
-    elif isinstance(transcript_id_col,list):
-        assert all(c in cov_tab for c in transcript_id_col) ,'missing specified transcript_id_col'
-        cov_tab['transcript_id'] = ['_'.join(str(v) for v in row.values()) for _,row in cov_tab[transcript_id_col].iterrows()]
-        transcript_id_cols='transcript_id'
+        transcript_id_cols = 'transcript_id'
+    elif isinstance(transcript_id_col, list):
+        assert all(c in cov_tab for c in transcript_id_col), 'missing specified transcript_id_col'
+        cov_tab['transcript_id'] = ['_'.join(str(v) for v in row.values()) for _, row in cov_tab[transcript_id_col].iterrows()]
+        transcript_id_cols = 'transcript_id'
     else:
-        assert transcript_id_col in cov_tab,'missing specified transcript_id_col'
-        cov_tab['transcript_id'] =cov_tab[transcript_id_col] 
+        assert transcript_id_col in cov_tab, 'missing specified transcript_id_col'
+        cov_tab['transcript_id'] = cov_tab[transcript_id_col]
     known_sa = set(samples).intersection(self.samples)
+    assert transcript_id_cols == 'transcript_id'  # could be optimized, but code is easier when the id column always is transcript_id
     assert not known_sa, 'Attempt to add known samples: %s' % known_sa
     # cov_tab.set_index('transcript_id')
     # assert cov_tab.index.is_unique, 'ambigous transcript ids in %s' % coverage_csv_file
@@ -175,18 +175,18 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
         exons[tid].sort()
 
     if 'gene_id' not in cov_tab:
-        gene_id_dict={tid:gid for gid, tids in transcripts.items() for tid in tids }
+        gene_id_dict = {tid: gid for gid, tids in transcripts.items() for tid in tids}
         try:
-            cov_tab['gene_id']=[gene_id_dict[tid] for tid in cov_tab.transcript_id]
+            cov_tab['gene_id'] = [gene_id_dict[tid] for tid in cov_tab.transcript_id]
         except KeyError as e:
             logger.warning('transcript_id %s from csv file not found in gtf.' % e.args[0])
     if 'chr' not in cov_tab:
-        chrom_dict={gid:chrom for chrom, gids in gene_infos.items() for gid in gids}
+        chrom_dict = {gid: chrom for chrom, gids in gene_infos.items() for gid in gids}
         try:
             cov_tab['chr'] = [chrom_dict[gid] for gid in cov_tab.gene_id]
         except KeyError as e:
             logger.warning('gene_id %s from csv file not found in gtf.', e.args[0])
-    
+
     used_transcripts = set()
     for _, row in cov_tab.iterrows():
         if chromosomes is not None and row.chr not in chromosomes:
@@ -234,7 +234,7 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
                         id_map.setdefault(import_id[0], {})[import_id[1]] = novel_g.id
     else:
         # use gene structure from gtf
-        
+
         for chrom in gene_infos:
             for gid, (g, start, end) in gene_infos[chrom].items():
                 # only transcripts with coverage
@@ -660,7 +660,8 @@ def _add_sample_gene(t, g_start, g_end, g_infos, tr_list, chrom, novel_prefix):
             not_in_best = np.where(~splice_sites[best_idx])[0]
             additional = splice_sites[:, not_in_best]  # additional= sites not covered by top gene
             elsefound = [(g.name, not_in_best[a]) for g, a in zip(genes_ol_strand, additional) if a.sum() > 0]  # genes that cover additional splice sites
-            notfound = (splice_sites.sum(0) == 0).nonzero()[0].tolist()  # not covered splice sites
+            # notfound = (splice_sites.sum(0) == 0).nonzero()[0].tolist()  # not covered splice sites
+            # tr['novel_splice_sites'] = not_found # cannot be done here, as gene is handled at once. TODO: maybe later?
             best_gene = genes_ol_strand[best_idx]
         else:
             genes_ol_anti = [g for g in t.data[chrom][g_start: g_end] if g.strand != g_infos['strand']]
@@ -684,7 +685,7 @@ def _add_sample_gene(t, g_start, g_end, g_infos, tr_list, chrom, novel_prefix):
             else:
                 genes_ol_strand = [g for g in t.data[chrom][g_start: g_end] if g.strand == g_infos['strand'] and g.is_annotated]
                 genes_ol_anti = [g for g in t.data[chrom][g_start: g_end] if g.strand != g_infos['strand'] and g.is_annotated]
-                tr['annotation'] = (4,_get_novel_type(tr['exons'], genes_ol_anti, genes_ol_strand)) # actually may overlap other genes...
+                tr['annotation'] = (4, _get_novel_type(tr['exons'], genes_ol_anti, genes_ol_strand))  # actually may overlap other genes...
             best_gene.data.setdefault('transcripts', []).append(tr)
     return best_gene
 

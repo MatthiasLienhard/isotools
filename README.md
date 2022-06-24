@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/isotools.svg)](https://pypi.org/project/isotools)
 [![PyPIDownloadsTotal](https://pepy.tech/badge/isotools)](https://pepy.tech/project/isotools)
 [![Licence: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/MatthiasLienhard/isotools/blob/master/LICENSE.txt)
-![IsoTools Logo](IsoToolsLogo.png)
+<img align="right" src="IsoToolsLogo.png" width="300"  />
 
 # IsoTools 
 IsoTools is a python module for Long Read Transcriptome Sequencing (LRTS) analysis.

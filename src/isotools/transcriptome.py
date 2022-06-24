@@ -74,7 +74,7 @@ class Transcriptome:
                 logger.warning('the pickle file seems to contain sample information... extracting refrence')
                 tr = tr._extract_reference()
         else:
-            logger.error('unknown file format %s', file_format)
+            raise ValueError('invalid file format %s of file %s' % (file_format, reference_file))
         tr.make_index()
         return tr
 

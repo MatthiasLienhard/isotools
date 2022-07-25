@@ -3,8 +3,13 @@
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
+
+
+## [0.2.11.1]
+* bugfix: _add_chimeric KeyError during transcriptome reconstruciton. 
+
 ## [0.2.11]
-* added function to import samples from csv/gtf to import transcriptome reconstructions / quantifications from other tools.
+* added function to import samples from csv/gtf to import transcriptome reconstruction / quantification from other tools.
 * dropped requirement for gtf files to be tabix indexed.
 
 

@@ -512,7 +512,7 @@ def _add_chimeric(t, new_chimeric, min_cov, min_exonic_ref_coverage):
         if not n_reads:
             continue
         for sa in n_reads:
-            total[sa] += n_reads[sa]
+            total[sa] = total.get(sa, 0) + n_reads[sa]
         for _, new_chim in new_chim_dict.items():  # ignore the readname for now
             # should not contain: long intron, one part only (filtered by check_chimeric function),
             # todo: discard invalid (large overlaps, large gaps)

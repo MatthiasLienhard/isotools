@@ -42,7 +42,7 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5
     group_names = [c[:-4] for c in result_table.columns if c.endswith('_PSI')][:2]
     groups = {gn: [c[:c.rfind(gn)-1] for c in result_table.columns if c.endswith(gn + '_total_cov')] for gn in group_names}
     if group_colors is None:
-        group_colors = [0, 1]
+        group_colors = ['C0', 'C1']
     if isinstance(group_colors, list):
         group_colors = dict(zip(group_names, group_colors))
     if sample_colors is None:

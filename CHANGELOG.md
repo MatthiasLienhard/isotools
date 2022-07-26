@@ -6,7 +6,8 @@
 
 
 ## [0.2.11.1]
-* bugfix: _add_chimeric KeyError during transcriptome reconstruciton. 
+* bugfix: KeyError during transcriptome reconstruction in _add_chimeric. 
+* bugfix: default colors in plot_diff_results.
 
 ## [0.2.11]
 * added function to import samples from csv/gtf to import transcriptome reconstruction / quantification from other tools.

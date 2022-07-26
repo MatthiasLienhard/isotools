@@ -85,7 +85,7 @@ def remove_samples(self, sample_names):
 
 
 def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id_col=None, sample_cov_cols=None, sample_properties=None, add_chromosomes=True,
-                        reconstruct_genes=True, fuzzy_junction=5, min_exonic_ref_coverage=.25, sep='\t'):
+                        reconstruct_genes=True, fuzzy_junction=0, min_exonic_ref_coverage=.25, sep='\t'):
     '''Imports expressed transcripts from coverage table and gtf/gff file, and adds it to the 'Transcriptome' object.
 
     Transcript to gene assignment is either taken from the transcript_file, or recreated,
@@ -218,7 +218,7 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
             if row.transcript_id not in used_transcripts:
                 continue
             tr = transcripts[row.gene_id][row.transcript_id]
-            gene = _add_sample_transcript(self, tr, row.chr, 'gtf', fuzzy_junction, min_exonic_ref_coverage)
+            gene = _add_sample_transcript(self, tr, row.chr, fuzzy_junction, min_exonic_ref_coverage)
 
             if gene is None:
                 tr['_original_ids'] = (row.gene_id, row.transcript_id)
@@ -427,7 +427,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                     tr['TSS'] = {s_name: starts if tr['strand'] == '+' else ends}
                     tr['PAS'] = {s_name: starts if tr['strand'] == '-' else ends}
 
-                    gene = _add_sample_transcript(self, tr, chrom, s_name, fuzzy_junction, min_exonic_ref_coverage)
+                    gene = _add_sample_transcript(self, tr, chrom, fuzzy_junction, min_exonic_ref_coverage)
                     if gene is None:
                         novel.add(tr_interval)
                     else:
@@ -450,39 +450,42 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         logger.info('ignored %s reads marked as unaligned', unmapped)
     if n_lowqual > 0:
         logger.info('ignored %s reads with mapping quality < %s', n_lowqual, min_mapqual)
+
     # merge chimeric reads and assign gene names
+
     n_chimeric = dict()
-    non_chimeric = dict()
+    # split up chimeric reads in actually chimeric and long introns (non_chimeric)
+    # chimeric are grouped by breakpoint (bp->{readname->(chrom, strand, exons)})
     chim, non_chimeric = _check_chimeric(chimeric)
-    sample_nc_reads[sa]
+    # sample_nc_reads[sa]
 
     n_chimeric = _add_chimeric(self, chim, chimeric_mincov, min_exonic_ref_coverage)
-    for nc_cov_dict, _ in non_chimeric.values():
+    n_long_intron = {}
+    for nc_cov_dict, _, _ in non_chimeric.values():
         for sa, nc_cov in nc_cov_dict.items():
-            sample_nc_reads.setdefault(sa, 0)
-            sample_nc_reads[sa] += nc_cov[sa]
+            n_long_intron[sa] = n_long_intron.get(sa, 0) + nc_cov
+            sample_nc_reads[sa] = sample_nc_reads.get(sa, 0) + nc_cov
     chim_ignored = sum(len(chim) for chim in chimeric.values()) - sum(n_chimeric.values())
     if chim_ignored > 0:
         logger.info('ignoring %s chimeric alignments with less than %s reads', chim_ignored, chimeric_mincov)
-    chained_msg = '' if not sum(sample_nc_reads.values()) else f' (including  {sum(sample_nc_reads.values())} chained chimeric alignments)'
+    chained_msg = '' if not sum(n_long_intron.values()) else f' (including  {sum(n_long_intron.values())} chained chimeric alignments)'
     chimeric_msg = '' if sum(n_chimeric.values()) == 0 else f' and {sum(n_chimeric.values())} chimeric reads with coverage of at least {chimeric_mincov}'
     logger.info('imported %s nonchimeric reads%s%s.', sum(sample_nc_reads.values()), chained_msg, chimeric_msg)
 
-    for s_name, non_chim in non_chimeric.items():
+    for readname, (cov, (chrom, strand, exons, _, _), introns) in non_chimeric.items():
         novel = dict()
-        for readname, (cov, (chrom, strand, exons, _, _), introns) in non_chim.items():
-            try:
-                tss, pas = (exons[0][0], exons[-1][1]) if strand == '+' else (exons[-1][1], exons[0][0])
-                tr = {'exons': exons, 'coverage': {s_name: cov}, 'TSS': {s_name: {tss: cov}}, 'PAS': {s_name: {pas: cov}},
-                      'strand': strand, 'chr': chrom, 'long_intron_chimeric': {s_name: {introns: cov}}}
-                if save_readnames:
-                    tr['reads'] = {s_name: [readname]}
-            except BaseException:
-                logger.error('\n\n-->%s\n\n', (exons[0][0], exons[-1][1]) if strand == "+" else (exons[-1][1], exons[0][0]))
-                raise
-            gene = _add_sample_transcript(self, tr, chrom, s_name, fuzzy_junction, min_exonic_ref_coverage)  # tr is not updated
-            if gene is None:
-                novel.setdefault(chrom, []).append(tr)
+        try:
+            tss, pas = (exons[0][0], exons[-1][1]) if strand == '+' else (exons[-1][1], exons[0][0])
+            tr = {'exons': exons, 'coverage': cov, 'TSS': {sa: {tss: c} for sa, c in cov.items()}, 'PAS': {sa: {pas: c} for sa, c in cov.items()},
+                  'strand': strand, 'chr': chrom, 'long_intron_chimeric': introns}
+            if save_readnames:
+                tr['reads'] = {s_name: [readname]}
+        except BaseException:
+            logger.error('\n\n-->%s\n\n', (exons[0][0], exons[-1][1]) if strand == "+" else (exons[-1][1], exons[0][0]))
+            raise
+        gene = _add_sample_transcript(self, tr, chrom, fuzzy_junction, min_exonic_ref_coverage)  # tr is not updated
+        if gene is None:
+            novel.setdefault(chrom, []).append(tr)
         for chrom in novel:
             _ = _add_novel_genes(self, IntervalTree(Interval(tr['exons'][0][0], tr['exons'][-1][1], tr) for tr in novel[chrom]), chrom)
 
@@ -589,7 +592,7 @@ def _check_chimeric(chimeric):
         new_chim[1].sort(key=lambda x: x[3][1])  # sort by end of aligned part
         # 2) compute breakpoints
         bpts = _breakpoints(new_chim[1])  # compute breakpoints
-        # 3) check if long intron alignment spleits
+        # 3) check if long intron alignment splits
         merge = [i for i, bp in enumerate(bpts) if
                  bp[0] == bp[3] and  # same chr
                  bp[1] == bp[4] and  # same strand,
@@ -618,7 +621,8 @@ def _check_chimeric(chimeric):
             chimeric_dict.setdefault(bpts, {})[readname] = new_chim
         else:
             assert len(new_chim[1]) == 1
-            non_chimeric[readname] = [new_chim[0], new_chim[1][0], tuple(merged_introns)]  # coverage, chrom, and "long introns"
+            # coverage, part(chrom,strand,exons,[aligned start, end]), and "long introns"
+            non_chimeric[readname] = [new_chim[0], new_chim[1][0], tuple(merged_introns)]
     if skip:
         logger.warning('ignored %s chimeric alignments with only one part aligned to specified chromosomes.', skip)
     return chimeric_dict, non_chimeric
@@ -690,7 +694,7 @@ def _add_sample_gene(t, g_start, g_end, g_infos, tr_list, chrom, novel_prefix):
     return best_gene
 
 
-def _add_sample_transcript(t, tr, chrom, sample_name, fuzzy_junction, min_exonic_ref_coverage, genes_ol=None):
+def _add_sample_transcript(t, tr, chrom,  fuzzy_junction, min_exonic_ref_coverage, genes_ol=None):
     '''add transcript to gene in chrom - return gene on success and None if no Gene was found.
     If matching transcript is found in gene, transcripts are merged. Coverage, tr TSS/PAS need to be reset.
     Otherwise, a new transcript is added. In this case, splice graph and coverage have to be reset.'''
@@ -714,10 +718,10 @@ def _add_sample_transcript(t, tr, chrom, sample_name, fuzzy_junction, min_exonic
         if g.is_annotated:  # check for fuzzy junctions (e.g. same small shift at 5' and 3' compared to reference annotation)
             shifts = g.correct_fuzzy_junctions(tr, fuzzy_junction, modify=True)  # this modifies tr['exons']
             if shifts:
-                tr.setdefault('fuzzy_junction', {}).setdefault(sample_name, []).append(shifts)  # keep the info, mainly for testing/statistics
+                tr.setdefault('fuzzy_junction', []).append(shifts)  # keep the info, mainly for testing/statistics
                 for tr2 in g.transcripts:  # check if correction made it identical to existing
                     if splice_identical(tr2['exons'], tr['exons']):
-                        tr2.setdefault('fuzzy_junction', {}).setdefault(sample_name, []).append(shifts)  # keep the info, mainly for testing/statistics
+                        tr2.setdefault('fuzzy_junction', []).append(shifts)  # keep the info, mainly for testing/statistics
                         _combine_transcripts(tr2, tr)
                         return g
             tr['annotation'] = g.ref_segment_graph.get_alternative_splicing(tr['exons'], additional)
@@ -772,10 +776,9 @@ def _combine_transcripts(established, new_tr):
         established['exons'][0][0] = get_quantile(starts, 0.5)
         established['exons'][-1][1] = get_quantile(ends, 0.5)
         if 'long_intron_chimeric' in new_tr:
-            for sample_name in new_tr['long_intron_chimeric']:
-                for introns in new_tr['long_intron_chimeric'][sample_name]:
-                    established.setdefault('long_intron_chimeric', {}).setdefault(sample_name, {}).setdefault(introns, 0)
-                    established['long_intron_chimeric'][sample_name][introns] += new_tr['long_intron_chimeric'][sample_name][introns]
+            new_introns = set(new_tr['long_intron_chimeric'])
+            established_introns = set(established.get('long_intron_chimeric', set()))
+            established['long_intron_chimeric'] = tuple(new_introns.union(established_introns))
     except BaseException:
         logger.error('error when merging %s into %s', new_tr, established)
         raise

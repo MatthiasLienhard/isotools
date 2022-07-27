@@ -3,7 +3,9 @@
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 
-
+## [0.3.0rc]
+* planned new feature: allow for several TSS/PAS per intron chain and unify them accross intron chains
+* panned new feature: during import of long reads, (optionally) correct for short exon alignment issues. 
 
 ## [0.2.11.1]
 * bugfix: KeyError during transcriptome reconstruction in _add_chimeric. 

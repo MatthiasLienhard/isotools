@@ -63,8 +63,15 @@ def add_qc_metrics(self, genome_fn, progress_bar=True, downstream_a_len=30, dire
                 Some metrics cannot be computed: %s', str(len(missing_chr)), str(missing_genes), str(missing_chr))
 
         for g in self.iter_genes(progress_bar=progress_bar):
+            # 1) remove segmet graph (if unify TSS/PAS option selected)
+            g.data['segment_graph'] = None
+            # 2) "unify" TSS/PAS (if unify TSS/PAS option selected)
+            g._unify_ends()
+            # 3) compute segment graph (if not present)
+            _ = g.segment_graph
             g.add_fragments()
             if g.chrom in genome_fh.references:
+                g.add_orfs(genome_fh, reference=False, minlen=30)
                 g.add_direct_repeat_len(genome_fh, delta=direct_repeat_wd, max_mm=direct_repeat_mm, wobble=direct_repeat_wobble)
                 g.add_noncanonical_splicing(genome_fh)
                 g.add_threeprime_a_content(genome_fh, length=downstream_a_len)

@@ -31,7 +31,7 @@ def main():
                             --qc_plots, --altsplice_stats, --diff, --diff_plots and --altsplice_plots',
                         default='name')
     parser.add_argument('--custom_filter_tag', metavar='<TAG="expression">', help='add custom filter tag', nargs='*')
-    parser.add_argument('--filter_query', metavar='<"expression">', default='not (INTERNAL_PRIMING or RTTS)',
+    parser.add_argument('--filter_query', metavar='<"expression">', default='FSM or not (INTERNAL_PRIMING or RTTS)',
                         help='filter the transcripts used in gtf and table output')
     parser.add_argument('--qc_plots', help='make qc plots', action='store_true')
     parser.add_argument('--altsplice_stats', help='alternative splicing barplots', action='store_true')
@@ -82,7 +82,7 @@ def main():
 
     if args.custom_filter_tag is not None:
         for f_def in args.custom_filter_tag:
-            tag, f_expr = f_def.split('=', 2)
+            tag, f_expr = f_def.split('=', 1)
             if tag not in isoseq.filter['transcript']:
                 logger.info('adding new filter rule %s in transcript context', tag)
             isoseq.add_filter(tag, f_expr, context='transcript', update=True)

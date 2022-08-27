@@ -128,6 +128,29 @@ def splice_identical(tr1, tr2):
     return True
 
 
+def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'], minlen=100):
+    ''' Find all open reading frames on the forward strand of the sequence. '''
+    orf = []
+    starts = [[], [], []]
+    stops = [[], [], []]
+    for match in re.finditer("|".join(start_codons), seq):
+        starts[match.start() % 3].append((match.start(), match.group()))
+    for match in re.finditer("|".join(stop_codons), seq):
+        stops[match.start() % 3].append((match.end(), match.group()))
+    for frame in range(3):
+        stop = (0, None)
+        for start in starts[frame]:
+            if start[0] < stop[0]:
+                continue
+            try:
+                stop = next(s for s in sorted(stops[frame]) if s[0] > start[0])
+            except StopIteration:
+                continue
+            if stop[0]-start[0] >= minlen:
+                orf.append((start[0], stop[0], frame, start[1], stop[1]))
+    return orf
+
+
 def has_overlap(r1, r2):
     "check the overlap of two intervals"
     # assuming start < end
@@ -301,6 +324,31 @@ def _find_splice_sites(sj, transcripts):
             except StopIteration:
                 continue
     return sites
+
+
+def get_quantiles(pos, percentile=[.5]):
+    '''provided a list of (positions,coverage) pairs, return the median position'''
+    # percentile should be sorted, and between 0 and 1
+    total = sum(cov for _, cov in pos)
+    n = 0
+    result_list = []
+    for p, cov in sorted(pos, key=lambda x: x[0]):
+        n += cov
+        while n >= total * percentile[len(result_list)]:
+            result_list.append(p)
+            if len(result_list) == len(percentile):
+                return(result_list)
+    raise ValueError(f'cannot find {percentile[len(result_list)]} percentile of {pos}')
+
+
+def smooth(x, window_len=31):
+    """ smooth the data using a hanning window with requested size."""
+    # padding with mirrored
+    s = np.r_[x[window_len-1:0:-1], x, x[-2:-window_len-1:-1]]
+    # print(len(s))
+    w = np.hanning(window_len)
+    y = np.convolve(w/w.sum(), s, mode='valid')
+    return y[int(window_len/2-(window_len+1) % 2):-int(window_len/2)]
 
 
 def _corrected_log2OR(con_tab):

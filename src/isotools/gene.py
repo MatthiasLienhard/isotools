@@ -1,14 +1,16 @@
 from intervaltree import Interval
 from collections.abc import Iterable
 from scipy.stats import chi2_contingency
-from Bio.Seq import Seq
+from scipy.signal import find_peaks
+from Bio.Seq import reverse_complement
+from pysam import FastaFile
 import numpy as np
 import copy
 import itertools
 from .splice_graph import SegmentGraph
 from .short_read import Coverage
 from ._transcriptome_filter import SPLICE_CATEGORY
-from ._utils import pairwise, _filter_event
+from ._utils import pairwise, _filter_event, find_orfs, smooth, get_quantiles
 from ._transcriptome_stats import pairwise_event_test
 
 import logging
@@ -141,7 +143,7 @@ class Gene(Interval):
             if self.strand == '+':
                 sj_seq = [ss_seq[d] + ss_seq[a] for d, a in pos]
             else:
-                sj_seq = [str(Seq(ss_seq[d] + ss_seq[a]).reverse_complement()) for d, a in pos]
+                sj_seq = [reverse_complement(ss_seq[d] + ss_seq[a]) for d, a in pos]
 
             nc = [(i, seq) for i, seq in enumerate(sj_seq) if seq != 'GTAG']
             if nc:
@@ -203,6 +205,63 @@ class Gene(Interval):
                 else:
                     a_content[pos] = seq.upper().count('T') / length
             tr['downstream_A_content'] = a_content[pos]
+
+    def get_sequence(self, genome_fn, trids=None, reference=False):
+        '''Returns the nucleotide sequence of the specified transcripts.'''
+        trL = ((i, tr) for i, tr in enumerate(self.ref_transcripts if reference else self.transcripts) if trids is None or i in trids)
+        pos = (min(tr['exons'][0][0] for _, tr in trL), max(tr['exons'][-1][1] for _, tr in trL))
+        with FastaFile(genome_fn) as genome_fh:
+            seq = genome_fh.fetch(self.chrom, *pos)
+        tr_seqs = []
+        for i, tr in trL:
+            tr_seqs.append(i, '')
+            for e in tr['exons']:
+                tr_seqs[-1][1] += seq[e[0]-pos[0]:e[1]-pos[0]]
+        if self.strand == '+':
+            return tr_seqs
+        return [(i, reverse_complement(ts)) for i, ts in tr_seqs]
+
+    def add_orfs(self, genome_fh, reference=False, minlen=30):
+        '''find longest ORF for each transcript and add to the transcript properties tr["ORF"]'''
+        trL = self.ref_transcripts if reference else self.transcripts
+        for orfs, tr in zip(self.get_all_orf(genome_fh, reference, minlen), trL):
+            if orfs:
+                tr["ORF"] = max(orfs, key=lambda x: x[2]['length'])
+
+    def get_all_orf(self, genome_fh, reference=False, minlen=30):
+        ''' Predicts ORF using orfipy API.
+        '''
+        orf_list = []
+        trL = self.ref_transcripts if reference else self.transcripts
+        pos = (min(tr['exons'][0][0] for tr in trL), max(tr['exons'][-1][1] for tr in trL))
+        seq = genome_fh.fetch(self.chrom, *pos)
+        for i, tr in enumerate(trL):
+
+            tr_seq = ''
+            start_exon = stop_exon = -1
+            cum_exon_len = np.cumsum([e[1]-e[0] for e in tr['exons']])  # cummulative exon length
+            cum_intron_len = np.cumsum([tr['exons'][0][0]-pos[0]]+[e2[0]-e1[1] for e1, e2 in pairwise(tr['exons'])])  # cummulative intron length
+            for e in tr['exons']:
+                tr_seq += seq[e[0]-pos[0]:e[1]-pos[0]]
+            # print(f'{len(tr_seq)}=={cum_exon_len[-1]}')
+
+            if self.strand == '-':
+                tr_seq = reverse_complement(tr_seq)
+            orf_list.append((tr_seq, []))
+            for start, stop, frame, seq_start, seq_end in find_orfs(tr_seq, minlen=minlen):
+                if self.strand == '-':
+                    start, stop = cum_exon_len[-1]-stop, cum_exon_len[-1]-start
+                start_exon = next(i for i in range(len(cum_exon_len)) if cum_exon_len[i] >= start)
+                stop_exon = next(i for i in range(start_exon, len(cum_exon_len)) if cum_exon_len[i] >= stop)
+                genome_pos = (start+pos[0]+cum_intron_len[start_exon],
+                              stop+pos[0]+cum_intron_len[stop_exon])
+                dist_pas = 0
+                if self.strand == '+' and stop_exon < len(cum_exon_len)-1:
+                    dist_pas = cum_exon_len[-2]-stop
+                if self.strand == '-' and start_exon > 0:
+                    dist_pas = start-cum_exon_len[0]
+                orf_list[-1][1].append((*genome_pos, {'length': start-start, 'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55}))
+        return orf_list
 
     def add_fragments(self):
         '''Checks for transcripts that are fully contained in other transcripts.
@@ -575,6 +634,116 @@ class Gene(Interval):
             return pval, deltaPI_pos, idx[pos_idx]
         else:
             return pval, deltaPI_neg, idx[neg_idx]
+
+    def _unify_ends(self, smooth_window=31, rel_prominence=1, search_range=(.1, .9)):
+        ''' Find common TSS/PAS for tanscripts of the gene'''
+        if not self.transcripts:
+            # nothing to do here
+            return
+        assert 0 <= search_range[0] <= .5 <= search_range[1] <= 1
+        # get gene tss/pas profiles
+        tss = {}
+        pas = {}
+        for tr in self.transcripts:
+            for sa in tr['TSS']:
+                for pos, c in tr['TSS'][sa].items():
+                    tss[pos] = tss.get(pos, 0)+c
+            for sa in tr['PAS']:
+                for pos, c in tr['PAS'][sa].items():
+                    pas[pos] = pas.get(pos, 0)+c
+
+        tss_pos = [min(tss), max(tss)]
+        if tss_pos[1]-tss_pos[0] < smooth_window:
+            tss_pos[0] -= (smooth_window + tss_pos[0]-tss_pos[1] - 1)
+        pas_pos = [min(pas), max(pas)]
+        if pas_pos[1]-pas_pos[0] < smooth_window:
+            pas_pos[0] -= (smooth_window + pas_pos[0]-pas_pos[1] - 1)
+        tss = [tss.get(pos, 0) for pos in range(tss_pos[0], tss_pos[1]+1)]
+        pas = [pas.get(pos, 0) for pos in range(pas_pos[0], pas_pos[1]+1)]
+        # smooth profiles and finde maxima
+        tss_smooth = smooth(np.array(tss), smooth_window)
+        pas_smooth = smooth(np.array(pas), smooth_window)
+        # at least half of smooth_window reads required to call a peak
+        # minimal distance between peaks is > ~ smooth_window
+        # rel_prominence=1 -> smaller peak must have twice the hight of valley to call two peaks
+        tss_peaks, _ = find_peaks(np.log2(tss_smooth+1), prominence=(rel_prominence, None))
+        tss_peak_pos = tss_peaks+tss_pos[0]
+        pas_peaks, _ = find_peaks(np.log2(pas_smooth+1), prominence=(rel_prominence, None))
+        pas_peak_pos = pas_peaks+pas_pos[0]
+
+        # find transcripts with common first/last splice site
+        starts = {}
+        ends = {}
+        for trid, tr in enumerate(self.transcripts):
+            starts.setdefault(tr['exons'][0][1], []).append(trid)
+            ends.setdefault(tr['exons'][-1][0], []).append(trid)
+        if self.strand == '-':
+            starts, ends = ends, starts
+        # for each site, find consistant "peaks" TSS/PAS
+        # if none found use median of all read starts
+        for pos, tr_ids in starts.items():
+            profile = {}
+            for trid in tr_ids:
+                for sa_tss in self.transcripts[trid]['TSS'].values():
+                    for pos, c in sa_tss.items():
+                        profile[pos] = profile.get(pos, 0)+c
+            quantiles = get_quantiles(sorted(profile.items()), [search_range[0], .5, search_range[1]])
+            # one/ several peaks within base range? -> quantify by next read_start
+            # else use median
+            ol_peaks = [p for p in tss_peak_pos if quantiles[0] < p <= quantiles[-1]]
+            if not ol_peaks:
+                ol_peaks = [quantiles[1]]
+            for trid in tr_ids:
+                self.transcripts[trid]['TSS_unified'] = {}
+                for sa, sa_tss in self.transcripts[trid]['TSS'].items():
+                    tss_unified = {}
+                    for pos, c in sa_tss.items():
+                        next_peak = min(ol_peaks, key=lambda x: abs(x-pos))
+                        tss_unified[next_peak] = tss_unified.get(next_peak, 0)+c
+                    self.transcripts[trid]['TSS_unified'][sa] = tss_unified
+        # same for PAS
+        for pos, tr_ids in ends.items():
+            profile = {}
+            for trid in tr_ids:
+                for sa_pas in self.transcripts[trid]['PAS'].values():
+                    for pos, c in sa_pas.items():
+                        profile[pos] = profile.get(pos, 0)+c
+            quantiles = get_quantiles(sorted(profile.items()), [search_range[0], .5, search_range[1]])
+            # one/ several peaks within base range? -> quantify by next read_start
+            # else use median
+            ol_peaks = [p for p in pas_peak_pos if quantiles[0] < p <= quantiles[-1]]
+            if not ol_peaks:
+                ol_peaks = [quantiles[1]]
+            for trid in tr_ids:
+                self.transcripts[trid]['PAS_unified'] = {}
+                for sa, sa_pas in self.transcripts[trid]['PAS'].items():
+                    pas_unified = {}
+                    for pos, c in sa_pas.items():
+                        next_peak = min(ol_peaks, key=lambda x: abs(x-pos))
+                        pas_unified[next_peak] = pas_unified.get(next_peak, 0)+c
+                    self.transcripts[trid]['PAS_unified'][sa] = pas_unified
+        for tr in self.transcripts:
+            sum_tss = {}
+            sum_pas = {}
+            start = end = max_tss, max_pas = 0
+            for sa_tss in tr['TSS_unified'].values():
+                for pos, cov in sa_tss.items():
+                    sum_tss[pos] = sum_tss.get(pos, 0)+cov
+            for pos, cov in sum_tss.items():
+                if cov > max_tss:
+                    max_tss = cov
+                    start = pos
+            for sa_pas in tr['PAS_unified'].values():
+                for pos, cov in sa_pas.items():
+                    sum_pas[pos] = sum_pas.get(pos, 0)+cov
+            for pos, cov in sum_pas.items():
+                if cov > max_pas:
+                    max_pas = cov
+                    start = pos
+            if self.strand == '-':
+                start, end = end, start
+            tr['exons'][0][0] = start
+            tr['exons'][-1][1] = end
 
 
 def _coding_len(exons, cds):

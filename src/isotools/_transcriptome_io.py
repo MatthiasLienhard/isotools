@@ -9,7 +9,7 @@ from tqdm import tqdm
 from contextlib import ExitStack
 from .short_read import Coverage
 from ._utils import junctions_from_cigar, splice_identical, is_same_gene, has_overlap, get_overlap, pairwise, \
-    cigar_string2tuples, rc, get_intersects, _find_splice_sites, _get_overlap  # , _get_exonic_region
+    cigar_string2tuples, rc, get_intersects, _find_splice_sites, _get_overlap, get_quantiles  # , _get_exonic_region
 from .gene import Gene
 from .decorators import experimental
 import logging
@@ -419,8 +419,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                         starts[r[0]] = starts.get(r[0], 0) + cov
                         ends[r[1]] = ends.get(r[1], 0) + cov
                     # get the median TSS/PAS
-                    tr['exons'][0][0] = get_quantile(starts.items(), 0.5)
-                    tr['exons'][-1][1] = get_quantile(ends.items(), 0.5)
+                    tr['exons'][0][0] = get_quantiles(starts.items(), [0.5])[0]
+                    tr['exons'][-1][1] = get_quantiles(ends.items(), 0.5)[0]
                     cov = sum(tr_ranges.values())
                     s_name = tr.get('bc_group', sample_name)
                     tr['coverage'] = {s_name: cov}
@@ -547,17 +547,6 @@ def _add_chimeric(t, new_chimeric, min_cov, min_exonic_ref_coverage):
                             part[4] = g.name
                             g.data.setdefault('chimeric', {})[new_bp] = t.chimeric[new_bp]
     return total
-
-
-def get_quantile(pos, percentile=.5):
-    '''provided a list of (positions,coverage) pairs, return the median position'''
-    total = sum(cov for _, cov in pos)
-    n = 0
-    for p, cov in sorted(pos, key=lambda x: x[0]):
-        n += cov
-        if n >= total * percentile:
-            return(p)
-    raise ValueError(f'cannot find {percentile} percentile of {pos}')
 
 
 def _breakpoints(chimeric):
@@ -773,8 +762,8 @@ def _combine_transcripts(established, new_tr):
         ends = [v for sa in established['PAS'] for v in established['PAS'][sa].items()]
         if established['strand'] == '-':
             starts, ends = ends, starts
-        established['exons'][0][0] = get_quantile(starts, 0.5)
-        established['exons'][-1][1] = get_quantile(ends, 0.5)
+        established['exons'][0][0] = get_quantiles(starts, [0.5])[0]
+        established['exons'][-1][1] = get_quantiles(ends, [0.5])[0]
         if 'long_intron_chimeric' in new_tr:
             new_introns = set(new_tr['long_intron_chimeric'])
             established_introns = set(established.get('long_intron_chimeric', set()))

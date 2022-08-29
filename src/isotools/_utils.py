@@ -129,7 +129,9 @@ def splice_identical(tr1, tr2):
 
 
 def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'], minlen=100):
-    ''' Find all open reading frames on the forward strand of the sequence. '''
+    ''' Find all open reading frames on the forward strand of the sequence.
+    Return a 5-tuple with start and stop position, reading frame (0,1 or 2) and start and stop codon sequence
+    '''
     orf = []
     starts = [[], [], []]
     stops = [[], [], []]

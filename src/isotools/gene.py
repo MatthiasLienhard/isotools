@@ -221,14 +221,14 @@ class Gene(Interval):
             return tr_seqs
         return [(i, reverse_complement(ts)) for i, ts in tr_seqs]
 
-    def add_orfs(self, genome_fh, reference=False, minlen=30):
+    def add_orfs(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
         '''find longest ORF for each transcript and add to the transcript properties tr["ORF"]'''
         trL = self.ref_transcripts if reference else self.transcripts
-        for (_, orfs), tr in zip(self.get_all_orf(genome_fh, reference, minlen), trL):
+        for (_, orfs), tr in zip(self.get_all_orf(genome_fh, reference, minlen, start_codons, stop_codons), trL):
             if orfs:
                 tr["ORF"] = max(orfs, key=lambda x: x[2]['length'])
 
-    def get_all_orf(self, genome_fh, reference=False, minlen=30):
+    def get_all_orf(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
         ''' Predicts ORF using orfipy API.
         '''
         orf_list = []
@@ -260,7 +260,7 @@ class Gene(Interval):
                     dist_pas = cum_exon_len[-2]-stop
                 if self.strand == '-' and start_exon > 0:
                     dist_pas = start-cum_exon_len[0]
-                orf_list[-1][1].append((*genome_pos, {'length': start-start, 'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55}))
+                orf_list[-1][1].append((*genome_pos, {'length': stop-start, 'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55}))
         return orf_list
 
     def add_fragments(self):

@@ -109,7 +109,7 @@ def test_import_csv():  # use gene structure from gtf
 
 @pytest.mark.dependency(depends=['test_import_gff'])
 def test_orf():
-    total, same = {'+':0, '-':0},{'+':0, '-':0}
+    total, same = {'+': 0, '-': 0}, {'+': 0, '-': 0}
     isoseq = Transcriptome.from_reference('tests/data/example_ref_isotools.pkl')
     with FastaFile('tests/data/example.fa') as genome_fh:
         for g in isoseq:

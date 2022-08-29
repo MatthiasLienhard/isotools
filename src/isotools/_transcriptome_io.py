@@ -420,7 +420,7 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
                         ends[r[1]] = ends.get(r[1], 0) + cov
                     # get the median TSS/PAS
                     tr['exons'][0][0] = get_quantiles(starts.items(), [0.5])[0]
-                    tr['exons'][-1][1] = get_quantiles(ends.items(), 0.5)[0]
+                    tr['exons'][-1][1] = get_quantiles(ends.items(), [0.5])[0]
                     cov = sum(tr_ranges.values())
                     s_name = tr.get('bc_group', sample_name)
                     tr['coverage'] = {s_name: cov}

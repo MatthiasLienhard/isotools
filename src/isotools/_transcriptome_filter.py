@@ -42,7 +42,7 @@ ANNOTATION_VOCABULARY = ['antisense', 'intergenic', 'genic genomic', 'novel exon
 # filtering functions for the transcriptome class
 
 
-def add_qc_metrics(self, genome_fn, progress_bar=True, downstream_a_len=30, direct_repeat_wd=15, direct_repeat_wobble=2, direct_repeat_mm=2):
+def add_qc_metrics(self, genome_fn, progress_bar=True, downstream_a_len=30, direct_repeat_wd=15, direct_repeat_wobble=2, direct_repeat_mm=2, unify_ends=True):
     ''' Retrieves QC metrics for the transcripts.
 
     Calling this function populates transcript["biases"] information, which can be used do create filters.
@@ -53,6 +53,7 @@ def add_qc_metrics(self, genome_fn, progress_bar=True, downstream_a_len=30, dire
     :param downstream_a_len: The number of bases downstream the transcript where the adenosine fraction is determined.
     :param direct_repeat_wd: The number of bases around the splice sites scanned for direct repeats.
     :param direct_repeat_wobble: Number of bases the splice site sequences are shifted.
+    :param unify_ends: Unify TSS/PAS across transcripts of a gene.
     :param direct_repeat_mm: Maximum number of missmatches in a direct repeat. '''
 
     with FastaFile(genome_fn) as genome_fh:
@@ -63,11 +64,12 @@ def add_qc_metrics(self, genome_fn, progress_bar=True, downstream_a_len=30, dire
                 Some metrics cannot be computed: %s', str(len(missing_chr)), str(missing_genes), str(missing_chr))
 
         for g in self.iter_genes(progress_bar=progress_bar):
-            # 1) remove segmet graph (if unify TSS/PAS option selected)
-            g.data['segment_graph'] = None
-            # 2) "unify" TSS/PAS (if unify TSS/PAS option selected)
-            g._unify_ends()
-            # 3) compute segment graph (if not present)
+            if unify_ends:
+                # remove segmet graph (if unify TSS/PAS option selected)
+                g.data['segment_graph'] = None
+                # "unify" TSS/PAS (if unify TSS/PAS option selected)
+                g._unify_ends()
+            # compute segment graph (if not present)
             _ = g.segment_graph
             g.add_fragments()
             if g.chrom in genome_fh.references:

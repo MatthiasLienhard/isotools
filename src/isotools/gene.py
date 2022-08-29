@@ -224,7 +224,7 @@ class Gene(Interval):
     def add_orfs(self, genome_fh, reference=False, minlen=30):
         '''find longest ORF for each transcript and add to the transcript properties tr["ORF"]'''
         trL = self.ref_transcripts if reference else self.transcripts
-        for orfs, tr in zip(self.get_all_orf(genome_fh, reference, minlen), trL):
+        for (_, orfs), tr in zip(self.get_all_orf(genome_fh, reference, minlen), trL):
             if orfs:
                 tr["ORF"] = max(orfs, key=lambda x: x[2]['length'])
 
@@ -233,10 +233,10 @@ class Gene(Interval):
         '''
         orf_list = []
         trL = self.ref_transcripts if reference else self.transcripts
-        pos = (min(tr['exons'][0][0] for tr in trL), max(tr['exons'][-1][1] for tr in trL))
-        seq = genome_fh.fetch(self.chrom, *pos)
+        if trL:
+            pos = (min(tr['exons'][0][0] for tr in trL), max(tr['exons'][-1][1] for tr in trL))
+            seq = genome_fh.fetch(self.chrom, *pos)
         for i, tr in enumerate(trL):
-
             tr_seq = ''
             start_exon = stop_exon = -1
             cum_exon_len = np.cumsum([e[1]-e[0] for e in tr['exons']])  # cummulative exon length
@@ -461,7 +461,11 @@ class Gene(Interval):
         '''Returns the segment graph of the LRTS transcripts for the gene'''
         if 'segment_graph' not in self.data or self.data['segment_graph'] is None:
             exons = [tr['exons'] for tr in self.transcripts]
-            self.data['segment_graph'] = SegmentGraph(exons, self.strand)
+            try:
+                self.data['segment_graph'] = SegmentGraph(exons, self.strand)
+            except Exception:
+                logger.error('Error initializing Segment Graph on %s with exons %s', self.strand, exons)
+                raise
         return self.data['segment_graph']
 
     def __copy__(self):
@@ -725,7 +729,7 @@ class Gene(Interval):
         for tr in self.transcripts:
             sum_tss = {}
             sum_pas = {}
-            start = end = max_tss, max_pas = 0
+            start = end = max_tss = max_pas = 0
             for sa_tss in tr['TSS_unified'].values():
                 for pos, cov in sa_tss.items():
                     sum_tss[pos] = sum_tss.get(pos, 0)+cov
@@ -739,11 +743,17 @@ class Gene(Interval):
             for pos, cov in sum_pas.items():
                 if cov > max_pas:
                     max_pas = cov
-                    start = pos
+                    end = pos
             if self.strand == '-':
                 start, end = end, start
-            tr['exons'][0][0] = start
-            tr['exons'][-1][1] = end
+            try:
+                assert start < tr['exons'][0][1], 'error unifiing %s: %s>=%s' % (tr["exons"], start, tr['exons'][0][1])
+                tr['exons'][0][0] = start
+                assert end > tr['exons'][-1][0], 'error unifiing %s: %s<=%s' % (tr["exons"], end, tr['exons'][-1][0])
+                tr['exons'][-1][1] = end
+            except AssertionError:
+                logger.error('%s TSS= %s, PAS=%s -> TSS_unified= %s, PAS_unified=%s', self, tr['TSS'], tr['PAS'],  tr['TSS_unified'], tr['PAS_unified'])
+                raise
 
 
 def _coding_len(exons, cds):

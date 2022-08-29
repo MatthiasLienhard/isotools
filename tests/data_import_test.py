@@ -1,4 +1,5 @@
 import pytest
+from pysam import FastaFile
 from isotools.transcriptome import Transcriptome
 from isotools._utils import splice_identical
 import logging
@@ -104,3 +105,19 @@ def test_import_csv():  # use gene structure from gtf
             logger.error('number of transcripts for %s changed after csv import: %s != %s', g.id, len(g.transcripts), len(g_csv.transcripts))
             discrepancy = True
     assert not discrepancy, 'discrepancy found after csv import'
+
+
+@pytest.mark.dependency(depends=['test_import_gff'])
+def test_orf():
+    total, same = {'+':0, '-':0},{'+':0, '-':0}
+    isoseq = Transcriptome.from_reference('tests/data/example_ref_isotools.pkl')
+    with FastaFile('tests/data/example.fa') as genome_fh:
+        for g in isoseq:
+            g.add_orfs(genome_fh=genome_fh,  reference=True)
+            for tr in g.ref_transcripts:
+                if tr['transcript_type'] == 'protein_coding' and 'CDS' in tr:
+                    total[g.strand] += 1
+                    if tr['CDS'] == tr['ORF'][:2]:
+                        same[g.strand] += 1
+    assert same["+"]/total["+"] > .9, "at least 90% protein coding transcripts CDS on + should match longest ORF."
+    assert same["-"]/total["-"] > .9, "at least 90% protein coding transcripts CDS on - should match longest ORF."

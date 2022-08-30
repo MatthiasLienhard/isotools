@@ -265,11 +265,11 @@ def _get_overlap(exons, transcripts):
     ol = 0
     i = 0
     for e in exons:
-        while(exon_reg[i][1] < e[0]):  # no overlap, go on
+        while exon_reg[i][1] < e[0]:  # no overlap, go on
             i += 1
             if i == len(exon_reg):
                 return ol
-        while(exon_reg[i][0] < e[1]):
+        while exon_reg[i][0] < e[1]:
             i_end = min(e[1], exon_reg[i][1])
             i_start = max(e[0], exon_reg[i][0])
             ol += (i_end - i_start)
@@ -303,7 +303,7 @@ def _find_splice_sites(sj, transcripts):
     for sjs, idx in sorted(splice_junction_starts.items()):  # splice junction starts, sorted by position
         for j, tr_iter in enumerate(tr_list):
             try:
-                while(sjs > current[j][1]):
+                while sjs > current[j][1]:
                     current[j] = next(tr_iter)
                 if current[j][1] == sjs:
                     for i in idx:
@@ -317,7 +317,7 @@ def _find_splice_sites(sj, transcripts):
     for sje, idx in sorted(splice_junction_ends.items()):  # splice junction ends, sorted by position
         for j, tr_iter in enumerate(tr_list):
             try:
-                while(sje > current[j][0]):
+                while sje > current[j][0]:
                     current[j] = next(tr_iter)
                 if current[j][0] == sje:
                     for i in idx:
@@ -339,7 +339,7 @@ def get_quantiles(pos, percentile=[.5]):
         while n >= total * percentile[len(result_list)]:
             result_list.append(p)
             if len(result_list) == len(percentile):
-                return(result_list)
+                return result_list
     raise ValueError(f'cannot find {percentile[len(result_list)]} percentile of {pos}')
 
 

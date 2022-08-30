@@ -90,4 +90,4 @@ class Coverage:
             logger.warning('requested coverage outside range')
             return None
         else:
-            return(self.profile[subscript-self.reg[1]])
+            return self.profile[subscript-self.reg[1]]

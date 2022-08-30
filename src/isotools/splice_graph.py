@@ -448,7 +448,7 @@ class SegmentGraph():
         # check exon ends
         for sjs, idx in sorted(splice_junction_starts.items()):
             try:
-                while(sjs > n.end):
+                while sjs > n.end:
                     n = next(nodes)
                 if n.end == sjs and any(self[s].start > n.end for s in n.suc.values()):
                     for i in idx:
@@ -460,7 +460,7 @@ class SegmentGraph():
         # check exon starts
         for sje, idx in sorted(splice_junction_ends.items()):
             try:
-                while(sje > n.start):
+                while sje > n.start:
                     n = next(nodes)
                 if n.start == sje and any(self[p].end < n.start for p in n.pre.values()):
                     for i in idx:
@@ -480,11 +480,11 @@ class SegmentGraph():
         j = 0
         tr_ol = [0 for _ in self._pas]
         for e in exons:
-            while(self[j].end < e[0]):  # no overlap, go on
+            while self[j].end < e[0]:  # no overlap, go on
                 j += 1
                 if j == len(self):
                     return ol, tr_ol
-            while(self[j].start < e[1]):
+            while self[j].start < e[1]:
                 i_end = min(e[1], self[j].end)
                 i_start = max(e[0], self[j].start)
                 ol += (i_end - i_start)
@@ -591,7 +591,7 @@ class SegmentGraph():
             else:
                 j += 1
             if i == len(exons) or j == len(self):
-                return(intersect)
+                return intersect
 
     @deprecated
     def _find_ts_candidates(self, coverage):

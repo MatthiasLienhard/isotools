@@ -1215,10 +1215,10 @@ def aligned_part(cigartuples, is_reverse):
 def get_clipping(cigartuples, pos):
     if cigartuples[0][0] == 4:
         # clipping at the begining
-        return(pos, -cigartuples[0][1])
+        return (pos, -cigartuples[0][1])
     elif cigartuples[-1][0] == 4:
         # clipping at the end - get the reference position
-        return(pos + sum(c[1] for c in cigartuples[:-1] if c[0] in (0, 2, 3, 7, 8)), cigartuples[-1][1])  # MDN=X -> move forward on reference:
+        return (pos + sum(c[1] for c in cigartuples[:-1] if c[0] in (0, 2, 3, 7, 8)), cigartuples[-1][1])  # MDN=X -> move forward on reference:
     else:
         return None
 
@@ -1249,7 +1249,7 @@ def gene_table(self, **filter_args):  # ideas: filter, extra_columns
     colnames = ['chr', 'start', 'end', 'strand', 'gene_id', 'gene_name', 'n_transcripts']
     rows = [(g.chrom, g.start, g.end, g.strand, g.id, g.name, g.n_transcripts) for g in self.iter_genes(**filter_args)]
     df = pd.DataFrame(rows, columns=colnames)
-    return(df)
+    return df
 
 
 def transcript_table(self,  samples=None,  groups=None, coverage=False, tpm=False, tpm_pseudocount=0, extra_columns=None,  **filter_args):
@@ -1337,7 +1337,7 @@ def transcript_table(self,  samples=None,  groups=None, coverage=False, tpm=Fals
                 df_list.append(((cov_gr+tpm_pseudocount)/total*1e6).add_suffix('_sum_tpm'))
         df = pd.concat(df_list, axis=1)
 
-    return(df)
+    return df
 
 
 @ experimental
@@ -1567,7 +1567,7 @@ def get_gff_chrom_dict(gff, chromosomes):
             if chromosomes is None or c in chromosomes:
                 chrom[c] = c
     gff.seek(0)
-    return(chrom)
+    return chrom
 
 
 class IntervalArray:
@@ -1596,7 +1596,7 @@ class IntervalArray:
             raise
 
     def __len__(self):
-        return(len(self.obj))
+        return len(self.obj)
 
     def __iter__(self):
         return (v for v in self.obj.values())

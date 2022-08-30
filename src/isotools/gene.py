@@ -29,8 +29,8 @@ class Gene(Interval):
         self._transcriptome = transcriptome
 
     def __str__(self):
-        return('Gene {} {}({}), {} reference transcripts, {} expressed transcripts'.format(
-            self.name, self.region, self.strand, self.n_ref_transcripts, self.n_transcripts))
+        return 'Gene {} {}({}), {} reference transcripts, {} expressed transcripts'.format(
+            self.name, self.region, self.strand, self.n_ref_transcripts, self.n_transcripts)
 
     def __repr__(self):
         return object.__repr__(self)

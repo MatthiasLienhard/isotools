@@ -25,7 +25,7 @@ def proportion_test(x, n):
     p1 = [x[i] / n[i] for i in range(2)]
     p0 = (x[0] + x[1]) / (n[0] + n[1])
     z = abs(p1[0] - p1[1]) / np.sqrt(p0 * (1 - p0) * (1 / n[0] + 1 / n[1]))
-    return(2 * norm.sf(z)), (p1[0], 0, p1[1], 0, p0, 0)  # two sided alternative
+    return (2 * norm.sf(z)), (p1[0], 0, p1[1], 0, p0, 0)  # two sided alternative
 
 
 def binom_lr_test(x, n):

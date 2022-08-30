@@ -746,14 +746,19 @@ class Gene(Interval):
                     end = pos
             if self.strand == '-':
                 start, end = end, start
-            try:
-                assert start < tr['exons'][0][1], 'error unifiing %s: %s>=%s' % (tr["exons"], start, tr['exons'][0][1])
-                tr['exons'][0][0] = start
-                assert end > tr['exons'][-1][0], 'error unifiing %s: %s<=%s' % (tr["exons"], end, tr['exons'][-1][0])
-                tr['exons'][-1][1] = end
-            except AssertionError:
-                logger.error('%s TSS= %s, PAS=%s -> TSS_unified= %s, PAS_unified=%s', self, tr['TSS'], tr['PAS'],  tr['TSS_unified'], tr['PAS_unified'])
-                raise
+            if start > end:  # for monoexons this may happen in rare situations
+                assert len(tr['exons']) == 1
+                tr['TSS_unified'] = None
+                tr['PAS_unified'] = None
+            else:
+                try:
+                    assert start < tr['exons'][0][1] or len(tr['exons']) == 1, 'error unifying %s: %s>=%s' % (tr["exons"], start, tr['exons'][0][1])
+                    tr['exons'][0][0] = start
+                    assert end > tr['exons'][-1][0] or len(tr['exons']) == 1, 'error unifying %s: %s<=%s' % (tr["exons"], end, tr['exons'][-1][0])
+                    tr['exons'][-1][1] = end
+                except AssertionError:
+                    logger.error('%s TSS= %s, PAS=%s -> TSS_unified= %s, PAS_unified=%s', self, tr['TSS'], tr['PAS'],  tr['TSS_unified'], tr['PAS_unified'])
+                    raise
 
 
 def _coding_len(exons, cds):

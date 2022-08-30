@@ -443,8 +443,11 @@ def gene_track(self, ax=None, title=None, reference=True, select_transcripts=Non
             pos = (max(tr_start, x_range[0]) + min(tr_end, x_range[1])) / 2
             ax.text(pos, i - .02, trid, ha='center', va='top', fontsize=label_fontsize, clip_on=True)
         for j, (st, end) in enumerate(tr['exons']):
-            if 'CDS' in tr and tr['CDS'][0] <= end and tr['CDS'][1] >= st:  # CODING exon
-                c_st, c_end = max(st, tr['CDS'][0]), min(tr['CDS'][1], end)  # coding start and coding end
+            cds = None
+            if 'CDS' in tr or 'ORF' in tr:
+                cds = tr['CDS'] if 'CDS' in tr else tr['ORF']
+            if cds is not None and cds[0] <= end and cds[1] >= st:  # CODING exon
+                c_st, c_end = max(st, cds[0]), min(cds[1], end)  # coding start and coding end
                 if c_st > st:  # first noncoding part
                     rect = patches.Rectangle((st, i + .125), (c_st - st), .25, linewidth=1, edgecolor=color, facecolor=color)
                     ax.add_patch(rect)

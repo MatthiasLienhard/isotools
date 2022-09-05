@@ -227,7 +227,9 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
             else:
                 start, end = sg[nX].end, sg[nY].start
                 novel = (start, end) not in known.get(splice_type, set())
-            res.append(tuple(itertools.chain((g.name, g.id, g.chrom, g.strand, start, end, splice_type, novel, pval, setA, setB), params, params_other,
+            res.append(tuple(itertools.chain((g.name, g.id, g.chrom, g.strand, start, end, splice_type, novel, pval),
+                                             sorted(setA, key=lambda x: -g.coverage[:, x].sum(0)),
+                                             sorted(setB, key=lambda x: -g.coverage[:, x].sum(0)), params, params_other,
                                              (val for lists in zip(x, n) for pair in zip(*lists) for val in pair))))
 
     df = pd.DataFrame(res, columns=(['gene', 'gene_id', 'chrom', 'strand', 'start', 'end', 'splice_type', 'novel', 'pvalue', 'trA', 'trB'] +
@@ -251,8 +253,6 @@ def die_test(self, groups, min_cov=25, n_isoforms=10, padj_method='fdr_bh', prog
     Syntax and parameters follow the original implementation in
     https://github.com/noush-joglekar/scisorseqr/blob/master/inst/RScript/IsoformTest.R
     :param groups: Dict with groupnames as keys and lists of samplenames as values, defining the two groups for the test.
-    If more then two groups are provided, test is performed between first two groups, but maximum likelihood parameters
-    (expected PSI and dispersion) will be computet for the other groups as well.
     :param min_cov: Minimal number of reads per group for each gene.
     :param n_isoforms: Number of isoforms to consider in the test for each gene. All additional least expressed isoforms get summarized.'''
 

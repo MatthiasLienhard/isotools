@@ -612,7 +612,7 @@ class Gene(Interval):
             return np.nan, np.nan, []
         # if there are more than 'numIsoforms' isoforms of the gene, all additional least expressed get summarized.
         if cov.shape[0] > n_isoforms:
-            idx = np.argpartition(-cov.sum(1), n_isoforms) # take the n_isoforms most expressed isoforms (random order)
+            idx = np.argpartition(-cov.sum(1), n_isoforms)  # take the n_isoforms most expressed isoforms (random order)
             additional = cov[idx[n_isoforms:]].sum(0)
             cov = cov[idx[:n_isoforms]]
             cov[n_isoforms-1] += additional

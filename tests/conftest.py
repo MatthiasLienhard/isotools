@@ -31,16 +31,13 @@ def example_gene():
 
 @pytest.fixture(scope="session")
 def example_gene_coor():
-
     ref = [[(0, 10), (20, 30), (40, 50), (60, 70), (80, 90), (100, 110), (120, 130)]]
-    novel = {'priA_priB': [(0, 10), (20, 30), (40, 50), (60, 70), (100, 110), (120, 130)],
-             'priA_altB': [(0, 10), (20, 30), (40, 50), (60, 70), (80, 90), (100, 110), (120, 130)],
-             'altA_priB': [(0, 10), (20, 50), (60, 70), (100, 110), (120, 130)],
-             'altA_altB': [(0, 10), (20, 50), (60, 70), (80, 90), (100, 110), (120, 130)]}
-
+    novel = {'altA_priB': [(0, 10), (20, 30), (40, 50), (60, 70),           (100, 110), (120, 130)],
+             'altA_altB': [(0, 10), (20, 30), (40, 50), (60, 70), (80, 90), (100, 110), (120, 130)],
+             'priA_priB': [(0, 10), (20, 50),           (60, 70),           (100, 110), (120, 130)],
+             'priB_altB': [(0, 10), (20, 50),           (60, 70), (80, 90), (100, 110), (120, 130)]}
     ref_tr = [{'exons': e, 'id': f'reference {i+1}'} for i, e in enumerate(ref)]
     transcripts = [{'exons': e, 'transcript_name': n} for n, e in novel.items()]
-
     g = Gene(1, 100, {'chr': 'chr1', 'strand': '+', 'ID': 'example_coor',
                       'reference': {'transcripts': ref_tr}, 'transcripts': transcripts}, None)
     return g

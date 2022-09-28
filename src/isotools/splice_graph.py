@@ -99,7 +99,7 @@ class SegmentGraph():
         exons.reverse()
         return exons
 
-    def search_transcript(self, exons):
+    def search_transcript(self, exons, complete=True):
         '''Tests if a transcript (provided as list of exons) is contained in self and return the corresponding transcript indices.
 
         :param exons: A list of exon tuples representing the transcript
@@ -851,11 +851,13 @@ class SegmentGraph():
         if alt_types[0] in types:
             for n, tr_set in tss.items():  # find compatible alternatives: end after tss /start before pas
                 alt_tr = [tr for tr, pas in enumerate(self._pas) if tr not in tr_set and pas > n]
-                yield (alt_tr, list(tr_set), tss_start[n], n, alt_types[0])
+                if alt_tr:
+                    yield (alt_tr, list(tr_set), tss_start[n], n, alt_types[0])
         if alt_types[1] in types:
             for n, tr_set in pas.items():
                 alt_tr = [tr for tr, tss in enumerate(self._tss) if tr not in tr_set and tss < n]
-                yield (alt_tr, list(tr_set), n, pas_end[n], alt_types[1])
+                if alt_tr:
+                    yield (alt_tr, list(tr_set), n, pas_end[n], alt_types[1])
 
     def is_exonic(self, position):
         '''Checks whether the position is within an exon.

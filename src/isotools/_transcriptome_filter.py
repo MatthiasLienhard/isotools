@@ -28,7 +28,7 @@ DEFAULT_TRANSCRIPT_FILTER = {
     'FRAGMENT': 'fragments and any("novel exonic " in a or "fragment" in a for a in annotation[1])',
     'UNSPLICED': 'len(exons)==1',
     'MULTIEXON': 'len(exons)>1',
-    'SUBSTANTIAL': 'g.coverage.sum() * .05 < g.coverage[:,trid].sum()'
+    'SUBSTANTIAL': 'g.coverage.sum() * .01 < g.coverage[:,trid].sum()'
 }
 
 SPLICE_CATEGORY = ['FSM', 'ISM', 'NIC', 'NNC', 'NOVEL']

@@ -6,6 +6,8 @@ import re
 from tqdm import tqdm
 import builtins
 import logging
+from scipy.stats import chi2_contingency, fisher_exact
+
 logger = logging.getLogger('isotools')
 
 cigar = 'MIDNSHP=XB'
@@ -353,6 +355,75 @@ def smooth(x, window_len=31):
     return y[int(window_len/2-(window_len+1) % 2):-int(window_len/2)]
 
 
+def prepare_contingency_table(eventA, eventB, coverage):
+    '''
+    Prepare the read counts and transcript id contingency tables for two events.
+
+    Returns two 2x2 contingency tables, one with the read counts, one with the transcript events
+
+    :param eventA: First alternative splicing event obtained from .find_splice_bubbles()
+    :param eventB: Second alternative splicing event obtained from .find_splice_bubbles()
+    :param coverage: Read counts per transcript.
+    '''
+
+    con_tab = np.zeros((2, 2), dtype=int)
+    trid_tab = np.zeros((2, 2), dtype=object)
+
+    for m, n in itertools.product(range(2), range(2)):
+        trids = sorted(set(eventA[m]) & set(eventB[n]), key=coverage.__getitem__, reverse=True)
+        trid_tab[n, m] = trids
+        con_tab[n, m] = coverage[trids].sum()
+    return con_tab, trid_tab
+
+
+def pairwise_event_test(con_tab, test="fisher", pseudocount=.01):
+    '''
+    Performs an independence test on the contingency table and computes effect sizes.
+
+    :param con_tab: contingency table with the read counts
+    :param test: Test to be performed. One of ("chi2", "fisher")
+    :type test: str
+    '''
+    if test == 'chi2':
+        test_fun = chi2_contingency
+    elif test == 'fisher':
+        test_fun = fisher_exact
+    else:
+        raise (ValueError('test should be "chi2" or "fisher"'))
+
+    test_res = test_fun(con_tab+pseudocount)  # add some small value (TODO: is this also for fisher test?)
+
+    # priA_priB_trID, altA_altB_trID = tr_ID_tab[0, 0], tr_ID_tab[1, 1]
+    # priA_altB_trID, altA_priB_trID = tr_ID_tab[1, 0], tr_ID_tab[0, 1]
+    # priA_priB, altA_altB = con_tab[0, 0], con_tab[1, 1]
+    # priA_altB, altA_priB = con_tab[1, 0], con_tab[0, 1]
+    p_value = test_res[1]
+    test_stat = test_res[0]  # TODO: inconsistancy: this is the odds ratio for the fisher test and X^2 for the chisq test
+    log2OR = _corrected_log2OR(con_tab)
+    # logOR is a measure of the effect size. coordination between the events is either positive or negative.
+    dcPSI_AB, dcPSI_BA = dcPSI(con_tab)
+    # delta conditional PSI is another measure of the effect size.
+
+    return p_value, test_stat, log2OR,  dcPSI_AB, dcPSI_BA
+
+
+def precompute_events_dict(self, event_type=("ES", "5AS", "3AS", "IR", "ME"), min_cov=100, region=None, progress_bar=True):
+    '''
+    Precomputes the evvents_dict, i.e. a dictionary of splice bubbles. Each key is a gene and each value is the splice bubbles
+    object corresponding to that gene.
+    :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional.
+    '''
+
+    events_dict = {}
+
+    for g in self.iter_genes(region=region, progress_bar=progress_bar):
+        sg = g.segment_graph
+        events = sg.find_splice_bubbles(types=event_type)
+        events_dict[g.id] = [e for e in events if g.coverage.sum(axis=0)[e[0]+e[1]].sum() >= min_cov]
+
+    return events_dict
+
+
 def _corrected_log2OR(con_tab):
     con_tab_copy = np.zeros((2, 2), dtype=float)
 
@@ -363,3 +434,12 @@ def _corrected_log2OR(con_tab):
             con_tab_copy[n, m] = con_tab[n, m]
     log2OR = np.log2((con_tab_copy[0, 0]*con_tab_copy[1, 1])) - np.log2((con_tab_copy[0, 1]*con_tab_copy[1, 0]))
     return log2OR
+
+
+def dcPSI(con_tab):
+    # delta conditional PSI of a coordinated event
+    # 1) dcPSI_AB= PSI(B | altA) - PSI(B)
+    dcPSI_AB = con_tab[1, 1]/con_tab[:, 1].sum()-con_tab[1, :].sum()/con_tab.sum(None)
+    # 2) dcPSI_BA= PSI(A | altB) - PSI(A)
+    dcPSI_BA = con_tab[1, 1]/con_tab[1, :].sum()-con_tab[:, 1].sum()/con_tab.sum(None)
+    return dcPSI_AB, dcPSI_BA

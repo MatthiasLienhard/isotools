@@ -371,7 +371,8 @@ def sashimi_plot(self, samples=None, title='Long read sashimi plot', ax=None, ju
 
 
 def gene_track(self, ax=None, title=None, reference=True, select_transcripts=None, label_exon_numbers=True,
-               label_transcripts=True, label_fontsize=10, color='blue', x_range=None, draw_other_genes=False):
+               label_transcripts=True, label_fontsize=10, color='blue', x_range=None, draw_other_genes=False,
+               query=None, mincoverage=None, maxcoverage=None):
     '''Draws a gene track of the gene.
 
     The gene track depicts the exon structure of a gene, like in a genome browser.
@@ -390,7 +391,10 @@ def gene_track(self, ax=None, title=None, reference=True, select_transcripts=Non
     :param color: Specify the color for the exons.
     :param x_range: Genomic positions to specify the x range of the plot.
     :param draw_other_genes: If set to True, transcripts from other genes overlapping the depicted region are also displayed.
-        You can also provide a list of gene names/ids, to specify which other genes should be included.'''
+        You can also provide a list of gene names/ids, to specify which other genes should be included.
+    :param query: Filter query, which is passed to Gene.filter_transcripts or Gene.filter_ref_transcripts
+    :param mincoverage: Minimum coverage for the transcript to be depeicted. Ignored in case of reference=True.
+    :param maxcoverage: Maximum coverage for the transcript to be depeicted. Ignored in case of reference=True.'''
 
     if select_transcripts is None:
         select_transcripts = {}
@@ -416,11 +420,13 @@ def gene_track(self, ax=None, title=None, reference=True, select_transcripts=Non
         ol_genes = {self}
     transcript_list = []
     for g in ol_genes:
-        select_tr = select_transcripts.get(g.name, None)
+        select_tr = g.filter_ref_transcripts(query) if reference else g.filter_transcripts(query, mincoverage, maxcoverage)
+        if select_transcripts.get(g.name):
+            select_tr = [trid for trid in select_tr if trid in select_transcripts.get(g.name)]
         if reference:  # select transcripts and sort by start
-            transcript_list.extend([(g, tr_nr, tr) for tr_nr, tr in enumerate(g.ref_transcripts) if select_tr is None or tr_nr in select_tr])
+            transcript_list.extend([(g, tr_nr, tr) for tr_nr, tr in enumerate(g.ref_transcripts) if tr_nr in select_tr])
         else:
-            transcript_list.extend([(g, tr_nr, tr) for tr_nr, tr in enumerate(g.transcripts) if select_tr is None or tr_nr in select_tr])
+            transcript_list.extend([(g, tr_nr, tr) for tr_nr, tr in enumerate(g.transcripts) if tr_nr in select_tr])
     transcript_list.sort(key=lambda x: x[2]['exons'][0][0])  # sort by start position
     for g, tr_nr, tr in transcript_list:
         tr_start, tr_end = tr['exons'][0][0], tr['exons'][-1][1]

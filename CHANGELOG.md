@@ -4,6 +4,13 @@
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
 * panned new feature: during import of long reads, (optionally) correct for short exon alignment issues. 
 
+## [0.3.1]
+* new feature: filter_transcripts function for genes
+* changed SUBSTANTIAL filter to 1% of the genes total (was 5%)
+* coordination test:
+    * changed argument and column naming, to make it consistant with other test results
+    * added conditional delta PSI effect size measure
+    * order of events is now according to gene strand: A upstream of B
 
 ## [0.3.0]
 * new feature: find longest ORF and infer NMD of lr transcripts (and annotation)

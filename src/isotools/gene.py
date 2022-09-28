@@ -1,3 +1,4 @@
+from operator import itemgetter
 from intervaltree import Interval
 from collections.abc import Iterable
 from scipy.stats import chi2_contingency
@@ -10,8 +11,8 @@ import itertools
 from .splice_graph import SegmentGraph
 from .short_read import Coverage
 from ._transcriptome_filter import SPLICE_CATEGORY
-from ._utils import pairwise, _filter_event, find_orfs, smooth, get_quantiles
-from ._transcriptome_stats import pairwise_event_test
+from ._utils import pairwise, _filter_event, find_orfs, smooth, get_quantiles, _filter_function, \
+    pairwise_event_test, prepare_contingency_table
 
 import logging
 logger = logging.getLogger('isotools')
@@ -207,19 +208,26 @@ class Gene(Interval):
             tr['downstream_A_content'] = a_content[pos]
 
     def get_sequence(self, genome_fn, trids=None, reference=False):
-        '''Returns the nucleotide sequence of the specified transcripts.'''
-        trL = ((i, tr) for i, tr in enumerate(self.ref_transcripts if reference else self.transcripts) if trids is None or i in trids)
+        '''Returns the nucleotide sequence of the specified transcripts.
+
+        :param genome_fn: The path to the genome fasta file.
+        :param trids: List of transcript ids for which the sequence are requested.
+        :param reference: Specifiy whether the sequence is fetched for reference transcripts (True)
+            or long read transcripts (False, default).'''
+
+        trL = [(i, tr) for i, tr in enumerate(self.ref_transcripts if reference else self.transcripts) if trids is None or i in trids]
         pos = (min(tr['exons'][0][0] for _, tr in trL), max(tr['exons'][-1][1] for _, tr in trL))
         with FastaFile(genome_fn) as genome_fh:
             seq = genome_fh.fetch(self.chrom, *pos)
-        tr_seqs = []
+        tr_seqs = {}
         for i, tr in trL:
-            tr_seqs.append(i, '')
+            trseq = ''
             for e in tr['exons']:
-                tr_seqs[-1][1] += seq[e[0]-pos[0]:e[1]-pos[0]]
+                trseq += seq[e[0]-pos[0]:e[1]-pos[0]]
+            tr_seqs[i] = trseq
         if self.strand == '+':
             return tr_seqs
-        return [(i, reverse_complement(ts)) for i, ts in tr_seqs]
+        return {i: reverse_complement(ts) for i, ts in tr_seqs.items()}
 
     def add_orfs(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
         '''find longest ORF for each transcript and add to the transcript properties tr["ORF"]'''
@@ -481,6 +489,43 @@ class Gene(Interval):
         'Returns a shallow copy of self.'
         return self.__copy__()
 
+    def filter_transcripts(self, query=None, mincoverage=None, maxcoverage=None):
+        tr_filter = self._transcriptome.filter['transcript']
+        if query:
+            # used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}
+            query_fun, used_tags = _filter_function(query)
+            msg = 'did not find the following filter rules: {}\nvalid rules are: {}'
+            assert all(f in tr_filter for f in used_tags), msg.format(
+                ', '.join(f for f in used_tags if f not in tr_filter), ', '.join(tr_filter))
+            tr_filter_fun = {tag: _filter_function(tr_filter[tag])[0] for tag in used_tags if tag in tr_filter}
+        trids = []
+        for i, tr in enumerate(self.transcripts):
+            if mincoverage and self.coverage[:, i].sum() < mincoverage:
+                continue
+            if maxcoverage and self.coverage[:, i].sum() > maxcoverage:
+                continue
+            if query is None or query_fun(
+                    **{tag: f(g=self, trid=i, **tr) for tag, f in tr_filter_fun.items()}):
+                trids.append(i)
+        return trids
+
+    def filter_ref_transcripts(self, query=None):
+        tr_filter = self._transcriptome.filter['reference']
+        if query:
+            # used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}
+            query_fun, used_tags = _filter_function(query)
+            msg = 'did not find the following filter rules: {}\nvalid rules are: {}'
+            assert all(f in tr_filter for f in used_tags), msg.format(
+                ', '.join(f for f in used_tags if f not in tr_filter), ', '.join(tr_filter))
+            tr_filter_fun = {tag: _filter_function(tr_filter[tag])[0] for tag in used_tags if tag in tr_filter}
+        else:
+            return list(range(len(self.transcripts)))
+        trids = []
+        for i, tr in enumerate(self.ref_transcripts):
+            if query_fun(**{tag: f(g=self, trid=i, **tr) for tag, f in tr_filter_fun.items()}):
+                trids.append(i)
+        return trids
+
     def _find_splice_sites(exons, transcripts):
         '''Checks whether the splice sites of a new transcript are present in the set of transcripts.
         avoids the computation of segment graph, which provides the same functionality.
@@ -504,7 +549,7 @@ class Gene(Interval):
         return current
 
     def coordination_test(self, samples=None, test="chi2", min_dist=1, min_total=100, min_alt_fraction=.1,
-                          min_cov_pair=100, events=None, event_type=("ES", "5AS", "3AS", "IR", "ME")):
+                          events=None, event_type=("ES", "5AS", "3AS", "IR", "ME")):
         '''Performs pairwise independence test for all pairs of Alternative Splicing Events (ASEs) in a gene.
 
         For all pairs of ASEs in a gene creates a contingency table and performs an indeppendence test.
@@ -521,23 +566,18 @@ class Gene(Interval):
         :param min_dist: Minimum distance (in nucleotides) between the two
             alternative splicing events for the pair to be tested.
         :type min_dist: int
-        :param min_total: The minimum total number of reads for an event to pass the filter.
+        :param min_total: The minimum total number of reads for an event pair to pass the filter.
         :type min_total: int
-        :param min_alt_fraction: The minimum fraction of read supporting the alternative.
+        :param min_alt_fraction: The minimum fraction of reads supporting the minor alternative of the two events.
         :type min_alt_fraction: float
-        :param min_cov_pair: the minimum total number of a pair of the joint occurrence of a pair of event for it to be reported in the result
-        :type min_cov_pair: int
-        :param events: a splice_bubble object
+        :param events: To speed up testing on different groups of the same transcriptome objects, events can be precomputed
+            with the isotools._utils.precompute_events_dict function.
         :param event_type:  A tuple with event types to test. Valid types are
         ("ES", "3AS", "5AS", "IR", "ME", "TSS", "PAS"). Default is ("ES", "5AS", "3AS", "IR", "ME").
         Not used if the event parameter is already given.
-        :return: A list of tuples (gene_id, gene_name, strand, ASE1_type, ASE2_type,
-        ASE1_start, ASE1_end, ASE2_start, ASE2_end, priA_priB, priA_altB, altA_priB, altA_altB),
-        where each entrance in the tuple corresponds to the p_value, the statistic, the gene name,
-        the type of the first ASE, the type of the second ASE, the starting coordinate of the first ASE,
-        the ending coordinate of the first ASE, the starting coordinate of the second ASE,
-        the ending coordinate of the second ASE, the four entries of the contingency table for each test performed (a column for each),
-        and the four lists of the transcript IDs sorted by coverage (a column for each list).
+        :return: A list of tuples with the test results: (gene_id, gene_name, strand, eventA_type, eventB_type,
+            eventA_start, eventA_end, eventB_start, eventB_end, p_value, test_stat, log2OR,  dcPSI_AB, dcPSI_BA,
+            priA_priB, priA_altB, altA_priB, altA_altB,  priA_priB_trids, priA_altB_trids, altA_priB_trids, altA_altB_trids).
         '''
 
         if samples is None:
@@ -559,7 +599,11 @@ class Gene(Interval):
 
         events = [e for e in events if _filter_event(cov, e, min_total=min_total,
                                                      min_alt_fraction=min_alt_fraction)]
-
+        # make sure its sorted (according to gene strand)
+        if self.strand == '+':
+            events.sort(key=itemgetter(2, 3), reverse=False)  # sort by starting node
+        else:
+            events.sort(key=itemgetter(3, 2), reverse=True)  # reverse sort by end node
         test_res = []
 
         for i, j in itertools.combinations(range(len(events)), 2):
@@ -568,16 +612,20 @@ class Gene(Interval):
             if (events[i][4], events[j][4]) == ("TSS", "TSS") or (events[i][4], events[j][4]) == ("PAS", "PAS"):
                 continue
 
-            attr = pairwise_event_test(events[i], events[j], cov, test=test)  # append to test result
+            con_tab, tr_ID_tab = prepare_contingency_table(events[i], events[j], cov)
 
-            if sum(attr[3:7]) < min_cov_pair:  # check that the joint occurrence of the two events passes the threshold
+            if con_tab.sum(None) < min_total:  # check that the joint occurrence of the two events passes the threshold
                 continue
+            if min(con_tab.sum(1).min(), con_tab.sum(0).min())/con_tab.sum(None) < min_alt_fraction:
+                continue
+            test_result = pairwise_event_test(con_tab, test=test)  # append to test result
 
             coordinate1 = sg._get_event_coordinate(events[i])
             coordinate2 = sg._get_event_coordinate(events[j])
 
-            attr = (self.id, self.name, self.strand, events[i][4], events[j][4], coordinate1[0],
-                    coordinate1[1], coordinate2[0], coordinate2[1]) + attr
+            attr = (self.id, self.name, self.strand, events[i][4], events[j][4]) + \
+                coordinate1 + coordinate2 + test_result + \
+                tuple(con_tab.flatten()) + tuple(tr_ID_tab.flatten())
 
             # events[i][4] is the events[i] type
             # coordinate1[0] is the starting coordinate of event 1

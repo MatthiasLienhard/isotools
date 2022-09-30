@@ -738,7 +738,7 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
 
 
 def coordination_test(self, samples=None, test="fisher", min_dist=1, min_total=100, min_alt_fraction=.1,
-                      events_dict={}, event_type=("ES", "5AS", "3AS", "IR", "ME"), query=None, region=None, padj_method="fdr_bh",
+                      events_dict=None, event_type=("ES", "5AS", "3AS", "IR", "ME"), query=None, region=None, padj_method="fdr_bh",
                       progress_bar=True):
     '''
     Performs gene_coordination_test on all genes.
@@ -755,8 +755,8 @@ def coordination_test(self, samples=None, test="fisher", min_dist=1, min_total=1
     :type min_alt_frction: float
     :param min_cov_pair: the minimum total number of a pair of the joint occurrence of a pair of event for it to be reported in the result
     :type min_cov_pair: int
-    :param events_dict: a dictionary of splice bubbles. Each key is a gene and each value is the splice bubbles object corresponding to that
-     gene.
+    :param events_dict: Precomputed dictionary of alternative splicing events, to speed up analysis of several groups of samples of the same dataset.
+        Can be generated with the function _utils.precompute_events_dict.
     :param event_type:  A tuple with event types to test. Valid types are ("ES","3AS", "5AS","IR" or "ME", "TSS", "PAS").
     Default is ("ES", "5AS", "3AS", "IR", "ME")
     :param query: If provided, query string is evaluated on all genes for filtering
@@ -778,12 +778,12 @@ def coordination_test(self, samples=None, test="fisher", min_dist=1, min_total=1
         _, _, groups = _check_groups(self, [samples], 1)
         samples = groups[0]
 
-    for g in self.iter_genes(region=region, progress_bar=progress_bar, query=query):
-
+    for g in self.iter_genes(region=region, query=query, progress_bar=progress_bar):
+        events = events_dict.get(g.id, []) if events_dict is not None else None
         try:
             next_test_res = g.coordination_test(test=test, samples=samples, min_dist=min_dist, min_total=min_total,
                                                 min_alt_fraction=min_alt_fraction,
-                                                events=events_dict.get(g.id), event_type=event_type)
+                                                events=events, event_type=event_type)
             test_res.extend(next_test_res)
 
         except Exception:

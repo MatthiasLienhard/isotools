@@ -330,6 +330,24 @@ def _find_splice_sites(sj, transcripts):
     return sites
 
 
+def precompute_events_dict(transcriptome, event_type=("ES", "5AS", "3AS", "IR", "ME"), min_cov=100, region=None,  query=None, progress_bar=True):
+    '''
+    Precomputes the events_dict, i.e. a dictionary of splice bubbles. Each key is a gene and each value is the splice bubbles
+    object corresponding to that gene.
+    :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional.
+    '''
+
+    events_dict = {}
+
+    for g in transcriptome.iter_genes(region=region, query=query, progress_bar=progress_bar):
+        sg = g.segment_graph
+        events = [e for e in sg.find_splice_bubbles(types=event_type) if g.coverage.sum(axis=0)[e[0]+e[1]].sum() >= min_cov]
+        if events:
+            events_dict[g.id] = events
+
+    return events_dict
+
+
 def get_quantiles(pos, percentile=[.5]):
     '''provided a list of (positions,coverage) pairs, return the median position'''
     # percentile should be sorted, and between 0 and 1
@@ -405,23 +423,6 @@ def pairwise_event_test(con_tab, test="fisher", pseudocount=.01):
     # delta conditional PSI is another measure of the effect size.
 
     return p_value, test_stat, log2OR,  dcPSI_AB, dcPSI_BA
-
-
-def precompute_events_dict(self, event_type=("ES", "5AS", "3AS", "IR", "ME"), min_cov=100, region=None, progress_bar=True):
-    '''
-    Precomputes the evvents_dict, i.e. a dictionary of splice bubbles. Each key is a gene and each value is the splice bubbles
-    object corresponding to that gene.
-    :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional.
-    '''
-
-    events_dict = {}
-
-    for g in self.iter_genes(region=region, progress_bar=progress_bar):
-        sg = g.segment_graph
-        events = sg.find_splice_bubbles(types=event_type)
-        events_dict[g.id] = [e for e in events if g.coverage.sum(axis=0)[e[0]+e[1]].sum() >= min_cov]
-
-    return events_dict
 
 
 def _corrected_log2OR(con_tab):

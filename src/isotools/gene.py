@@ -745,13 +745,15 @@ class Gene(Interval):
             if not ol_peaks:
                 ol_peaks = [quantiles[1]]
             for trid in tr_ids:
-                self.transcripts[trid]['TSS_unified'] = {}
-                for sa, sa_tss in self.transcripts[trid]['TSS'].items():
+                tr = self.transcripts[trid]
+                tr['TSS_unified'] = {}
+                for sa, sa_tss in tr['TSS'].items():
                     tss_unified = {}
                     for pos, c in sa_tss.items():
-                        next_peak = min(ol_peaks, key=lambda x: abs(x-pos))
+                        next_peak = min((p for p in ol_peaks if p < tr['exons'][0][1]),
+                                        default=pos, key=lambda x: abs(x-pos))
                         tss_unified[next_peak] = tss_unified.get(next_peak, 0)+c
-                    self.transcripts[trid]['TSS_unified'][sa] = tss_unified
+                    tr['TSS_unified'][sa] = tss_unified
         # same for PAS
         for pos, tr_ids in ends.items():
             profile = {}
@@ -766,14 +768,17 @@ class Gene(Interval):
             if not ol_peaks:
                 ol_peaks = [quantiles[1]]
             for trid in tr_ids:
-                self.transcripts[trid]['PAS_unified'] = {}
-                for sa, sa_pas in self.transcripts[trid]['PAS'].items():
+                tr = self.transcripts[trid]
+                tr['PAS_unified'] = {}
+                for sa, sa_pas in tr['PAS'].items():
                     pas_unified = {}
                     for pos, c in sa_pas.items():
-                        next_peak = min(ol_peaks, key=lambda x: abs(x-pos))
+                        next_peak = min((p for p in ol_peaks if p > tr['exons'][-1][0]),
+                                        default=pos, key=lambda x: abs(x-pos))
                         pas_unified[next_peak] = pas_unified.get(next_peak, 0)+c
-                    self.transcripts[trid]['PAS_unified'][sa] = pas_unified
+                    tr['PAS_unified'][sa] = pas_unified
         for tr in self.transcripts:
+            # find the most common tss/pas per transcript, and set the exon boundaries
             sum_tss = {}
             sum_pas = {}
             start = end = max_tss = max_pas = 0
@@ -799,6 +804,7 @@ class Gene(Interval):
                 tr['PAS_unified'] = None
             else:
                 try:
+                    # issues if the new exon start is behind the exon end
                     assert start < tr['exons'][0][1] or len(tr['exons']) == 1, 'error unifying %s: %s>=%s' % (tr["exons"], start, tr['exons'][0][1])
                     tr['exons'][0][0] = start
                     assert end > tr['exons'][-1][0] or len(tr['exons']) == 1, 'error unifying %s: %s<=%s' % (tr["exons"], end, tr['exons'][-1][0])

@@ -1239,7 +1239,7 @@ def _set_alias(d, alias, required=True):
 
 
 # human readable output
-def gene_table(self, **filter_args):  # ideas: filter, extra_columns
+def gene_table(self, **filter_args):  # ideas: extra_columns
     '''Creates a gene summary table.
 
     Exports all genes within region to a table.

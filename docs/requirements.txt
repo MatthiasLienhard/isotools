@@ -7,5 +7,5 @@ readthedocs-sphinx-search==0.1.0
 myst_parser==0.15.1
 nbsphinx==0.8.6
 Jinja2<3.1
-isotools==latest
+isotools
 

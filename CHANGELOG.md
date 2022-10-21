@@ -5,6 +5,8 @@
 * panned new feature: during import of long reads, (optionally) correct for short exon alignment issues. 
 
 ## [0.3.1]
+* new feature: add protein domains from 3 different sources and depict them with Gene.plot_domains()
+* new feature: restrict gene and transcript iterators on list of genes of interest
 * new feature: filter_transcripts function for genes
 * changed SUBSTANTIAL filter to 1% of the genes total (was 5%)
 * coordination test:

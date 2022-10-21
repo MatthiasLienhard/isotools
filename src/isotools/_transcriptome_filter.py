@@ -133,7 +133,7 @@ def add_filter(self, tag, expression, context='transcript', update=False):
     self.filter[context][tag] = expression
 
 
-def iter_genes(self, region=None, query=None, progress_bar=False):
+def iter_genes(self, region=None, query=None, gois=None, progress_bar=False):
     '''Iterates over the genes of a region, optionally applying filters.
 
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional.
@@ -154,32 +154,36 @@ def iter_genes(self, region=None, query=None, progress_bar=False):
             logger.error("Error in query string: \n{query}")
             raise
     if region is None:
-        genes = self
-    elif isinstance(region, str):
-        if region in self.data:
-            genes = self.data[region]  # provide chromosome
+        if gois is None:
+            genes = self
         else:
-            try:
-                chrom, pos = region.split(':')
-                if chrom in self.data:
-                    start, end = [int(v) for v in pos.split('-')]
-                else:
-                    raise ValueError('specified chromosome {} not found'.format(chrom))
-            except BaseException as e:
-                raise ValueError('incorrect region {} - specify as string "chr" or "chr:start-end" or tuple ("chr",start,end)'.format(region)) from e
-            genes = self.data[chrom][int(start):int(end)]
-    elif isinstance(region, tuple):
-        chrom, start, end = region
+            genes = {self[goi] for goi in gois}
+
+    else:
+        if isinstance(region, str):
+            if region in self.data:
+                genes = self.data[region]  # provide chromosome
+            else:  # parse region string (chr:start-end)
+                try:
+                    chrom, pos = region.split(':')
+                    start, end = [int(i) for i in pos.split('-')]
+                except BaseException as e:
+                    raise ValueError('incorrect region {} - specify as string "chr" or "chr:start-end" or tuple ("chr",start,end)'.format(region)) from e
+        elif isinstance(region, tuple):
+            chrom, start, end = region
         if chrom in self.data:
             genes = self.data[chrom][int(start):int(end)]
         else:
             raise ValueError('specified chromosome {} not found'.format(chrom))
-    for g in tqdm(genes, disable=not progress_bar, unit='genes', smoothing=0):  # often few genes take much longer - smoothing 0 means avg
+        if gois is not None:
+            genes = [g for g in genes if g.id in gois or g.name in gois]
+
+    for g in tqdm(genes, disable=not progress_bar, unit='genes', smoothing=0):  # often some genes take much longer than others - smoothing 0 means avg
         if query is None or query_fun(**{tag: fun(**g.data) for tag, fun in filter_fun.items()}):
             yield g
 
 
-def iter_transcripts(self, region=None, query=None, min_coverage=None, max_coverage=None, genewise=False, progress_bar=False):
+def iter_transcripts(self, region=None, query=None, min_coverage=None, max_coverage=None, genewise=False, gois=None, progress_bar=False):
     '''Iterates over the transcripts of a region, optionally applying filters.
 
     By default, each iteration returns a 3 Tuple with the gene object, the transcript number and the transcript dictionary.
@@ -189,6 +193,8 @@ def iter_transcripts(self, region=None, query=None, min_coverage=None, max_cover
     :param min_coverage: The minimum coverage threshold. Transcripts with less reads in total are ignored.
     :param max_coverage: The maximum coverage threshold. Transcripts with more reads in total are ignored.
     :param genewise: In each iteration, return the gene and all transcript numbers and transcript dicts for the gene as tuples.
+    :param gois: If provided, only transcripts from the list of genes of interest are considered. Provide as a list of gene ids or gene names.
+        By default, all genes are considered
     :param progress_bar: Print a progress bar. '''
 
     if query:
@@ -210,24 +216,30 @@ def iter_transcripts(self, region=None, query=None, min_coverage=None, max_cover
         tr_filter_fun = query_fun = None
         g_filter_fun = {}
     if genewise:
-        for g in self.iter_genes(region=region, progress_bar=progress_bar):
+        for g in self.iter_genes(region=region, gois=gois, progress_bar=progress_bar):
             g_filter_eval = {tag: fun(**g.data) for tag, fun in g_filter_fun.items()}
             filter_result = tuple(_filter_transcripts(g, g.transcripts, query_fun, tr_filter_fun, g_filter_eval, min_coverage, max_coverage))
             if filter_result:
                 i_tuple, tr_tuple = zip(*filter_result)
                 yield g, i_tuple, tr_tuple
     else:
-        for g in self.iter_genes(region=region, progress_bar=progress_bar):
+        for g in self.iter_genes(region=region, gois=gois, progress_bar=progress_bar):
             g_filter_eval = {tag: fun(**g.data) for tag, fun in g_filter_fun.items()}
             for i, tr in _filter_transcripts(g, g.transcripts, query_fun, tr_filter_fun, g_filter_eval, min_coverage, max_coverage):
                 yield g, i, tr
 
 
-def iter_ref_transcripts(self, region=None, query=None, progress_bar=False):
+def iter_ref_transcripts(self, region=None, query=None, genewise=False, gois=None, progress_bar=False):
     '''Iterates over the referemce transcripts of a region, optionally applying filters.
 
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional.
-    :param query: If provided, query string is evaluated on all transcripts for filtering'''
+    :param genewise: In each iteration, return the gene and all transcript numbers and transcript dicts for the gene as tuples.
+    :param query: If provided, query string is evaluated on all transcripts for filtering
+    :param genewise: In each iteration, return the gene and all transcript numbers and transcript dicts for the gene as tuples.
+    :param gois: If provided, only transcripts from the list of genes of interest are considered. Provide as a list of gene ids or gene names.
+        By default, all genes are considered
+    :param progress_bar: Print a progress bar. '''
+
     if query:
         # used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}
         all_filter = list(self.filter['reference']) + list(self.filter['gene'])
@@ -245,11 +257,19 @@ def iter_ref_transcripts(self, region=None, query=None, progress_bar=False):
     else:
         ref_filter_fun = query_fun = None
         g_filter_fun = {}
-    for g in self.iter_genes(region=region, progress_bar=progress_bar):
-        if g.is_annotated:
+    if genewise:
+        for g in self.iter_genes(region=region, gois=gois, progress_bar=progress_bar):
             g_filter_eval = {tag: fun(**g.data) for tag, fun in g_filter_fun.items()}
-            for i, tr in _filter_transcripts(g, g.ref_transcripts, query_fun, ref_filter_fun, g_filter_eval):
-                yield g, i, tr
+            filter_result = tuple(_filter_transcripts(g, g.ref_transcripts, query_fun, ref_filter_fun, g_filter_eval))
+            if filter_result:
+                i_tuple, tr_tuple = zip(*filter_result)
+                yield g, i_tuple, tr_tuple
+    else:
+        for g in self.iter_genes(region=region, gois=gois, progress_bar=progress_bar):
+            if g.is_annotated:
+                g_filter_eval = {tag: fun(**g.data) for tag, fun in g_filter_fun.items()}
+                for i, tr in _filter_transcripts(g, g.ref_transcripts, query_fun, ref_filter_fun, g_filter_eval):
+                    yield g, i, tr
 
 
 def _eval_filter_fun(fun, name, **args):

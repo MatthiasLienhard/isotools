@@ -247,7 +247,8 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
     # todo: extend sample_table
     for sa in samples:
         sample_properties[sa].update({'name': sa, 'file': coverage_csv_file, 'nonchimeric_reads': cov_tab[sample_cov_cols[sa]].sum(), 'chimeric_reads': 0})
-        self.infos['sample_table'] = self.sample_table.append(sample_properties[sa], ignore_index=True)
+        # self.infos['sample_table'] = self.sample_table.append(sample_properties[sa], ignore_index=True)
+        self.infos['sample_table'] = pd.concat([self.sample_table, pd.DataFrame([sample_properties[sa]])])
 
     self.make_index()
     return id_map
@@ -497,7 +498,8 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
         kwargs['chimeric_reads'] = n_chimeric.get(s_name, 0)
         kwargs['nonchimeric_reads'] = sample_nc_reads.get(s_name, 0)
         kwargs['name'] = s_name
-        self.infos['sample_table'] = self.sample_table.append(kwargs, ignore_index=True)
+        # self.infos['sample_table'] = self.sample_table.append(kwargs, ignore_index=True)
+        self.infos['sample_table'] = pd.concat([self.sample_table, pd.DataFrame([kwargs])])
     self.make_index()
     return total_nc_reads_chr
 

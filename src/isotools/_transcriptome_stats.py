@@ -6,6 +6,7 @@ import logging
 import numpy as np
 import pandas as pd
 import itertools
+from ._utils import has_overlap
 
 # from .decorators import deprecated, debug, experimental
 from ._utils import _filter_function
@@ -148,12 +149,13 @@ def _check_groups(transcriptome, groups, n_groups=2):
     if notfound:
         raise ValueError(f"Cannot find the following samples: {notfound}")
     assert all((gn1 not in gn2 for gn1, gn2 in itertools.permutations(groupnames, 2))), 'group names must not be contained in other group names'
-    sa_idx = {sa: idx[0] for sa, idx in transcriptome._get_sample_idx().items()}
+    sa_idx = {sa: idx for sa, idx in transcriptome._get_sample_idx().items()}
     grp_idx = [[sa_idx[sa] for sa in grp] for grp in groups]
     return groupnames, groups, grp_idx
 
 
-def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto', padj_method='fdr_bh', types=None, progress_bar=True):
+def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto', padj_method='fdr_bh',
+                   types=None, domains=None, progress_bar=True):
     '''Performs the alternative splicing event test.
 
     :param groups: Dict with groupnames as keys and lists of samplenames as values, defining the two groups for the test.
@@ -165,10 +167,21 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
     :param min_sa: The fraction of samples within each group that must be covered by at least min_n reads.
     :param test: The name of one of the implemented statistical tests ('betabinom_lr','binom_lr','proportions').
     :param padj_method: Specify the method for multiple testing correction.
-    :param types: Restrict the analysis on types of events. If ommited, all types are tested.'''
+    :param types: Restrict the analysis on types of events. If ommited, all types are tested.
+    :param domains: Protin domains overlapping the alternative splicing event get added to the result table.
+        Specify a list of sources, or a dictionary of sources and list of categories to be considdered.
+        By default, domains are not added.'''
 
+    if not domains:
+        domains = {}
+    elif isinstance(domains, str):
+        domains = {domains: None}
+    elif not isinstance(domains, dict):
+        domains = {k: None for k in domains}
+
+    noORF = (None, None, {'NMD': True})
     groupnames, groups, grp_idx = _check_groups(self, groups)
-    sidx = grp_idx[0] + grp_idx[1]
+    sidx = np.array(grp_idx[0] + grp_idx[1])
 
     if isinstance(test, str):
         if test == 'auto':
@@ -203,11 +216,11 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
                     known.setdefault(splice_type, set()).add((sg[nX].end, sg[nY].start))
         sg = g.segment_graph
         for setA, setB, nX, nY, splice_type in sg.find_splice_bubbles(types=types):
-
             junction_cov = g.coverage[:, setB].sum(1)
             total_cov = g.coverage[:, setA].sum(1) + junction_cov
             if total_cov[sidx].sum() < min_total:
                 continue
+
             alt_fraction = junction_cov[sidx].sum() / total_cov[sidx].sum()
             if alt_fraction < min_alt_fraction or alt_fraction > 1 - min_alt_fraction:
                 continue
@@ -226,14 +239,35 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
             else:
                 start, end = sg[nX].end, sg[nY].start
                 novel = (start, end) not in known.get(splice_type, set())
-            res.append(tuple(itertools.chain((g.name, g.id, g.chrom, g.strand, start, end, splice_type, novel, pval),
-                                             sorted(setA, key=lambda x: -g.coverage[:, x].sum(0)),
-                                             sorted(setB, key=lambda x: -g.coverage[:, x].sum(0)), params, params_other,
-                                             (val for lists in zip(x, n) for pair in zip(*lists) for val in pair))))
+            event_dom = {}
+            if domains:  # check for overlapping domains
+                for dom_source, dom_categories in domains.items():
+                    oltr = set()
+                    for trid in setA+setB:  # these are actually lists
+                        for dom in g.transcripts[trid].get('domain', {}).get(dom_source, []):
+                            if (dom_categories is None or
+                                    dom[1] in dom_categories) and \
+                                    has_overlap(dom[3], (start, end)):
+                                oltr.add(str(dom[0]))
+                    event_dom[dom_source] = (len(oltr), ','.join(oltr))
 
-    df = pd.DataFrame(res, columns=(['gene', 'gene_id', 'chrom', 'strand', 'start', 'end', 'splice_type', 'novel', 'pvalue', 'trA', 'trB'] +
-                                    [gn + part for gn in groupnames[:2] + ['total'] + groupnames[2:] for part in ['_PSI', '_disp']] +
-                                    [f'{sa}_{gn}_{w}' for gn, grp in zip(groupnames, groups) for sa in grp for w in ['in_cov', 'total_cov']]))
+            nmdA = sum(g.coverage[np.ix_(sidx, [trid])].sum(None)
+                       for trid in setA if g.transcripts[trid].get('ORF', noORF)[2]['NMD'])/g.coverage[np.ix_(sidx, setA)].sum(None)
+            nmdB = sum(g.coverage[np.ix_(sidx, [trid])].sum(None)
+                       for trid in setB if g.transcripts[trid].get('ORF', noORF)[2]['NMD'])/g.coverage[np.ix_(sidx, setB)].sum(None)
+            res.append(tuple(itertools.chain((g.name, g.id, g.chrom, g.strand, start, end, splice_type, novel, pval,
+                                             sorted(setA, key=lambda x: -g.coverage[np.ix_(sidx, [x])].sum(0)),
+                                             sorted(setB, key=lambda x: -g.coverage[np.ix_(sidx, [x])].sum(0)), nmdA, nmdB),
+                                             (v for dom_source in domains for v in event_dom[dom_source]),
+                                             params, params_other,
+                                             (val for lists in zip(x, n) for pair in zip(*lists) for val in pair))))
+    colnames = ['gene', 'gene_id', 'chrom', 'strand', 'start', 'end', 'splice_type', 'novel', 'pvalue', 'trA', 'trB', 'nmdA', 'nmdB']
+    if domains:
+        for dom_source in domains:
+            colnames += [f'n_{dom_source}_domains', f'{dom_source}_domains']
+    colnames += [gn + part for gn in groupnames[:2] + ['total'] + groupnames[2:] for part in ['_PSI', '_disp']]
+    colnames += [f'{sa}_{gn}_{w}' for gn, grp in zip(groupnames, groups) for sa in grp for w in ['in_cov', 'total_cov']]
+    df = pd.DataFrame(res, columns=colnames)
     try:
         mask = np.isfinite(df['pvalue'])
         padj = np.empty(mask.shape)

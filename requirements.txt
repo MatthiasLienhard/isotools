@@ -11,3 +11,5 @@ sklearn
 scipy
 statsmodels
 importlib-metadata
+pyhmmer
+requests

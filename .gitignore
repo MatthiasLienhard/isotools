@@ -12,9 +12,10 @@
 #example data
 *.bam
 *.bam.bai
-!tests/data/example_1_*.bam*
 tests/data/example_*
 tests/data/result*
+!tests/data/example*_domains*
+!tests/data/example_1_*.bam*
 
 # Setuptools distribution folder.
 /dist/

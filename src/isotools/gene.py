@@ -3,7 +3,9 @@ from intervaltree import Interval
 from collections.abc import Iterable
 from scipy.stats import chi2_contingency
 from scipy.signal import find_peaks
-from Bio.Seq import reverse_complement
+from Bio.Seq import reverse_complement, translate
+from Bio.Data.CodonTable import TranslationError
+
 from pysam import FastaFile
 import numpy as np
 import copy
@@ -36,7 +38,8 @@ class Gene(Interval):
     def __repr__(self):
         return object.__repr__(self)
 
-    from ._gene_plots import sashimi_plot, gene_track, sashimi_plot_short_reads, sashimi_figure
+    from ._gene_plots import sashimi_plot, gene_track, sashimi_plot_short_reads, sashimi_figure, plot_domains
+    from .domains import add_interpro_domains
 
     def short_reads(self, idx):
         '''Returns the short read coverage profile for a short read sample.
@@ -207,27 +210,47 @@ class Gene(Interval):
                     a_content[pos] = seq.upper().count('T') / length
             tr['downstream_A_content'] = a_content[pos]
 
-    def get_sequence(self, genome_fn, trids=None, reference=False):
+    def get_sequence(self, genome_fh, trids=None, reference=False, protein=False):
         '''Returns the nucleotide sequence of the specified transcripts.
 
-        :param genome_fn: The path to the genome fasta file.
+        :param genome_fh: The path to the genome fasta file, or FastaFile handle.
         :param trids: List of transcript ids for which the sequence are requested.
         :param reference: Specifiy whether the sequence is fetched for reference transcripts (True)
-            or long read transcripts (False, default).'''
+            or long read transcripts (False, default).
+        :param protein: Return protein sequences instead of transcript sequences.'''
 
         trL = [(i, tr) for i, tr in enumerate(self.ref_transcripts if reference else self.transcripts) if trids is None or i in trids]
+        if not trL:
+            return {}
         pos = (min(tr['exons'][0][0] for _, tr in trL), max(tr['exons'][-1][1] for _, tr in trL))
-        with FastaFile(genome_fn) as genome_fh:
+        try:  # assume its a FastaFile file handle
             seq = genome_fh.fetch(self.chrom, *pos)
+        except AttributeError:
+            genome_fn = genome_fh
+            with FastaFile(genome_fn) as genome_fh:
+                seq = genome_fh.fetch(self.chrom, *pos)
         tr_seqs = {}
         for i, tr in trL:
             trseq = ''
             for e in tr['exons']:
                 trseq += seq[e[0]-pos[0]:e[1]-pos[0]]
             tr_seqs[i] = trseq
-        if self.strand == '+':
+
+        if self.strand == '-':
+            tr_seqs = {i: reverse_complement(ts) for i, ts in tr_seqs.items()}
+        if not protein:
             return tr_seqs
-        return {i: reverse_complement(ts) for i, ts in tr_seqs.items()}
+        prot_seqs = {}
+        for i, tr in trL:
+            orf = tr.get("CDS", tr.get("ORF"))
+            if not orf:
+                continue
+            pos = sorted(self.find_transcript_positions(i, orf[:2], reference=reference))
+            try:
+                prot_seqs[i] = translate(tr_seqs[i][pos[0]:pos[1]], cds=True)
+            except TranslationError:
+                logger.warning(f'CDS sequence of {self.id} {"reference" if reference else ""} transcript {i} cannot be translated.')
+        return prot_seqs
 
     def add_orfs(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
         '''find longest ORF for each transcript and add to the transcript properties tr["ORF"]'''
@@ -237,38 +260,30 @@ class Gene(Interval):
                 tr["ORF"] = max(orfs, key=lambda x: x[2]['length'])
 
     def get_all_orf(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
-        ''' Predicts ORF using orfipy API.
+        ''' Predicts ORF.
         '''
         orf_list = []
         trL = self.ref_transcripts if reference else self.transcripts
-        if trL:
-            pos = (min(tr['exons'][0][0] for tr in trL), max(tr['exons'][-1][1] for tr in trL))
-            seq = genome_fh.fetch(self.chrom, *pos)
-        for i, tr in enumerate(trL):
-            tr_seq = ''
-            start_exon = stop_exon = -1
-            cum_exon_len = np.cumsum([e[1]-e[0] for e in tr['exons']])  # cummulative exon length
-            cum_intron_len = np.cumsum([tr['exons'][0][0]-pos[0]]+[e2[0]-e1[1] for e1, e2 in pairwise(tr['exons'])])  # cummulative intron length
-            for e in tr['exons']:
-                tr_seq += seq[e[0]-pos[0]:e[1]-pos[0]]
-            # print(f'{len(tr_seq)}=={cum_exon_len[-1]}')
-
-            if self.strand == '-':
-                tr_seq = reverse_complement(tr_seq)
+        for trid, tr_seq in self.get_sequence(genome_fh, reference=reference).items():
+            tr = trL[trid]
+            tr_start = tr['exons'][0][0]
+            cum_exon_len = np.cumsum([end-start for start, end in tr['exons']])  # cummulative exon length
+            cum_intron_len = np.cumsum([0]+[end-start for (_, start), (end, _) in pairwise(tr['exons'])])  # cummulative intron length
             orf_list.append((tr_seq, []))
             for start, stop, frame, seq_start, seq_end in find_orfs(tr_seq, minlen=minlen):
                 if self.strand == '-':
                     start, stop = cum_exon_len[-1]-stop, cum_exon_len[-1]-start
                 start_exon = next(i for i in range(len(cum_exon_len)) if cum_exon_len[i] >= start)
                 stop_exon = next(i for i in range(start_exon, len(cum_exon_len)) if cum_exon_len[i] >= stop)
-                genome_pos = (start+pos[0]+cum_intron_len[start_exon],
-                              stop+pos[0]+cum_intron_len[stop_exon])
-                dist_pas = 0
+                genome_pos = (tr_start+start+cum_intron_len[start_exon],
+                              tr_start+stop+cum_intron_len[stop_exon])
+                dist_pas = 0  # distance of termination codon to last upstream splice site
                 if self.strand == '+' and stop_exon < len(cum_exon_len)-1:
                     dist_pas = cum_exon_len[-2]-stop
                 if self.strand == '-' and start_exon > 0:
                     dist_pas = start-cum_exon_len[0]
-                orf_list[-1][1].append((*genome_pos, {'length': stop-start, 'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55}))
+                orf_list[-1][1].append((*genome_pos, {'start': start, 'length': stop-start,
+                                       'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55}))
         return orf_list
 
     def add_fragments(self):
@@ -359,6 +374,32 @@ class Gene(Interval):
 
         TPM is returned as a numpy array, with samples in columns and transcript isoforms in the rows.'''
         return (self.coverage+pseudocount)/self._transcriptome.sample_table['nonchimeric_reads'].values.reshape(-1, 1)*1e6
+
+    def find_transcript_positions(self, trid, pos, reference=False):
+        '''Converts genomic positions to positions within the transcript.
+
+        :param trid: The transcript id
+        :param pos: List of sorted genomic positions, for which the transcript positions are computed.'''
+
+        tr_pos = []
+        exons = self.ref_transcripts[trid]['exons'] if reference else self.transcripts[trid]['exons']
+        e_idx = 0
+        offset = 0
+        for p in sorted(pos):
+            try:
+                while p > exons[e_idx][1]:
+                    offset += (exons[e_idx][1]-exons[e_idx][0])
+                    e_idx += 1
+
+            except IndexError:
+                for _ in range(len(pos)-len(tr_pos)):
+                    tr_pos.append(None)
+                break
+            tr_pos.append(offset+p-exons[e_idx][0] if p >= exons[e_idx][0] else None)
+        if self.strand == '-':
+            trlen = sum(end-start for start, end in exons)
+            tr_pos = [None if p is None else trlen-p for p in tr_pos]
+        return tr_pos
 
     @property
     def coverage(self):
@@ -489,7 +530,7 @@ class Gene(Interval):
         'Returns a shallow copy of self.'
         return self.__copy__()
 
-    def filter_transcripts(self, query=None, mincoverage=None, maxcoverage=None):
+    def filter_transcripts(self, query=None, min_coverage=None, max_coverage=None):
         tr_filter = self._transcriptome.filter['transcript']
         if query:
             # used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}
@@ -500,9 +541,9 @@ class Gene(Interval):
             tr_filter_fun = {tag: _filter_function(tr_filter[tag])[0] for tag in used_tags if tag in tr_filter}
         trids = []
         for i, tr in enumerate(self.transcripts):
-            if mincoverage and self.coverage[:, i].sum() < mincoverage:
+            if min_coverage and self.coverage[:, i].sum() < min_coverage:
                 continue
-            if maxcoverage and self.coverage[:, i].sum() > maxcoverage:
+            if max_coverage and self.coverage[:, i].sum() > max_coverage:
                 continue
             if query is None or query_fun(
                     **{tag: f(g=self, trid=i, **tr) for tag, f in tr_filter_fun.items()}):

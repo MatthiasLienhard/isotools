@@ -1,11 +1,12 @@
 
+import collections.abc
 import matplotlib.colors as plt_col
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import numpy as np
 from math import log10
-from ._utils import has_overlap
+from ._utils import has_overlap, pairwise
 import logging
 logger = logging.getLogger('isotools')
 
@@ -20,6 +21,7 @@ DEFAULT_JPARAMS = [{'color': 'lightgrey', 'lwd': 1, 'draw_label': False},  # low
                    {'color': 'green', 'lwd': 1, 'draw_label': True},  # high coverage junctions
                    {'color': 'purple', 'lwd': 2, 'draw_label': True}]  # junctions of interest
 DEFAULT_PARAMS = dict(min_cov_th=.001, high_cov_th=.05, text_width=.02, arc_type='both', text_height=1, exon_color='green')
+DOMAIN_COLS = {"Family": "red", "Domain": "green", "Repeat": "orange", "Coiled-coil": "blue", "Motif": "grey", "Disordered": "pink"}
 
 
 def extend_params(params):
@@ -481,3 +483,235 @@ def gene_track(self, ax=None, title=None, reference=True, select_transcripts=Non
     ax.set_xlim(*x_range)
     ax.xaxis.set_major_formatter(FuncFormatter(lambda x, pos=None: f'{x:,.0f}'))
     return ax
+
+
+def find_blocks(pos, segments, remove_zero_gaps=False):
+    adj_pos = []
+    offset = 0
+    idx = 0
+    try:
+        while pos[0] > offset+segments[idx][1] - segments[idx][0]:
+            offset += segments[idx][1] - segments[idx][0]
+            idx += 1
+        adj_pos = [[segments[idx][0]+pos[0]-offset, None]]
+        while pos[1] > offset+segments[idx][1] - segments[idx][0]:
+            adj_pos[-1][1] = segments[idx][1]
+            offset += segments[idx][1] - segments[idx][0]
+            idx += 1
+            adj_pos.append([segments[idx][0], None])
+    except IndexError:
+        logger.error(f'attempt to postitions {pos} blocks to segments {segments}')
+        raise
+    adj_pos[-1][1] = segments[idx][0]+pos[1]-offset
+    if remove_zero_gaps:
+        adj_pos_gaps = adj_pos
+        adj_pos = []
+        for seg in adj_pos_gaps:
+            if not adj_pos or adj_pos[-1][1] < seg[0]:
+                adj_pos.append(seg)
+            else:
+                adj_pos[-1][1] = seg[-1]
+    return adj_pos
+
+
+def get_rects(blocks, h=1, w=.1, connect=False,  **kwargs):
+    rects = [patches.Rectangle((b[0], h), b[1]-b[0], w, **kwargs) for b in blocks]
+
+    if connect:
+        c = h+w/2
+        rects.extend([patches.Polygon(np.array([[b1[1], c], [b2[0], c]]), closed=True, **kwargs) for b1, b2 in pairwise(blocks)])
+    return (rects)
+
+
+def find_segments(transcripts, orf_only=True, seperate_exons=False):
+    '''Find exonic parts of the gene, with respect to trids.'''
+    if orf_only:
+        exon_list = []
+        for tr in transcripts:
+            cds_pos = tr.get('CDS', tr.get('ORF'))
+            exon_list.append([])
+            if cds_pos is None:
+                continue
+            for e in tr['exons']:
+                if e[1] < cds_pos[0]:
+                    continue
+                if e[0] > cds_pos[1]:
+                    break
+                exon_list[-1].append([max(e[0], cds_pos[0]), min(e[1], cds_pos[1])])
+    else:
+        exon_list = [tr['exons'] for tr in transcripts]
+
+    junctions = sorted([(pos, bool(j), i) for i, cds in enumerate(exon_list) for e in cds for j, pos in enumerate(e)])
+    open_c = 0
+    offset = 0
+    genome_map = []  # genomic interval,  e.g.[([12345, 12445],0) ([12900-12980],100)]
+    # can be used to calculate genomic position within blocks
+    segments = [[] for _ in transcripts]
+    pre_pos = None
+    for pos, is_end, tr_i in junctions:
+        if open_c > 0:
+            offset += pos-pre_pos
+        else:
+            assert not is_end, f'more exons closed than opened before: {pos} at {junctions}'
+            genome_map.append([pos, None])
+        if not is_end:
+            if seperate_exons or not segments[tr_i] or segments[tr_i][-1][1] < offset:
+                segments[tr_i].append([offset, None])
+            open_c += 1
+        else:
+            segments[tr_i][-1][1] = offset
+            open_c -= 1
+            if open_c == 0:
+                genome_map[-1][1] = pos
+        pre_pos = pos
+    return segments, tuple(tuple(pos) for pos in genome_map)
+
+
+def genome_pos_to_gene_segments(pos, genome_map, strict=True):
+    pos = sorted(set(pos))
+    offset = 0
+    reverse_strand = genome_map[0][0] > genome_map[-1][1]
+    if reverse_strand:
+        genome_map = [(seg[1], seg[0]) for seg in reversed(genome_map)]
+    mapped_pos = []
+    i = 0
+    for seg in genome_map:
+        while seg[1] >= pos[i]:
+            if seg[0] <= pos[i]:
+                mapped_pos.append(offset+pos[i]-seg[0])
+            elif not strict:
+                mapped_pos.append(offset)
+            else:
+                mapped_pos.append(None)
+            i += 1
+            if i == len(pos):
+                break
+        else:
+            offset += seg[1]-seg[0]
+            continue
+        break
+    else:
+        for i in range(i, len(pos)):
+            mapped_pos.append(None if strict else offset)
+    if reverse_strand:
+        trlen = sum(seg[1]-seg[0] for seg in genome_map)
+        mapped_pos = [trlen-mp if mp is not None else None for mp in mapped_pos]
+    return {p: mp for p, mp in zip(pos, mapped_pos)}
+
+
+def plot_domains(self, source, categories=None, trids=True, ref_trids=False, include_utr=False, seperate_exons=True,
+                 x_ticks='gene', ax=None, domain_cols=DOMAIN_COLS,  max_overlap=5, highlight=None, highlight_col='red'):
+    '''Plot exonic part of transcripts, together with protein domanis and annotations.
+
+    :param source: Source of protein domains, e.g. "annotation", "hmmer" or "interpro", for domains added by the functions
+        "add_annotation_domains", "add_hmmer_domains" or "add_interpro_domains" respectively.
+    :param categories: List of domain categories to be depicted, default: all categories.
+    :param trids: List of transcript indices to be depicted. If True/False, all/none transcripts are depicted.
+    :param ref_trids: List of reference transcript indices to be depicted. If True/False, all/none reference transcripts are depicted.
+    :param include_utr: If set True, the untranslated regions are also depicted.
+    :param seperate_exons: If set True, exon boundaries are marked.
+    :param x_ticks: Either "gene" or "genome". If set to "gene", positions are relative to the gene (continuous, starting from 0).
+        If set to "genome", positions are (discontinous) genomic coordinates.
+    :param ax: Specify the axis.
+    :param domain_cols: Dicionary for the colors of different domain types.
+    :param max_overlap: Maximum number of overlapping domains to be depicted. Longer domains have priority over shorter domains.
+    :param highlight: List of genomic positions or intervals to highlight.
+    :param highlight_col: Specify the color for highlight positions.'''
+    domain_cols = {k.lower(): v for k, v in domain_cols.items()}
+    assert x_ticks in ["gene", "genome"], f'x_ticks should be "gene" or "genome", not "{x_ticks}"'
+    if isinstance(trids, bool):
+        trids = list(range(len(self.transcripts))) if trids else []
+    trids = [trid for trid in trids if 'ORF' in self.transcripts[trid] or 'CDS' in self.transcripts[trid]]
+    if isinstance(ref_trids, bool):
+        ref_trids = list(range(len(self.ref_transcripts))) if ref_trids else []
+    ref_trids = [trid for trid in ref_trids if 'ORF' in self.ref_transcripts[trid] or 'CDS' in self.ref_transcripts[trid]]
+    transcripts = [(i, self.ref_transcripts[i]) for i in ref_trids] + [(i, self.transcripts[i]) for i in trids]
+    n_tr = len(transcripts)
+    if not transcripts:
+        logger.error('no transcripts with ORF specified')
+        return
+    if ax is None:
+        _, ax = plt.subplots(1)
+    skipped = 0
+    segments, genome_map = find_segments([tr for _, tr in transcripts], orf_only=not include_utr, seperate_exons=seperate_exons)
+    max_len = max(seg[-1][1] for seg in segments)
+    assert max_len == sum(seg[1]-seg[0] for seg in genome_map)
+    if self.strand == "-":
+        segments = [[[max_len-pos[1], max_len-pos[0]] for pos in reversed(seg)] for seg in segments]
+        genome_map = tuple((pos[1], pos[0]) for pos in reversed(genome_map))
+    if highlight is not None:
+        highlight_pos = set()
+        for pos in highlight:
+            if isinstance(pos, collections.abc.Sequence):
+                highlight_pos.update(pos)
+            else:
+                highlight_pos.add(pos)
+        highlight_pos = sorted(highlight_pos)
+        pos_map = genome_pos_to_gene_segments(highlight_pos, genome_map, False)
+        for pos in highlight:
+            if isinstance(pos, collections.abc.Sequence):
+                assert len(pos) == 2, 'provide intervals as a sequence of length 2'
+                # draw box
+                box_x = sorted(pos_map[p] for p in pos)
+                patch = patches.Rectangle((box_x[0], -n_tr+.7), box_x[1]-box_x[0], n_tr+.6, edgecolor=highlight_col, facecolor=highlight_col)
+                ax.add_patch(patch)
+            else:  # draw line
+                ax.vlines(pos_map[pos], -n_tr+.7, 0.8, colors=[highlight_col])
+
+    for line, (trid, tr) in enumerate(transcripts):
+        seg = segments[line]
+        orf_pos = tr.get('CDS', tr.get('ORF'))[:2]
+        orf = sorted(self.find_transcript_positions(trid, orf_pos, reference=line < len(ref_trids)))
+        if include_utr:
+            for rect in get_rects(find_blocks((0, orf[0]), seg),
+                                  h=-line+.2, w=.1, connect=True, linewidth=1, edgecolor="black", facecolor="white"):
+                ax.add_patch(rect)
+            for rect in get_rects(find_blocks((orf[1], sum(e[1]-e[0] for e in tr['exons'])), seg),
+                                  h=-line+.2, w=.1, connect=True, linewidth=1, edgecolor="black", facecolor="white"):
+                ax.add_patch(rect)
+        else:
+            orf = (0, orf[1]-orf[0])
+        orf_block = find_blocks((orf), seg)
+        for rect in get_rects(orf_block, h=-line, w=.5, connect=True, linewidth=1, edgecolor="black", facecolor="white"):
+            ax.add_patch(rect)
+
+        domains = [dom for dom in tr.get('domain', {}).get(source, []) if categories is None or dom[1] in categories]
+        # sort by length
+        domains.sort(key=lambda x: x[2][1]-x[2][0], reverse=True)
+        # get positions relative to segments
+        dom_blocks = [find_blocks([p+orf[0] for p in dom[2]], seg, True) for dom in domains]
+        dom_line = {}
+        for idx, block in enumerate(dom_blocks):
+            i = 0
+            block_interval = (block[0][0], block[-1][1])
+            while any(has_overlap(block_interval, b[1]) for b in dom_line.setdefault(i, [])):
+                i += 1
+                if i >= max_overlap:
+                    skipped += 1
+                    break
+            else:
+                dom_line[i].append((idx, block_interval))  # idx in length-sorted domains
+
+        w = .4/max(len(dom_line), 1)
+        for dom_l in dom_line:
+            h = -line+w*(len(dom_line)//2 + (dom_l+1)//2 * (-1 if dom_l % 2 else 1))+.05
+            for idx, bl in dom_line[dom_l]:
+                dom = domains[idx]
+                try:
+                    for rect in get_rects(dom_blocks[idx], h=h, w=w, linewidth=1, edgecolor="black", facecolor=domain_cols.get(dom[1].lower(), "white")):
+                        ax.add_patch(rect)
+                except IndexError:
+                    logger.error(f'cannot add patch for {dom_blocks[idx]}')
+                    raise
+                ax.text((bl[0]+bl[1])/2, h+w/2, dom[0], ha='center', va='center', color='black', clip_on=True)
+
+    if skipped:
+        logger.warning("skipped %s domains, consider increasing max_overlap parameter", skipped)
+    ax.set_ylim(-len(transcripts)+.5, 1)
+    ax.set_xlim(-10, max_len+10)
+    if x_ticks == 'genome':
+        xticks = [0]+list(np.cumsum([abs(seg[1]-seg[0]) for seg in genome_map]))
+        xticklabels = [str(genome_map[0][0])]+[f'{seg[0][1]}|{seg[1][0]}' for seg in pairwise(genome_map)] + [str(genome_map[-1][1])]
+        ax.set_xticks(ticks=xticks, labels=xticklabels)
+    ax.set_yticks(ticks=[-i+.25 for i in range(len(transcripts))], labels=[tr.get('transcript_name', f'{self.name} {trid}') for trid, tr in transcripts])
+    return ax, genome_map

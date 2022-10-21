@@ -99,7 +99,8 @@ class SegmentGraph():
         exons.reverse()
         return exons
 
-    def search_transcript(self, exons, complete=True):
+    @deprecated
+    def search_transcript2(self, exons):
         '''Tests if a transcript (provided as list of exons) is contained in self and return the corresponding transcript indices.
 
         :param exons: A list of exon tuples representing the transcript
@@ -133,6 +134,78 @@ class SegmentGraph():
             tr -= set(trid for trid, j2 in self[j].suc.items() if self[j].end != self[j2].start)
             j += 1
         return [trid for trid in tr]
+
+    def search_transcript(self, exons, complete=True, include_ends=False):
+        '''Tests if a transcript (provided as list of exons) is contained in sg and return the corresponding transcript indices.
+
+        Search the splice graph for transcripts that match the introns of the provided list of exons.
+
+        :param exons: A list of exon tuples representing the transcript
+        :type exons: list
+        :param complete: If True, yield only splice graph transcripts that match all introns from the exon list.
+            If False, yield also splice graph transcripts having additional exons at the beginning and/or end.
+        :param include_ends: If True, yield only splice graph transcripts that include the first and last exon.
+            If False, also yield splice graph transcripts that extend first and/or last exon but match the intron chain.
+        :return: a list of supporting transcript indices
+        :rtype: list'''
+
+        # fst special case: exons extends segment graph
+        if include_ends:
+            if exons[0][0] < self[0].start or exons[-1][1] > self[-1].end:
+                return []
+        else:
+            if exons[0][1] <= self[0].start or exons[-1][0] >= self[-1].end:
+                return []
+        # snd special case: single exon transcript: return all overlapping /including single exon transcripts form sg
+        if len(exons) == 1 and complete:
+            if include_ends:
+                return [trid for trid, (j1, j2) in enumerate(zip(self._tss, self._pas))
+                        if self._is_same_exon(trid, j1, j2) and self[j1].start >= exons[0][0] and self[j2].end <= exons[0][1]]
+            else:
+                return [trid for trid, (j1, j2) in enumerate(zip(self._tss, self._pas))
+                        if self._is_same_exon(trid, j1, j2) and self[j1].start <= exons[0][1] and self[j2].end >= exons[0][0]]
+
+        # j is index of last overlapping node
+        j = next((i for i, n in enumerate(self) if n.start >= exons[0][1]), len(self))-1
+        if self[j].end > exons[0][1] and len(exons) > 1:
+            return []
+        if complete:
+            # for include_ends we need to find first node of exon
+            # j_first is index of first node from the first exon,
+            j_first = next((i for i in range(j, 0, -1) if self[i-1].end < self[i].start), 0)
+            tr = [trid for trid, i in enumerate(self._tss) if (not include_ends or self[i].start <= exons[0][0])
+                  and j_first <= i <= j and self._is_same_exon(trid, i, j)]
+        else:
+            if include_ends:
+                j_first = next((i for i in range(j, 0, -1) if self[i].start <= exons[0][0]), 0)
+                tr = [trid for trid in self[j].pre if self._is_same_exon(trid, j_first, j)]
+                if j_first == j:
+                    tr += [trid for trid, i in enumerate(self._tss) if i == j_first]
+            else:
+                tr = list(self[j].pre)+[trid for trid, i in enumerate(self._tss) if i == j]
+        # all junctions must be contained and no additional
+        for i, e in enumerate(exons[:-1]):
+            while j < len(self) and self[j].end < e[1]:  # check exon (no junction allowed)
+                tr = [trid for trid in tr if trid in self[j].suc and self[j].end == self[self[j].suc[trid]].start]
+                j += 1
+            if self[j].end != e[1]:
+                return []
+            # check junction (must be present)
+            tr = [trid for trid in tr if trid in self[j].suc and self[self[j].suc[trid]].start == exons[i+1][0]]
+            if not tr:
+                return []
+            j = self[j].suc[tr[0]]
+        if include_ends:
+            while self[j].end < exons[-1][1]:
+                tr = [trid for trid in tr if trid in self[j].suc and self[j].end == self[self[j].suc[trid]].start]
+                j += 1
+        if not complete:
+            return tr
+        # ensure that all transcripts end (no junctions allowed)
+        while j < len(self):  # check last exon (no junction allowed)
+            tr = [trid for trid in tr if trid not in self[j].suc or self[j].end == self[self[j].suc[trid]].start]
+            j += 1
+        return tr
 
     def _is_same_exon(self, tr_nr, j1, j2):
         '''Tests if nodes j1 and j2 belong to same exon in transcript tr_nr.'''
@@ -511,7 +584,7 @@ class SegmentGraph():
         :return: A boolean array of shape (n_transcripts in self)x(len(exons)-1).
             An entry is True iff the intron from "exons" is present in the respective transcript of self.'''
         node_iter = iter(self)
-        ism = np.zeros((len(self._tss), len(exons) - 1), np.bool)  # the intron support matrix
+        ism = np.zeros((len(self._tss), len(exons) - 1), bool)  # the intron support matrix
         for intron_nr, (e1, e2) in enumerate(pairwise(exons)):
             try:
                 node = next(n for n in node_iter if n.end >= e1[1])
@@ -533,7 +606,7 @@ class SegmentGraph():
         :return: A boolean array of shape (n_transcripts in self)x(len(exons)-1).
             An entry is True iff the exon from "exons" is fully covered in the respective transcript of self.
             First and last exon are checked to overlap the first and last exon of the ref transcript but do not need to be fully covered'''
-        esm = np.zeros((len(self._tss), len(exons)), np.bool)  # the intron support matrix
+        esm = np.zeros((len(self._tss), len(exons)), bool)  # the intron support matrix
         for tr_nr, tss in enumerate(self._tss):  # check overlap of first exon
             for j in range(tss, len(self)):
                 if has_overlap(self[j], exons[0]):

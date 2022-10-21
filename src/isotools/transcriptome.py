@@ -165,9 +165,9 @@ class Transcriptome:
         del self.data[chromosome]
         self.make_index()
 
-    def _get_sample_idx(self, group_column='name'):
+    def _get_sample_idx(self, name_column='name'):
         'a dict with group names as keys and index lists as values'
-        return self.infos['sample_table'].groupby(group_column).groups
+        return {sa: i for i, sa in enumerate(self.sample_table[name_column])}
 
     @property
     def sample_table(self):
@@ -252,3 +252,6 @@ class Transcriptome:
     # statistic: summary tables (can be used as input to plot_bar / plot_dist)
     from ._transcriptome_stats import altsplice_stats, filter_stats, transcript_length_hist, transcript_coverage_hist,\
         transcripts_per_gene_hist, exons_per_transcript_hist, downstream_a_hist, direct_repeat_hist
+
+    # protein domain annotation
+    from .domains import add_hmmer_domains, add_annotation_domains

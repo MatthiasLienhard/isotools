@@ -6,6 +6,7 @@ import pysam
 import Bio.bgzf
 import argparse
 import random
+import pandas as pd
 
 
 def main():
@@ -39,6 +40,8 @@ def main():
         subset_genome(args.genome, regions, args.out_prefix+'.fa')
     if args.alignment:
         subset_alignment(args.alignment, regions, args.out_prefix+'.bam', proportion=args.subsample_alignment)
+    if args.domains:
+        subset_domains(args.domains, regions, args.out_prefix+'_domains.csv')
 
     return 0  # no error
 
@@ -111,6 +114,18 @@ def subset_annotation(gff_fn, regions, out_fn="example_annotation.gff.gz"):
     with Bio.bgzf.BgzfWriter(out_fn, "wb") as outfh:
         outfh.write(out_str)
     _ = pysam.tabix_index(out_fn, preset='gff', force=True)
+
+
+def subset_domains(domain_file, regions, out_fn):
+    anno_df = pd.read_csv(domain_file, sep='\t').rename({'#chrom': 'chrom'}, axis=1)
+    subset_df = []
+    for chrom, start, end in regions:
+        sel = anno_df.query(f'chrom=="{chrom}" and chromStart>={start} and chromEnd <= {end}').copy()
+        sel.chromStart -= start
+        sel.chromEnd -= start
+        sel.chrom += '_part'
+        subset_df.append(sel)
+    pd.write_csv(pd.concat(subset_df).rename({'chrom': '#chrom'}, axis=1), out_fn, seq='\t')
 
 
 if __name__ == '__main__':

@@ -158,7 +158,7 @@ def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'], minl
 def has_overlap(r1, r2):
     "check the overlap of two intervals"
     # assuming start < end
-    if r1[1] < r2[0] or r2[1] < r1[0]:
+    if r1[1] <= r2[0] or r2[1] <= r1[0]:
         return False
     else:
         return True
@@ -444,3 +444,31 @@ def dcPSI(con_tab):
     # 2) dcPSI_BA= PSI(A | altB) - PSI(A)
     dcPSI_BA = con_tab[1, 1]/con_tab[1, :].sum()-con_tab[:, 1].sum()/con_tab.sum(None)
     return dcPSI_AB, dcPSI_BA
+
+
+def genomic_position(tr_pos, exons, reverse_strand):
+    tr_len = sum((e[1]-e[0]) for e in exons)
+    assert all(p <= tr_len for p in tr_pos), f'Requested positions {tr_pos} for transcript of length {tr_len}.'
+    if reverse_strand:
+        tr_pos = [tr_len-p for p in tr_pos]
+    tr_pos = sorted(set(tr_pos))
+    intron_len = 0
+    mapped_pos = []
+    i = 0
+    offset = exons[0][0]
+    for e1, e2 in pairwise(exons):
+        while offset+intron_len+tr_pos[i] < e1[1]:
+            mapped_pos.append(offset+intron_len+tr_pos[i])
+            i += 1
+            if i == len(tr_pos):
+                break
+        else:
+            intron_len += e2[0]-e1[1]
+            continue
+        break
+    else:
+        for i in range(i, len(tr_pos)):
+            mapped_pos.append(offset+intron_len+tr_pos[i])
+    if reverse_strand:  # get them back to the original
+        tr_pos = [tr_len-p for p in tr_pos]
+    return {p: mp for p, mp in zip(tr_pos, mapped_pos)}

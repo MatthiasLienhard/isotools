@@ -2,7 +2,11 @@
 
 ## TODO: ideas, issues and planed extensions or changes that are not yet implemented
 * optimize add_qc_metrics for run after new samples have been added - should not recompute everything
-* panned new feature: during import of long reads, (optionally) correct for short exon alignment issues. 
+* planned new feature: during import of long reads, (optionally) correct for short exon alignment issues. 
+* separate new read import and classification of isoforms.
+
+## [0.3.2]
+* restructured tutorials
 
 ## [0.3.1]
 * new feature: add protein domains from 3 different sources and depict them with Gene.plot_domains()

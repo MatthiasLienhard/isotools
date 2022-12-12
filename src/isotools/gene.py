@@ -839,7 +839,7 @@ class Gene(Interval):
                     end = pos
             if self.strand == '-':
                 start, end = end, start
-            if start > end:  # for monoexons this may happen in rare situations
+            if start >= end:  # for monoexons this may happen in rare situations
                 assert len(tr['exons']) == 1
                 tr['TSS_unified'] = None
                 tr['PAS_unified'] = None

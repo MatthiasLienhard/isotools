@@ -95,7 +95,7 @@ def add_filter(self, tag, expression, context='transcript', update=False):
 
     The provided expressions is evaluated during filtering in the provided context.
     For examples, see the default filter definitions
-        isotools.DEFAULT_GENE_FILTER, isotools.DEFAULT_TRANSCRIPT_FILTER and isotools.DEFAULT_REF_TRANSCRIPT_FILTER.
+    isotools.DEFAULT_GENE_FILTER, isotools.DEFAULT_TRANSCRIPT_FILTER and isotools.DEFAULT_REF_TRANSCRIPT_FILTER.
 
     :param tag: Unique tag identifer for this filter. Must be a single word
     :param expression: Expression to be evaluated on gene, transcript, or reference transcript.

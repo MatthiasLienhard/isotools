@@ -12,7 +12,8 @@ Welcome to IsoTools's documentation!
 
    quickstart
    tutorials
-   isotools
+   isotoolsCLI
+   isotoolsAPI
 
 
 Indices and tables

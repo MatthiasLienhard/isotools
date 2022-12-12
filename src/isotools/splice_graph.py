@@ -740,7 +740,7 @@ class SegmentGraph():
         This turns out to be fundamentally different compared to iterating over all bubbles, hence it is a complete rewrite of the function.
         On the positive site, the functions can validate each other. I tried to reuse the variable names.
         If both functions yield same results, there is a good chance that the compex code is actually right.'''
-
+        # more a comment than a docstring...
         if any(t < 5 for t in tids):
 
             try:

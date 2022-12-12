@@ -11,9 +11,7 @@ import sys
 
 
 logger = logging.getLogger('run_isotools')
-
-
-def main():
+def argument_parser():
     parser = argparse.ArgumentParser(prog='isotools', description='process LRTS data with isotool')
     parser.add_argument('--anno', metavar='<file.gtf/gff/gff3[.gz]>', help='specify reference annotation')
     parser.add_argument('--genome', metavar='<file.fasta>', help='specify reference genome file')
@@ -43,7 +41,11 @@ def main():
     parser.add_argument('--plot_dpi', metavar='<dpi>', type=int, default=100, help='Specify resolution of plots')
     parser.add_argument('--altsplice_plots', metavar='<n>', type=int,
                         help='make sashimi plots for <n> top covered alternative spliced genes for each category')
+    return parser
 
+
+def main():
+    parser=argument_parser()
     args = parser.parse_args()
 
     plt.rcParams['savefig.dpi'] = args.plot_dpi

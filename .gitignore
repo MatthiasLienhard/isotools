@@ -32,7 +32,5 @@ src/*.egg-info
 
 # example data files
 /docs/notebooks/*
-!/docs/notebooks/isotools_alzheimer.ipynb
-!/docs/notebooks/ENCODE_S2.ipynb
-!/docs/notebooks/encode_samples.tsv
+!/docs/notebooks/*.ipynb
 /docs/_build

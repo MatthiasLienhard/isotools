@@ -178,8 +178,11 @@ def add_annotation_domains(self, annotation, category, label_col='name', inframe
                          if 'ORF' in transcripts[trid] or 'CDS' in transcripts[trid]]
                 for trid in trids:
                     tr = transcripts[trid]
-                    orf_pos = sorted(g.find_transcript_positions(trid, tr.get('CDS', tr.get('ORF'))[:2], reference=ref))
-                    domain_pos = sorted(g.find_transcript_positions(trid, (row.chromStart, row.chromEnd), reference=ref))
+                    try:
+                        orf_pos = sorted(g.find_transcript_positions(trid, tr.get('CDS', tr.get('ORF'))[:2], reference=ref))
+                        domain_pos = sorted(g.find_transcript_positions(trid, (row.chromStart, row.chromEnd), reference=ref))
+                    except TypeError: #> not supported for None, None 
+                        continue
                     if not (orf_pos[0] <= domain_pos[0] and domain_pos[1] <= orf_pos[1]):  # check within ORF
                         continue
                     if inframe and (domain_pos[0]-orf_pos[0]) % 3 != 0:  # check inframe

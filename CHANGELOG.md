@@ -7,7 +7,7 @@
 
 ## [0.3.2]
 * restructured tutorials
-* new feature: add domains to differerential splicing result tables.
+* new feature: add domains to differential splicing result tables.
 * new feature: min_coverage and max_coverage for iter_genes function.
 
 ## [0.3.1]
@@ -16,13 +16,13 @@
 * new feature: filter_transcripts function for genes
 * changed SUBSTANTIAL filter to 1% of the genes total (was 5%)
 * coordination test:
-    * changed argument and column naming, to make it consistant with other test results
+    * changed argument and column naming, to make it consistent with other test results
     * added conditional delta PSI effect size measure
     * order of events is now according to gene strand: A upstream of B
 
 ## [0.3.0]
 * new feature: find longest ORF and infer NMD of lr transcripts (and annotation)
-* new feature: allow for several TSS/PAS per intron chain and unify them accross intron chains
+* new feature: allow for several TSS/PAS per intron chain and unify them across intron chains
 * changed default parameter of filter_query in run_isotools script to "FSM or not (INTERNAL_PRIMING or RTTS)"
 
 ## [0.2.11.1]

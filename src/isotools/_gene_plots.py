@@ -599,7 +599,7 @@ def genome_pos_to_gene_segments(pos, genome_map, strict=True):
     return {p: mp for p, mp in zip(pos, mapped_pos)}
 
 
-def plot_domains(self, source, categories=None, trids=True, ref_trids=False, include_utr=False, seperate_exons=True,
+def plot_domains(self, source, categories=None, trids=True, ref_trids=False, label='name', include_utr=False, seperate_exons=True,
                  x_ticks='gene', ax=None, domain_cols=DOMAIN_COLS,  max_overlap=5, highlight=None, highlight_col='red'):
     '''Plot exonic part of transcripts, together with protein domanis and annotations.
 
@@ -608,6 +608,7 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, inc
     :param categories: List of domain categories to be depicted, default: all categories.
     :param trids: List of transcript indices to be depicted. If True/False, all/none transcripts are depicted.
     :param ref_trids: List of reference transcript indices to be depicted. If True/False, all/none reference transcripts are depicted.
+    :param label: Specify the type of label: eiter None, or id, or name.
     :param include_utr: If set True, the untranslated regions are also depicted.
     :param seperate_exons: If set True, exon boundaries are marked.
     :param x_ticks: Either "gene" or "genome". If set to "gene", positions are relative to the gene (continuous, starting from 0).
@@ -617,6 +618,10 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, inc
     :param max_overlap: Maximum number of overlapping domains to be depicted. Longer domains have priority over shorter domains.
     :param highlight: List of genomic positions or intervals to highlight.
     :param highlight_col: Specify the color for highlight positions.'''
+
+    if label is not None:
+        assert label in ('id', 'name'), 'label needs to be either "id" or "name" (or None).'
+        label_idx = 0 if label == 'id' else 1
     domain_cols = {k.lower(): v for k, v in domain_cols.items()}
     assert x_ticks in ["gene", "genome"], f'x_ticks should be "gene" or "genome", not "{x_ticks}"'
     if isinstance(trids, bool):
@@ -675,11 +680,11 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, inc
         for rect in get_rects(orf_block, h=-line, w=.5, connect=True, linewidth=1, edgecolor="black", facecolor="white"):
             ax.add_patch(rect)
 
-        domains = [dom for dom in tr.get('domain', {}).get(source, []) if categories is None or dom[1] in categories]
+        domains = [dom for dom in tr.get('domain', {}).get(source, []) if categories is None or dom[2] in categories]
         # sort by length
-        domains.sort(key=lambda x: x[2][1]-x[2][0], reverse=True)
+        domains.sort(key=lambda x: x[3][1]-x[3][0], reverse=True)
         # get positions relative to segments
-        dom_blocks = [find_blocks([p+orf[0] for p in dom[2]], seg, True) for dom in domains]
+        dom_blocks = [find_blocks([p+orf[0] for p in dom[3]], seg, True) for dom in domains]
         dom_line = {}
         for idx, block in enumerate(dom_blocks):
             i = 0
@@ -698,12 +703,13 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, inc
             for idx, bl in dom_line[dom_l]:
                 dom = domains[idx]
                 try:
-                    for rect in get_rects(dom_blocks[idx], h=h, w=w, linewidth=1, edgecolor="black", facecolor=domain_cols.get(dom[1].lower(), "white")):
+                    for rect in get_rects(dom_blocks[idx], h=h, w=w, linewidth=1, edgecolor="black", facecolor=domain_cols.get(dom[2].lower(), "white")):
                         ax.add_patch(rect)
                 except IndexError:
                     logger.error(f'cannot add patch for {dom_blocks[idx]}')
                     raise
-                ax.text((bl[0]+bl[1])/2, h+w/2, dom[0], ha='center', va='center', color='black', clip_on=True)
+                if label is not None:
+                    ax.text((bl[0]+bl[1])/2, h+w/2, dom[label_idx], ha='center', va='center', color='black', clip_on=True)
 
     if skipped:
         logger.warning("skipped %s domains, consider increasing max_overlap parameter", skipped)

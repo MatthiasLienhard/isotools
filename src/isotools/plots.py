@@ -92,7 +92,6 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5
         plotted = plotted.append(row)
         if len(plotted) == len(axs):
             break
-    f.tight_layout()
     return f, axs, plotted
 
 

@@ -9,15 +9,12 @@ BOOL_OP = {'and', 'or', 'not', 'is'}
 DEFAULT_GENE_FILTER = {'NOVEL_GENE': 'not reference',
                        'EXPRESSED': 'transcripts',
                        'CHIMERIC': 'chimeric'}
-'''Default definitions for gene filter, as used in iosotools.Transcriptome.add_filters().'''
 
 DEFAULT_REF_TRANSCRIPT_FILTER = {
     'REF_UNSPLICED': 'len(exons)==1',
     'REF_MULTIEXON': 'len(exons)>1',
     'REF_INTERNAL_PRIMING': 'downstream_A_content>.5'}
-'''Default definitions for reference transcript filter, as used in iosotools.Transcriptome.add_filters().'''
 
-# Default definitions for transcript filter, as used in iosotools.Transcriptome.add_filters()
 DEFAULT_TRANSCRIPT_FILTER = {
     # 'CLIPPED_ALIGNMENT':'clipping',
     'INTERNAL_PRIMING': 'len(exons)==1 and downstream_A_content and downstream_A_content>.5',  # more than 50% a
@@ -32,12 +29,12 @@ DEFAULT_TRANSCRIPT_FILTER = {
 }
 
 SPLICE_CATEGORY = ['FSM', 'ISM', 'NIC', 'NNC', 'NOVEL']
-'''Controlled vocabulary for filtering by novel alternative splicing.'''
+
 
 ANNOTATION_VOCABULARY = ['antisense', 'intergenic', 'genic genomic', 'novel exonic PAS', 'novel intronic PAS', 'readthrough fusion',
                          'novel exon', "novel 3' splice site", 'intron retention', "novel 5' splice site", 'exon skipping', 'novel combination',
                          'novel intronic TSS', 'novel exonic TSS', 'mono-exon', 'novel junction', "5' fragment", "3' fragment", 'intronic']
-'''Controlled vocabulary for filtering by novel alternative splicing.'''
+
 
 # filtering functions for the transcriptome class
 
@@ -94,13 +91,13 @@ def add_filter(self, tag, expression, context='transcript', update=False):
     '''Defines a new filter for gene, transcripts and reference transcripts.
 
     The provided expressions is evaluated during filtering in the provided context.
-    For examples, see the default filter definitions
-    isotools.DEFAULT_GENE_FILTER, isotools.DEFAULT_TRANSCRIPT_FILTER and isotools.DEFAULT_REF_TRANSCRIPT_FILTER.
+    For examples, see the default filter definitions isotools.DEFAULT_GENE_FILTER,
+    isotools.DEFAULT_TRANSCRIPT_FILTER and isotools.DEFAULT_REF_TRANSCRIPT_FILTER.
 
-    :param tag: Unique tag identifer for this filter. Must be a single word
+    :param tag: Unique tag identifer for this filter. Must be a single word.
     :param expression: Expression to be evaluated on gene, transcript, or reference transcript.
-    :param context: The context for the filter expression: 'gene', 'transcript' or 'reference'.
-    ;param update: If set, the already present definition of the provided tag gets overwritten.'''
+    :param context: The context for the filter expression, either "gene", "transcript" or "reference".
+    :param update: If set, the already present definition of the provided tag gets overwritten.'''
 
     assert context in ['gene', 'transcript', 'reference'], "filter context must be 'gene', 'transcript' or 'reference'"
     assert tag == re.findall(r'\b\w+\b', tag)[0], '"tag" must be a single word'
@@ -133,7 +130,7 @@ def add_filter(self, tag, expression, context='transcript', update=False):
     self.filter[context][tag] = expression
 
 
-def iter_genes(self, region=None, query=None, gois=None, progress_bar=False):
+def iter_genes(self, region=None, query=None, min_coverage=None, max_coverage=None, gois=None, progress_bar=False):
     '''Iterates over the genes of a region, optionally applying filters.
 
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional.
@@ -179,6 +176,10 @@ def iter_genes(self, region=None, query=None, gois=None, progress_bar=False):
             genes = [g for g in genes if g.id in gois or g.name in gois]
 
     for g in tqdm(genes, disable=not progress_bar, unit='genes', smoothing=0):  # often some genes take much longer than others - smoothing 0 means avg
+        if min_coverage is not None and g.coverage.sum() < min_coverage:
+            continue
+        if max_coverage is not None and g.coverage.sum() > max_coverage:
+            continue
         if query is None or query_fun(**{tag: fun(**g.data) for tag, fun in filter_fun.items()}):
             yield g
 

@@ -7,6 +7,8 @@
 
 ## [0.3.2]
 * restructured tutorials
+* new feature: add domains to differerential splicing result tables.
+* new feature: min_coverage and max_coverage for iter_genes function.
 
 ## [0.3.1]
 * new feature: add protein domains from 3 different sources and depict them with Gene.plot_domains()

@@ -14,7 +14,8 @@ Tutorials
     notebooks/07_file_export.ipynb
     notebooks/08_alternative_splicing.ipynb
     notebooks/09_diff_splice.ipynb
-
+    notebooks/10_domains.ipynb
+    
     notebooks/isotools_alzheimer.ipynb
     notebooks/ENCODE_S2.ipynb
 

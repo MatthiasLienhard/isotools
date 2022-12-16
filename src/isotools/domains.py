@@ -6,7 +6,7 @@ import pyhmmer
 from tqdm import tqdm
 import requests
 import time
-from ._utils import genomic_position
+from ._utils import genomic_position, has_overlap
 
 
 logger = logging.getLogger('isotools')
@@ -29,15 +29,88 @@ def parse_hmmer_metadata(fn):
                 entry[k] = v
 
 
+def add_domains_to_table(table, transcriptome, source='annotation', categories=None, id_col='gene_id', modes=['trA-trB', 'trB-trA'],
+                         naming='id', overlap_only=False, insert_after=None, **filter_kwargs):
+    '''add domain annotation to table.
+
+    :param table: A table, for which domains are derived.
+        It should have at least one column with a gene id and one with a list of transcripts.
+    :param transcriptome: The isotools.Transcriptome object, from which the domains are sourced.
+    :param source: One of the three possible annotation sources.
+    :param categories: A list of annotation categories, which are considered.
+        If set to None (default) all annotation categories are considered.
+    :param modes: A list of strings with column names of transcript ids used to look up domains.
+        Multible columns can be combined to one mode with set operators "|" for union, "&" for intersection, and "-" for set difference.
+        For example "trA-trB" would generate a Series with all domains of transcripts in "trA", but not in "trB".
+    :param naming: Define how domains are named, either by "id" or by "name".
+    :parm overlap_only: If set "True", only domains overlapping the region from column "start" to "end" are considered.
+        If set "False", all domains of the transcripts are considered.
+    :param insert_after: Define column after which the domains are inserted into the table, either by column name or index.
+        By default, domain columns returned as seperate DataFrame.
+    :param **filter_kwargs: additional keywords are passed to Gene.filter_transcripts, to restrict the transcripts to be considered.'''
+
+    # set operators:
+    # set union: |
+    # set difference: -
+    # set intersection: &
+
+    # check arguments
+    assert naming in ('id', 'name'), 'naming must be either "id" or "name".'
+    label_idx = 0 if naming == 'id' else 1
+    assert id_col in table, f'Missing id column "{id_col}" in table.'
+    # check the "modes": can they be evaluated?
+    tr_cols = {tr_col for mode in modes for tr_col in compile(mode, "<string>", "eval").co_names}
+    for mode in modes:  # only set operations allowed, and should return a set
+        assert isinstance(eval(mode, {tr_col: set() for tr_col in tr_cols}), set), f'{mode} does not return a set'
+    # Do they contain only table names?
+    missing = [c for c in tr_cols if c not in table.columns]
+    assert len(missing) == 0, f'Missing transcript id columns in table: {", ".join(missing)}.'
+    if insert_after is not None:
+        if isinstance(insert_after, str):
+            assert insert_after in table.columns, 'cannot find column "{insert_after}" in table.'
+            insert_after = table.columns.get_loc(insert_after)
+        assert isinstance(insert_after, int), 'insert_after must be a column name or column index'
+
+    domain_rows = {}
+    for idx, row in table.iterrows():
+        domains = []
+        g = transcriptome[row[id_col]]
+        if filter_kwargs:
+            valid_transcripts = set(g.filter_transcripts(**filter_kwargs))
+        domain_sets = {}
+        for tr_col in tr_cols:
+            domain_sets[tr_col] = set()
+            trids = set(row[tr_col]) & valid_transcripts if filter_kwargs else row[tr_col]
+            for trid in trids:
+                for dom in g.transcripts[trid].get('domain', {}).get(source, []):
+                    if categories is not None and dom[2] not in categories:
+                        continue
+                    if overlap_only and not has_overlap(dom[4], (row.start, row.end)):
+                        continue
+                    domain_sets[tr_col].add(str(dom[label_idx]))
+        for mode in modes:
+            # evaluate string in mode
+            domains.append(eval(mode, domain_sets))
+        domain_rows[idx] = domains
+    domain_rows = pd.DataFrame.from_dict(domain_rows, orient='index', columns=[f'{mode} domains' for mode in modes])
+    if insert_after is None:
+        return domain_rows
+    return pd.concat([table.iloc[:, :insert_after+1], domain_rows, table.iloc[:, insert_after+1:]], axis=1)
+
+
 def import_hmmer_models(path, model_file="Pfam-A.hmm.gz", metadata_file="Pfam-A.hmm.dat.gz"):
     '''Import the hmmer model and metadata.
 
     This function imports the hmmer Pfam models from "Pfam-A.hmm.gz" and metadata from "Pfam-A.hmm.dat.gz",
     which are available for download on the interpro website, at "https://www.ebi.ac.uk/interpro/download/Pfam/".
-    The models are needed for Transcriptome.add_hmmer_domains() function.'''
+    The models are needed for Transcriptome.add_hmmer_domains() function.
 
-    metadata = parse_hmmer_metadata(path+'/Pfam-A.hmm.dat.gz')
-    with pyhmmer.plan7.HMMFile(path+'/Pfam-A.hmm.gz') as hmm_file:
+    :param path: The path where model and metadata files are located.
+    :param model_file: The filename of the model file.
+    :param model_file: The filename of the metadata file.'''
+
+    metadata = parse_hmmer_metadata(f'{path}/{metadata_file}')
+    with pyhmmer.plan7.HMMFile((f'{path}/{model_file}')) as hmm_file:
         hmm_list = list(hmm_file)
     return metadata, hmm_list
 
@@ -78,7 +151,7 @@ def add_hmmer_domains(self, domain_models, genome, query=True, ref_query=False, 
                       min_coverage=None, max_coverage=None, gois=None, progress_bar=False):
     '''Align domains to protein sequences  using pyhmmer and add them to the transcript isoforms.
 
-    :param domain_models: The domain models and metadata, imported by "isotools.domains.parse_pfam_hmm" function
+    :param domain_models: The domain models and metadata, imported by "isotools.domains.import_hmmer_models" function
     :param genome: Filename of genome fasta file, or Fasta
     :param query: Query string to select the isotools transcripts, or True/False to include/exclude all transcripts.
     :param ref_query: Query string to select the reference transcripts, or True/False to include/exclude all transcripts.
@@ -110,7 +183,7 @@ def add_hmmer_domains(self, domain_models, genome, query=True, ref_query=False, 
                 ali = domL.alignment
                 transcript_pos = (ali.target_from*3, ali.target_to*3)
                 domains.setdefault(seq_nr, []).append(
-                    (infos['ID'], infos['TP'], transcript_pos, h.score, h.pvalue))
+                    (pfam_acc, infos['ID'], infos['TP'], transcript_pos, h.score, h.pvalue))
                 # print(f'{h.name}\t{hmm.name}:\t{ali.target_from}-{ali.target_to}') #which sequence?
 
     # 4) add domains to transcripts
@@ -122,8 +195,8 @@ def add_hmmer_domains(self, domain_models, genome, query=True, ref_query=False, 
             tr = g.ref_transcripts[trid] if reference else g.transcripts[trid]
             # get the genomic position of the domain boundaries
             orf = sorted(g.find_transcript_positions(trid, tr.get('CDS', tr.get('ORF'))[:2], reference=reference))
-            pos_map = genomic_position([p+orf[0] for dom in domL for p in dom[2]], tr['exons'], g.strand == '-')
-            trdom = tuple((*dom[:3], (pos_map[dom[2][0]+orf[0]], pos_map[dom[2][1]+orf[0]]), *dom[3:]) for dom in domL)
+            pos_map = genomic_position([p+orf[0] for dom in domL for p in dom[3]], tr['exons'], g.strand == '-')
+            trdom = tuple((*dom[:4], (pos_map[dom[3][0]+orf[0]], pos_map[dom[3][1]+orf[0]]), *dom[4:]) for dom in domL)
             tr.setdefault('domain', {})['hmmer'] = trdom
             tr_count[reference] += 1
             dom_count[reference] += len(domL)
@@ -131,7 +204,7 @@ def add_hmmer_domains(self, domain_models, genome, query=True, ref_query=False, 
                 f'and at {dom_count[0]} loci for {tr_count[0]} long read transcripts.')
 
 
-def add_annotation_domains(self, annotation, category, label_col='name', inframe=True, progress_bar=False):
+def add_annotation_domains(self, annotation, category, id_col='uniProtId', name_col='name', inframe=True, progress_bar=False):
     '''Annotate isoforms with protein domains from uniprot ucsc table files.
 
     This function adds protein domains and other protein annotation to the transcripts.
@@ -140,7 +213,8 @@ def add_annotation_domains(self, annotation, category, label_col='name', inframe
 
     :param annotation: The file name of the table downloaded from the table browser, or a pandas dataframe with the content.
     :param category: A term describing the type of annotation in the table (e.g. "domains").
-    :param label_col: The column of the table with the label. Often this is "name".
+    :param id_col: The column of the table with the domain id.
+    :param name_col: The column of the table with the label.
     :param inframe: If set True (default), only annotations starting in frame are added to the transcript.
     :param append: If set True, the annotation is added to existing annotation. This may lead to duplicate entries.
         By default, annotation of the same category is removed before annotation is added.
@@ -155,7 +229,7 @@ def add_annotation_domains(self, annotation, category, label_col='name', inframe
     else:
         raise ValueError('"annotation" should be file name or pandas.DataFrame object')
     anno = anno.rename({'#chrom': 'chrom'}, axis=1)
-    not_found = [c for c in ['chrom', 'chromStart', 'chromEnd', 'chromStarts', 'blockSizes', label_col] if c not in anno.columns]
+    not_found = [c for c in ['chrom', 'chromStart', 'chromEnd', 'chromStarts', 'blockSizes', name_col] if c not in anno.columns]
     assert len(not_found) == 0, f'did not find the following columns in the annotation table: {", ".join(not_found)}'
     for _, row in tqdm(anno.iterrows(), total=len(anno), disable=not progress_bar, unit='domains'):
         if row['chrom'] not in self.chromosomes:
@@ -181,7 +255,7 @@ def add_annotation_domains(self, annotation, category, label_col='name', inframe
                     try:
                         orf_pos = sorted(g.find_transcript_positions(trid, tr.get('CDS', tr.get('ORF'))[:2], reference=ref))
                         domain_pos = sorted(g.find_transcript_positions(trid, (row.chromStart, row.chromEnd), reference=ref))
-                    except TypeError: #> not supported for None, None 
+                    except TypeError:  # > not supported for None, None
                         continue
                     if not (orf_pos[0] <= domain_pos[0] and domain_pos[1] <= orf_pos[1]):  # check within ORF
                         continue
@@ -189,7 +263,7 @@ def add_annotation_domains(self, annotation, category, label_col='name', inframe
                         continue
                     domain_count += 1
                     dom_pos = (domain_pos[0]-orf_pos[0], domain_pos[1]-orf_pos[0])
-                    dom_vals = (row[label_col], category,  dom_pos, (row.chromStart, row.chromEnd))
+                    dom_vals = (row[id_col], row[name_col], category,  dom_pos, (row.chromStart, row.chromEnd))
                     # check if present already
                     if dom_vals not in tr.setdefault('domain', {}).setdefault('annotation', []):
                         tr['domain']['annotation'].append(dom_vals)
@@ -286,7 +360,8 @@ def add_interpro_domains(self, genome, email, baseUrl='http://www.ebi.ac.uk/Tool
         for m in dom['matches']:
             for loc in m['locations']:
                 entry = m['signature'].get('entry')
-                domL.append((str(m['signature']['name']),  # short name
+                domL.append((str(m['signature']['accession']),  # short name
+                             str(m['signature']['name']),
                              entry.get('type', "unknown") if entry else "unknown",  # type
                              (loc['start']*3, loc['end']*3),  # position
                              loc.get('hmmBounds')))  # completeness

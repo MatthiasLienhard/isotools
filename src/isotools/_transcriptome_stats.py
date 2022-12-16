@@ -6,7 +6,7 @@ import logging
 import numpy as np
 import pandas as pd
 import itertools
-from ._utils import has_overlap
+
 
 # from .decorators import deprecated, debug, experimental
 from ._utils import _filter_function
@@ -18,7 +18,7 @@ logger = logging.getLogger('isotools')
 
 def proportion_test(x, n):
     # Normal approximation
-    # x,n should be lenght 2(the two groups)
+    # x,n should be length 2(the two groups)
     # tests H0: proportions are equal vs H1: proportions are different (two sided)
     x = [xi.sum() for xi in x]
     n = [ni.sum() for ni in n]
@@ -155,29 +155,19 @@ def _check_groups(transcriptome, groups, n_groups=2):
 
 
 def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, min_sa=.51, test='auto', padj_method='fdr_bh',
-                   types=None, domains=None, progress_bar=True):
+                   types=None,  progress_bar=True):
     '''Performs the alternative splicing event test.
 
-    :param groups: Dict with groupnames as keys and lists of samplenames as values, defining the two groups for the test.
+    :param groups: Dict with group names as keys and lists of sample names as values, defining the two groups for the test.
         If more then two groups are provided, test is performed between first two groups, but maximum likelihood parameters
-        (expected PSI and dispersion) will be computet for the other groups as well.
+        (expected PSI and dispersion) will be computed for the other groups as well.
     :param min_total: Minimum total coverage over all selected samples (for both groups combined).
     :param min_alt_fraction: Minimum fraction of reads supporting the alternative (for both groups combined).
     :param min_n: The minimum coverage of the event for an individual sample to be considered for the min_sa filter.
     :param min_sa: The fraction of samples within each group that must be covered by at least min_n reads.
     :param test: The name of one of the implemented statistical tests ('betabinom_lr','binom_lr','proportions').
     :param padj_method: Specify the method for multiple testing correction.
-    :param types: Restrict the analysis on types of events. If ommited, all types are tested.
-    :param domains: Protin domains overlapping the alternative splicing event get added to the result table.
-        Specify a list of sources, or a dictionary of sources and list of categories to be considdered.
-        By default, domains are not added.'''
-
-    if not domains:
-        domains = {}
-    elif isinstance(domains, str):
-        domains = {domains: None}
-    elif not isinstance(domains, dict):
-        domains = {k: None for k in domains}
+    :param types: Restrict the analysis on types of events. If omitted, all types are tested.'''
 
     noORF = (None, None, {'NMD': True})
     groupnames, groups, grp_idx = _check_groups(self, groups)
@@ -239,17 +229,6 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
             else:
                 start, end = sg[nX].end, sg[nY].start
                 novel = (start, end) not in known.get(splice_type, set())
-            event_dom = {}
-            if domains:  # check for overlapping domains
-                for dom_source, dom_categories in domains.items():
-                    oltr = set()
-                    for trid in setA+setB:  # these are actually lists
-                        for dom in g.transcripts[trid].get('domain', {}).get(dom_source, []):
-                            if (dom_categories is None or
-                                    dom[1] in dom_categories) and \
-                                    has_overlap(dom[3], (start, end)):
-                                oltr.add(str(dom[0]))
-                    event_dom[dom_source] = (len(oltr), ','.join(oltr))
 
             nmdA = sum(g.coverage[np.ix_(sidx, [trid])].sum(None)
                        for trid in setA if g.transcripts[trid].get('ORF', noORF)[2]['NMD'])/g.coverage[np.ix_(sidx, setA)].sum(None)
@@ -258,13 +237,9 @@ def altsplice_test(self, groups, min_total=100, min_alt_fraction=.1, min_n=10, m
             res.append(tuple(itertools.chain((g.name, g.id, g.chrom, g.strand, start, end, splice_type, novel, pval,
                                              sorted(setA, key=lambda x: -g.coverage[np.ix_(sidx, [x])].sum(0)),
                                              sorted(setB, key=lambda x: -g.coverage[np.ix_(sidx, [x])].sum(0)), nmdA, nmdB),
-                                             (v for dom_source in domains for v in event_dom[dom_source]),
                                              params, params_other,
                                              (val for lists in zip(x, n) for pair in zip(*lists) for val in pair))))
     colnames = ['gene', 'gene_id', 'chrom', 'strand', 'start', 'end', 'splice_type', 'novel', 'pvalue', 'trA', 'trB', 'nmdA', 'nmdB']
-    if domains:
-        for dom_source in domains:
-            colnames += [f'n_{dom_source}_domains', f'{dom_source}_domains']
     colnames += [gn + part for gn in groupnames[:2] + ['total'] + groupnames[2:] for part in ['_PSI', '_disp']]
     colnames += [f'{sa}_{gn}_{w}' for gn, grp in zip(groupnames, groups) for sa in grp for w in ['in_cov', 'total_cov']]
     df = pd.DataFrame(res, columns=colnames)
@@ -285,7 +260,7 @@ def die_test(self, groups, min_cov=25, n_isoforms=10, padj_method='fdr_bh', prog
 
     Syntax and parameters follow the original implementation in
     https://github.com/noush-joglekar/scisorseqr/blob/master/inst/RScript/IsoformTest.R
-    :param groups: Dict with groupnames as keys and lists of samplenames as values, defining the two groups for the test.
+    :param groups: Dict with group names as keys and lists of sample names as values, defining the two groups for the test.
     :param min_cov: Minimal number of reads per group for each gene.
     :param n_isoforms: Number of isoforms to consider in the test for each gene. All additional least expressed isoforms get summarized.'''
 
@@ -307,7 +282,7 @@ def alternative_splicing_events(self, min_total=100, min_alt_fraction=.1, sample
 
     Finds alternative splicing events and potential transcription start sites/polyA sites
     by searching for splice bubbles in the Segment Graph.
-    Genes may be specified by genomic "region", and/or by filter tags / novelity class using the "query" parameters.
+    Genes may be specified by genomic "region", and/or by filter tags / novelty class using the "query" parameters.
 
     :param min_total: Minimum total coverage over all selected samples.
     :param min_alt_fraction: Minimum fraction of reads supporting the alternative.
@@ -367,7 +342,7 @@ def _tpm_fun(tpm_th, n_reads, cov_th=2, p=.8):
 
 
 def estimate_tpm_threshold(n_reads, cov_th=2, p=.8):
-    '''Estimate the minimum expression level of obervable transcripts at given coverage.
+    '''Estimate the minimum expression level of observable transcripts at given coverage.
 
     The function returns the expression level in transcripts per million (TPM), that can be observed
     at the given sequencing depth.
@@ -385,7 +360,7 @@ def altsplice_stats(self, groups=None, weight_by_coverage=True, min_coverage=2, 
     This function counts the novel alternative splicing events of LRTS isoforms with respect to the reference annotation.
     The result can be depicted by isotools.plots.plot_bar.
 
-    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
     :param weight_by_coverage: If True, each transcript is weighted by the coverage.
     :param min_coverage: Threshold to ignore poorly covered transcripts.
     :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
@@ -431,11 +406,11 @@ def altsplice_stats(self, groups=None, weight_by_coverage=True, min_coverage=2, 
 def filter_stats(self, tags=None, groups=None, weight_by_coverage=True, min_coverage=2, tr_filter={}):
     '''Summary statistics for filter flags.
 
-    This function counts the number of transcripts correspondign to filter tags.
+    This function counts the number of transcripts corresponding to filter tags.
     The result can be depicted by isotools.plots.plot_bar.
 
     :param tags: The filter tags to be evaluated. If omitted, all transcript tags are selected.
-    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
+    :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
     :param weight_by_coverage: If True, each transcript is weighted by the number of supporting reads.
     :param min_coverage: Coverage threshold per sample to ignore poorly covered transcripts.
     :param tr_filter: Only transcripts that pass this filter are evaluated. Filter is provided as dict of parameters, passed to self.iter_transcripts().
@@ -485,9 +460,9 @@ def transcript_length_hist(self=None, groups=None, add_reference=False, bins=50,
     This function counts the number of transcripts within length interval.
     The result can be depicted by isotools.plots.plot_dist.
 
-    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
-    :param add_reference: Add the transcript length distribution of the reference annotaiton.
-    :param bins: Define the length interval, either by a single number of bins, or by a list of lengths, defining the interval boudaries.
+    :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
+    :param add_reference: Add the transcript length distribution of the reference annotation.
+    :param bins: Define the length interval, either by a single number of bins, or by a list of lengths, defining the interval boundaries.
     :param x_range: The range of the intervals. Ignored if "bins" is provided as a list.
     :param weight_by_coverage: If True, each transcript is weighted by the coverage.
     :param min_coverage: Threshold to ignore poorly covered transcripts.
@@ -528,8 +503,8 @@ def transcript_coverage_hist(self, groups=None, bins=50, x_range=(1, 1001), tr_f
     This function counts the number of transcripts within coverage interval.
     The result can be depicted by isotools.plots.plot_dist.
 
-    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
-    :param bins: Define the covarge interval, either by a single number of bins, or by a list of values, defining the interval boudaries.
+    :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
+    :param bins: Define the coverage interval, either by a single number of bins, or by a list of values, defining the interval boundaries.
     :param x_range: The range of the intervals. Ignored if "bins" is provided as a list.
     :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
     :return: Table with numbers of transcripts within the coverage intervals, and suggested parameters for isotools.plots.plot_distr().'''
@@ -563,9 +538,9 @@ def transcripts_per_gene_hist(self, groups=None, add_reference=False, bins=49, x
     This function counts the genes featuring transcript numbers within specified intervals.
     The result can be depicted by isotools.plots.plot_dist.
 
-    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
-    :param add_reference: Add the transcript per gene histogram of the reference annotaiton.
-    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boudaries.
+    :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
+    :param add_reference: Add the transcript per gene histogram of the reference annotation.
+    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boundaries.
     :param x_range: The range of the intervals. Ignored if "bins" is provided as a list.
     :param min_coverage: Threshold to ignore poorly covered transcripts.
     :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
@@ -612,9 +587,9 @@ def exons_per_transcript_hist(self, groups=None, add_reference=False, bins=34, x
     This function counts the transcripts featuring exon numbers within specified intervals.
     The result can be depicted by isotools.plots.plot_dist.
 
-    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
-    :param add_reference: Add the exons per transcript histogram of the reference annotaiton.
-    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boudaries.
+    :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
+    :param add_reference: Add the exons per transcript histogram of the reference annotation.
+    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boundaries.
     :param x_range: The range of the intervals. Ignored if "bins" is provided as a list.
     :param weight_by_coverage: If True, each transcript is weighted by the coverage.
     :param min_coverage: Threshold to ignore poorly covered transcripts.
@@ -656,9 +631,9 @@ def downstream_a_hist(self, groups=None, add_reference=False, bins=30, x_range=(
 
     High downstream adenosine content is indicative for internal priming.
 
-    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
-    :param add_reference: Add the distribution of downstream adenosine content of the reference annotaiton.
-    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boudaries.
+    :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
+    :param add_reference: Add the distribution of downstream adenosine content of the reference annotation.
+    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boundaries.
     :param x_range: The range of the intervals. Ignored if "bins" is provided as a list. Should not exceed (0,1), e.g. 0 to 100%.
     :param weight_by_coverage: If True, each transcript is weighted by the coverage.
     :param min_coverage: Threshold to ignore poorly covered transcripts.
@@ -699,8 +674,8 @@ def direct_repeat_hist(self, groups=None, bins=10, x_range=(0, 10), weight_by_co
 
     Direct repeats are indicative for reverse transcriptase template switching.
 
-    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
-    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boudaries.
+    :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
+    :param bins: Define the intervals, either by a single number of bins, or by a list of values, defining the interval boundaries.
     :param x_range: The range of the intervals. Ignored if "bins" is provided as a list.
     :param weight_by_coverage: If True, each transcript is weighted by the coverage.
     :param min_coverage: Threshold to ignore poorly covered transcripts.
@@ -740,15 +715,15 @@ def direct_repeat_hist(self, groups=None, bins=10, x_range=(0, 10), weight_by_co
 def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
     '''Rarefaction analysis
 
-    Reads are subsampled according to the provided fractions, to estimate saturation of the transcriptome.
+    Reads are sub-sampled according to the provided fractions, to estimate saturation of the transcriptome.
 
-    :param groups: A dict {grouname:[sample_name_list]} specifing sample groups. If omitted, the samples are analyzed individually.
-    :param fractions: the fractions of reads to be subsampled.
+    :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
+    :param fractions: the fractions of reads to be sub-sampled.
         Either a list of floats between 0 and 1, or a integer number, specifying the number of equally spaced fractions.
-    :param min_coverage: Number of reads per transcript required to consider the transcriped discovered.
+    :param min_coverage: Number of reads per transcript required to consider the transcribed discovered.
     :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
     :return: Tuple with:
-        1) Data frame containing the number of discovered transcripts, for each subsampling fraction and each sample / sample group.
+        1) Data frame containing the number of discovered transcripts, for each sub-sampling fraction and each sample / sample group.
         2) Dict with total number of reads for each group. '''
 
     cov = []
@@ -774,11 +749,10 @@ def rarefaction(self, groups=None, fractions=20, min_coverage=2, tr_filter={}):
 def coordination_test(self, samples=None, test="fisher", min_dist=1, min_total=100, min_alt_fraction=.1,
                       events_dict=None, event_type=("ES", "5AS", "3AS", "IR", "ME"), query=None, region=None, padj_method="fdr_bh",
                       progress_bar=True):
-    '''
-    Performs gene_coordination_test on all genes.
+    '''Performs gene_coordination_test on all genes.
 
-    :param samples: Specify the samples that should be considdered in the test.
-            The samples can be provided either as a single group name, a list of sample names, or a list of sample indices.
+    :param samples: Specify the samples that should be considered in the test.
+        The samples can be provided either as a single group name, a list of sample names, or a list of sample indices.
     :param test: Test to be performed. One of ("chi2", "fisher")
     :type test: str
     :param min_dist: Minimum distance (in nucleotides) between the two Alternative Splicing Events for the pair to be tested
@@ -789,22 +763,21 @@ def coordination_test(self, samples=None, test="fisher", min_dist=1, min_total=1
     :type min_alt_frction: float
     :param min_cov_pair: the minimum total number of a pair of the joint occurrence of a pair of event for it to be reported in the result
     :type min_cov_pair: int
-    :param events_dict: Precomputed dictionary of alternative splicing events, to speed up analysis of several groups of samples of the same dataset.
+    :param events_dict: Pre-computed dictionary of alternative splicing events, to speed up analysis of several groups of samples of the same data set.
         Can be generated with the function _utils.precompute_events_dict.
     :param event_type:  A tuple with event types to test. Valid types are ("ES","3AS", "5AS","IR" or "ME", "TSS", "PAS").
-    Default is ("ES", "5AS", "3AS", "IR", "ME")
+        Default is ("ES", "5AS", "3AS", "IR", "ME")
     :param query: If provided, query string is evaluated on all genes for filtering
     :param region: The region to be considered. Either a string "chr:start-end", or a tuple (chr,start,end). Start and end is optional.
     :param padj_method: The multiple test adjustment method.
         Any value allowed by statsmodels.stats.multitest.multipletests (default: Benjamini-Hochberg)
 
-    :return: a Pandas dataframe, where each column corresponds to the p_values, the statistics
-    (the chi squared statistic if the chi squared test is used and the odds-ratio if the Fisher
-    test is used), the log2 OR, the gene Id, the gene name, the type of the first ASE, the type of the second ASE, the
-    starting coordinate of the first ASE, the ending coordinate of the first ASE, the starting
-    coordinate of the second ASE, the ending coordinate of the second ASE,
-    and the four entries of the contingency table.
-    '''
+    :return: a Pandas DataFrame, where each column corresponds to the p_values, the statistics
+        (the chi squared statistic if the chi squared test is used and the odds-ratio if the Fisher
+        test is used), the log2 OR, the gene Id, the gene name, the type of the first ASE, the type of the second ASE, the
+        starting coordinate of the first ASE, the ending coordinate of the first ASE, the starting
+        coordinate of the second ASE, the ending coordinate of the second ASE,
+        and the four entries of the contingency table.'''
 
     test_res = []
 

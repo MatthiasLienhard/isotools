@@ -30,18 +30,15 @@ isotools.plots module
 .. automodule:: isotools.plots
    :members:
    :undoc-members:
-   
+
+isotools.domains module
+-----------------------
+.. automodule:: isotools.domains
+   :members: import_hmmer_models, add_domains_to_table
 
 constants
 ---------
-.. automodule:: isotools._transcriptome_filter
-   
-   .. autodata:: isotools._transcriptome_filter.ANNOTATION_VOCABULARY
+.. automodule:: isotools
 
-   .. autodata:: isotools._transcriptome_filter.DEFAULT_GENE_FILTER
-
-   .. autodata:: isotools._transcriptome_filter.DEFAULT_TRANSCRIPT_FILTER
-
-   .. autodata:: isotools._transcriptome_filter.DEFAULT_REF_TRANSCRIPT_FILTER
 
      

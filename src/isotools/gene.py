@@ -614,8 +614,8 @@ class Gene(Interval):
         :param events: To speed up testing on different groups of the same transcriptome objects, events can be precomputed
             with the isotools._utils.precompute_events_dict function.
         :param event_type:  A tuple with event types to test. Valid types are
-        ("ES", "3AS", "5AS", "IR", "ME", "TSS", "PAS"). Default is ("ES", "5AS", "3AS", "IR", "ME").
-        Not used if the event parameter is already given.
+            ("ES", "3AS", "5AS", "IR", "ME", "TSS", "PAS"). Default is ("ES", "5AS", "3AS", "IR", "ME").
+            Not used if the event parameter is already given.
         :return: A list of tuples with the test results: (gene_id, gene_name, strand, eventA_type, eventB_type,
             eventA_start, eventA_end, eventB_start, eventB_end, p_value, test_stat, log2OR,  dcPSI_AB, dcPSI_BA,
             priA_priB, priA_altB, altA_priB, altA_altB,  priA_priB_trids, priA_altB_trids, altA_priB_trids, altA_altB_trids).

@@ -1,3 +1,27 @@
+"""
+IsoTools: Python package for long read transcriptome sequencing analysis.
+
+.. data:: DEFAULT_GENE_FILTER
+
+    Default definitions for gene filter, as used in iosotools.Transcriptome.add_filters().
+
+.. data:: DEFAULT_TRANSCRIPT_FILTER
+
+    Default definitions for transcript filter, as used in iosotools.Transcriptome.add_filters().
+
+.. data:: DEFAULT_REF_TRANSCRIPT_FILTER
+
+    Default definitions for reference transcript filter, as used in iosotools.Transcriptome.add_filters().
+
+.. data:: ANNOTATION_VOCABULARY
+
+    Controlled vocabulary for filtering by annotation.
+
+.. data:: SPLICE_CATEGORY
+
+    Controlled vocabulary for filtering by novel alternative splicing.
+"""
+
 
 try:
     from importlib.metadata import distribution

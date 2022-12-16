@@ -11,6 +11,8 @@ import sys
 
 
 logger = logging.getLogger('run_isotools')
+
+
 def argument_parser():
     parser = argparse.ArgumentParser(prog='isotools', description='process LRTS data with isotool')
     parser.add_argument('--anno', metavar='<file.gtf/gff/gff3[.gz]>', help='specify reference annotation')
@@ -45,7 +47,7 @@ def argument_parser():
 
 
 def main():
-    parser=argument_parser()
+    parser = argument_parser()
     args = parser.parse_args()
 
     plt.rcParams['savefig.dpi'] = args.plot_dpi

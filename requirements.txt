@@ -7,7 +7,7 @@ seaborn
 biopython
 pysam
 umap-learn
-sklearn
+scikit-learn
 scipy
 statsmodels
 importlib-metadata

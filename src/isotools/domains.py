@@ -92,7 +92,8 @@ def add_domains_to_table(table, transcriptome, source='annotation', categories=N
             # evaluate string in mode
             domains.append(eval(mode, domain_sets))
         domain_rows[idx] = domains
-    domain_rows = pd.DataFrame.from_dict(domain_rows, orient='index', columns=[f'{mode} domains' for mode in modes])
+    domain_rows = pd.DataFrame.from_dict(domain_rows, orient='index',
+                                         columns=[f'{mode} { "overlap " if overlap_only else ""}domains' for mode in modes])
     if insert_after is None:
         return domain_rows
     return pd.concat([table.iloc[:, :insert_after+1], domain_rows, table.iloc[:, insert_after+1:]], axis=1)

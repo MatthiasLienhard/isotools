@@ -12,7 +12,7 @@ Key features:
 * Detection of differential alternative splicing between samples and groups of samples. 
 * Data visualization. 
 
-.. image:: Isotools_overview_slide.png
+.. image:: notebooks/Isotools_overview_slide.png
   :width: 800
   :alt: IsoTools overview
 

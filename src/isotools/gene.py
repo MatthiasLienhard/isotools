@@ -44,7 +44,8 @@ class Gene(Interval):
     def short_reads(self, idx):
         '''Returns the short read coverage profile for a short read sample.
 
-        :param idx: The index of the short read sample. '''
+        :param idx: The index of the short read sample.
+        :returns: The short read coverage profile.'''
 
         try:
             return self.data['short_reads'][idx]
@@ -63,7 +64,8 @@ class Gene(Interval):
 
          :param trid: The index of the transcript to be checked.
          :param size: The maximum shift to be corrected.
-         :param modify: If set, the exon positions are corrected according to the reference.'''
+         :param modify: If set, the exon positions are corrected according to the reference.
+         :returns: A dictionary with the exon id as keys and the shifted bases as values.'''
 
         exons = trid['exons']
         shifts = self.ref_segment_graph.fuzzy_junction(exons, size)
@@ -217,7 +219,9 @@ class Gene(Interval):
         :param trids: List of transcript ids for which the sequence are requested.
         :param reference: Specifiy whether the sequence is fetched for reference transcripts (True)
             or long read transcripts (False, default).
-        :param protein: Return protein sequences instead of transcript sequences.'''
+        :param protein: Return protein sequences instead of transcript sequences.
+        :returns: A dictionary of transcript ids and their sequences.
+        '''
 
         trL = [(i, tr) for i, tr in enumerate(self.ref_transcripts if reference else self.transcripts) if trids is None or i in trids]
         if not trL:
@@ -261,6 +265,18 @@ class Gene(Interval):
 
     def get_all_orf(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
         ''' Predicts ORF.
+
+        :param genome_fh: The path to the genome fasta file, or FastaFile handle.
+        :param reference: Specifiy whether the sequence is fetched for reference transcripts (True)
+            or long read transcripts (False, default).
+        :param minlen: The minimum length of the ORF.
+        :param start_codons: List of start codons.
+        :param stop_codons: List of stop codons.
+        :returns: A list of (transcript_id, list_of_orfs) tuples. Each orf is a tuple of (genomic_start, genomic_end, orf_properties).
+        The orf_properties is a dictionary with keys 'start', 'length', 'start_codon', 'stop_codon' and 'NMD'.
+        NMD is True if the ORF is predicted to be degraded by nonsense-mediated decay,
+        as defined by the 55 bases rule, e.g. there is at least one splice site upstream the stop codon,
+        and the distance of the stop codon to the last upstrame splice site is less than 55 bases.
         '''
         orf_list = []
         trL = self.ref_transcripts if reference else self.transcripts

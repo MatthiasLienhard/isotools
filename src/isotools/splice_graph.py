@@ -943,10 +943,11 @@ class SegmentGraph():
         return False
 
     def _get_all_exons(self, nodeX, nodeY, tr):
-        'get all exons from nodeX to nodeY for transcripts tr'
+        'get all exonic regions between (including) nodeX to nodeY for transcripts tr'
         # TODO: add option to extend first and last exons
         n = max(nodeX, self._tss[tr])  # if tss>nodeX start there
         if tr not in self[n].pre and self._tss[tr] != n:  # nodeX is not part of tr
+            # find first node in tr after nodeX but before nodeY
             for i in range(n, nodeY + 1):
                 if tr in self[n].suc:
                     n = i

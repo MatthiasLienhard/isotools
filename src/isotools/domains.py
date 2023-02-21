@@ -80,7 +80,7 @@ def add_domains_to_table(table, transcriptome, source='annotation', categories=N
         domain_sets = {}
         for tr_col in tr_cols:
             domain_sets[tr_col] = set()
-            trids = set(row[tr_col]) & valid_transcripts if filter_kwargs else row[tr_col]
+            trids = set(row[tr_col]) & valid_transcripts if filter_kwargs else set(row[tr_col])
             for trid in trids:
                 for dom in g.transcripts[trid].get('domain', {}).get(source, []):
                     if categories is not None and dom[2] not in categories:

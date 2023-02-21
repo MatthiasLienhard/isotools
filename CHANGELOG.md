@@ -5,6 +5,9 @@
 * planned new feature: during import of long reads, (optionally) correct for short exon alignment issues. 
 * separate new read import and classification of isoforms.
 
+## [0.3.3]
+* improved export of splice events to rMATS format
+
 ## [0.3.2]
 * restructured tutorials
 * new feature: add domains to differential splicing result tables.

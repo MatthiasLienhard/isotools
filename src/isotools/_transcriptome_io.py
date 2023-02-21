@@ -1523,29 +1523,34 @@ def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
         chrom = 'chr' + g.chrom
     else:
         chrom = g.chrom
-    exonsA = ((seg_graph[nodeX].start, seg_graph[nodeX].end), (seg_graph[nodeY].start, seg_graph[nodeY].end))
+    exonsA = ((seg_graph[nodeX].start, seg_graph[nodeX].end), (seg_graph[nodeY].start, seg_graph[nodeY].end))  # flanking/outer "exons" of setA
+    # _get_all_exons does not extend the exons beyond the nodeX/Y
     for exonsB in {tuple(seg_graph._get_all_exons(nodeX, nodeY, b_tr)) for b_tr in setB}:
-        exons_sel = None
+        exons_sel = []
         if st in ['A3SS', 'A5SS'] and len(exonsB) == 2:
-            if exonsA[0][1] == exonsB[0][1]:
-                exons_sel = [exonsB[1], exonsA[1], exonsA[0]]  # long short flanking
-            else:
-                exons_sel = [exonsB[0], exonsA[0], exonsA[1]]  # long short flanking
+            if exonsA[0][1] == exonsB[0][1]:  # A5SS on - strand or A3SS on + strand
+                exons_sel.append([exonsB[1], exonsA[1], exonsA[0]])  # long short flanking
+            else:  # A5SS on + strand or A3SS on - strand
+                exons_sel.append([exonsB[0], exonsA[0], exonsA[1]])  # long short flanking
         elif st == 'SE' and len(exonsB) == 3:
             assert exonsA[0] == exonsB[0] and exonsA[1] == exonsB[2], f'invalid exon skipping {exonsA} vs {exonsB}'  # just to be sure everything is consistent
-            # e_order=(1,0,2) if g.strand=='+' else (1,2,0)
-            e_order = (1, 0, 2)
-            exons_sel = [exonsB[i] for i in e_order]
+            e_order = (1, 0, 2) if g.strand == '+' else (1, 2, 0)
+            exons_sel.append([exonsB[i] for i in e_order])
         elif st == 'RI' and len(exonsB) == 1:
-            exons_sel = [exonsB[0], exonsA[0], exonsA[1]]  # if g.strand=='+' else [exonsB[0], exonsA[1], exonsA[0]]
+            exons_sel.append([exonsB[0], exonsA[0], exonsA[1]] if g.strand == '+' else [exonsB[0], exonsA[1], exonsA[0]])
         elif st == 'MXE' and len(exonsB) == 3:
             # nodeZ=next(idx for idx,n in enumerate(seg_graph) if n.start==exonsB[-1][0])
             for exonsA in {tuple(seg_graph._get_all_exons(nodeX, nodeY, a_tr)) for a_tr in setA}:
-                assert len(exonsA) == 3 and exonsA[0] == exonsB[0] and exonsA[2] == exonsB[2]  # should always be true
-                lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand, exonsB[1][0], exonsB[1][1], exonsA[1]
-                             [0], exonsA[1][1], exonsA[0][0], exonsA[0][1], exonsA[2][0], exonsA[2][1]])
-        if exons_sel is not None:
-            lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand] + [pos for e in exons_sel for pos in e])
+                if len(exonsA) != 3:
+                    continue
+                assert exonsA[0] == exonsB[0] and exonsA[2] == exonsB[2]  # should always be true
+                # '1st','2nd', 'upstream', 'downstream'
+                if g.strand == '+':
+                    exons_sel.append([exonsB[1], exonsA[1], exonsA[0], exonsA[2]])
+                else:
+                    exons_sel.append([exonsA[1], exonsB[1], exonsA[2], exonsA[0]])
+        for exons in exons_sel:
+            lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand] + [pos for e in exons for pos in ((e[1],e[0]) if g.strand == '-' else e)])
     return [[offset + count] + l for count, l in enumerate(lines)]
 
 

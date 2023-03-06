@@ -1518,6 +1518,7 @@ def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
     # in case of 'MXE':['1st','2nd', 'upstream', 'downstream'],
     # in case of 'A3SS':['long','short', 'flanking'],
     # in case of 'A5SS':['long','short', 'flanking']}
+    # upstream and downstream/ 1st/snd are with respect to the genome strand
     lines = []
     if g.chrom[: 3] != 'chr':
         chrom = 'chr' + g.chrom
@@ -1534,23 +1535,23 @@ def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
                 exons_sel.append([exonsB[0], exonsA[0], exonsA[1]])  # long short flanking
         elif st == 'SE' and len(exonsB) == 3:
             assert exonsA[0] == exonsB[0] and exonsA[1] == exonsB[2], f'invalid exon skipping {exonsA} vs {exonsB}'  # just to be sure everything is consistent
-            e_order = (1, 0, 2) if g.strand == '+' else (1, 2, 0)
-            exons_sel.append([exonsB[i] for i in e_order])
+            # e_order = (1, 0, 2) if g.strand == '+' else (1, 2, 0)
+            exons_sel.append([exonsB[i] for i in (1, 0, 2)])  # skipped, upstream, downstream
         elif st == 'RI' and len(exonsB) == 1:
-            exons_sel.append([exonsB[0], exonsA[0], exonsA[1]] if g.strand == '+' else [exonsB[0], exonsA[1], exonsA[0]])
+            exons_sel.append([exonsB[0], exonsA[0], exonsA[1]])  # retained, upstream, downstream
+            # if g.strand == '+' else [exonsB[0], exonsA[1], exonsA[0]])
         elif st == 'MXE' and len(exonsB) == 3:
             # nodeZ=next(idx for idx,n in enumerate(seg_graph) if n.start==exonsB[-1][0])
+            # multiple exonA possibilities, so we need to check all of them
             for exonsA in {tuple(seg_graph._get_all_exons(nodeX, nodeY, a_tr)) for a_tr in setA}:
-                if len(exonsA) != 3:
+                if len(exonsA) != 3:  # complex events are not possible in rMATS
                     continue
                 assert exonsA[0] == exonsB[0] and exonsA[2] == exonsB[2]  # should always be true
                 # '1st','2nd', 'upstream', 'downstream'
-                if g.strand == '+':
-                    exons_sel.append([exonsB[1], exonsA[1], exonsA[0], exonsA[2]])
-                else:
-                    exons_sel.append([exonsA[1], exonsB[1], exonsA[2], exonsA[0]])
-        for exons in exons_sel:
-            lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand] + [pos for e in exons for pos in ((e[1],e[0]) if g.strand == '-' else e)])
+                exons_sel.append([exonsB[1], exonsA[1], exonsA[0], exonsA[2]])
+        for exons in exons_sel:  # in case we got the same MXE multiple times
+            # lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand] + [pos for e in exons for pos in ((e[1],e[0]) if g.strand == '-' else e)])
+            lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand] + [pos for e in exons for pos in e])  # no need to reverse the order of exon start/end
     return [[offset + count] + l for count, l in enumerate(lines)]
 
 

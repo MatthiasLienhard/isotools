@@ -6,7 +6,9 @@
 * separate new read import and classification of isoforms.
 
 ## [0.3.3]
-* improved export of splice events to rMATS format
+* fixed bug in filter_ref_transcripts with no query
+* export gtf with long read transcripts as well uncovered as reference transcripts
+* fix warning in plot_diff_results
 
 ## [0.3.2]
 * restructured tutorials

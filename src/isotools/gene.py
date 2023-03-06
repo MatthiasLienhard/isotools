@@ -77,13 +77,14 @@ class Gene(Interval):
             trid['exons'] = [e for e in exons if e[0] < e[1]]  # remove zero length exons
         return shifts
 
-    def _to_gtf(self, trids, source='isoseq'):
+    def _to_gtf(self, trids, ref_trids=None, source='isoseq', ref_source='annotation'):
         '''Creates the gtf lines of the gene as strings.'''
         donotshow = {'transcripts', 'short_exons', 'segment_graph'}
         info = {'gene_id': self.id, 'gene_name': self.name}
         lines = [None]
         starts = []
         ends = []
+        ref_fsm = []
         for i in trids:
             tr = self.transcripts[i]
             info['transcript_id'] = f'{info["gene_id"]}_{i}'
@@ -95,6 +96,7 @@ class Gene(Interval):
             if tr['annotation'][0] == 0:  # FSM
                 refinfo = {}
                 for refid in tr['annotation'][1]['FSM']:
+                    ref_fsm.append(refid)
                     for k in self.ref_transcripts[refid]:
                         if k == 'exons':
                             continue
@@ -122,6 +124,34 @@ class Gene(Interval):
                 if enr+1 in noncanonical:
                     exon_info['noncanonical_acceptor'] = noncanonical[enr+1][2:]
                 lines.append((self.chrom, source, 'exon', pos[0] + 1, pos[1], '.', self.strand, '.', '; '.join(f'{k} "{v}"' for k, v in exon_info.items())))
+        if ref_trids:
+            # add reference transcripts not covered by FSM
+            for i, tr in enumerate(self.ref_transcripts):
+                if i in ref_fsm:
+                    continue
+                starts.append(tr['exons'][0][0] + 1)
+                ends.append(tr['exons'][-1][1])
+                info['transcript_id'] = f'{info["gene_id"]}_ref{i}'
+                refinfo = info.copy()
+                for k in tr:
+                    if k == 'exons':
+                        continue
+                    elif k == 'CDS':
+                        if self.strand == '+':
+                            cds_start, cds_end = tr['CDS']
+                        else:
+                            cds_end, cds_start = tr['CDS']
+                        refinfo['CDS_start'] = str(cds_start)
+                        refinfo['CDS_end'] = str(cds_end)
+                    else:
+                        refinfo.setdefault(k, []).append(str(tr[k]))
+                    lines.append((self.chrom, ref_source, 'transcript', tr['exons'][0][0] + 1, tr['exons'][-1][1], '.',
+                                  self.strand, '.', '; '.join(f'{k} "{v}"' for k, v in refinfo.items())))
+                    for enr, pos in enumerate(tr['exons']):
+                        exon_info = info.copy()
+                        exon_id = f'{info["gene_id"]}_ref{i}_{enr}'
+                        lines.append((self.chrom, ref_source, 'exon', pos[0] + 1, pos[1], '.', self.strand, '.', f'exon_id "{exon_id}"'))
+
         if len(lines) > 1:
             # add gene line
             if 'reference' in self.data:
@@ -576,7 +606,7 @@ class Gene(Interval):
                 ', '.join(f for f in used_tags if f not in tr_filter), ', '.join(tr_filter))
             tr_filter_fun = {tag: _filter_function(tr_filter[tag])[0] for tag in used_tags if tag in tr_filter}
         else:
-            return list(range(len(self.transcripts)))
+            return list(range(len(self.ref_transcripts)))
         trids = []
         for i, tr in enumerate(self.ref_transcripts):
             if query_fun(**{tag: f(g=self, trid=i, **tr) for tag, f in tr_filter_fun.items()}):

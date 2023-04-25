@@ -362,7 +362,7 @@ def altsplice_stats(self, groups=None, weight_by_coverage=True, min_coverage=2, 
 
     :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
     :param weight_by_coverage: If True, each transcript is weighted by the coverage.
-    :param min_coverage: Threshold to ignore poorly covered transcripts.
+    :param min_coverage: Threshold to ignore poorly covered transcripts. This parameter gets applied for each sample group seperately.
     :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
     :return: Table with numbers of novel alternative splicing events, and suggested parameters for isotools.plots.plot_bar().'''
     weights = dict()

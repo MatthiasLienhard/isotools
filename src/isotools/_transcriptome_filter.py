@@ -90,7 +90,8 @@ def remove_filter(self, tag):
 def add_filter(self, tag, expression, context='transcript', update=False):
     '''Defines a new filter for gene, transcripts and reference transcripts.
 
-    The provided expressions is evaluated during filtering in the provided context.
+    The provided expressions is evaluated during filtering in the provided context, when specified in a query string of a function that supports filtering.
+    Importantly, filtering does not modify the original data; rather, it is only applied when specifying the query string.
     For examples, see the default filter definitions isotools.DEFAULT_GENE_FILTER,
     isotools.DEFAULT_TRANSCRIPT_FILTER and isotools.DEFAULT_REF_TRANSCRIPT_FILTER.
 

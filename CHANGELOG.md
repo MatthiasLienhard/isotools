@@ -9,6 +9,10 @@
 * fixed bug in filter_ref_transcripts with no query
 * export gtf with long read transcripts as well uncovered as reference transcripts
 * fix warning in plot_diff_results
+* changed export to rMATS: events report complete flanking exons of top covered isoform
+* fixed bug with transcript_id_col parameter in add_sample_from_csv
+* fixed handling of interpro protein domains
+* improved documentation: syntax highlighing, code style, additional explanations on filtering
 
 ## [0.3.2]
 * restructured tutorials

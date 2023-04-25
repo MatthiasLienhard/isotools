@@ -285,40 +285,45 @@ def get_interpro_domains(seqs, email, baseUrl='http://www.ebi.ac.uk/Tools/servic
     domains = [None]*len(seqs)
     i = 0
     with tqdm(unit='proteins', disable=not progress_bar, total=len(seqs)) as pbar:
-        while seqs or current_jobs:
-            while seqs and len(current_jobs) < max_jobs:
-                params = {u'email': email, u'sequence': seqs.pop()}
-                resp = requests.post(requestUrl, data=params)
-                # todo: error handling - what if request fails?
-                current_jobs[resp.content.decode()] = i
-                pbar.set_description(f'waiting for {len(current_jobs)} jobs')
-                i += 1
-            time.sleep(poll_time)
-            done = set()
-            for job_id, idx in current_jobs.items():
-                url = baseUrl + u'/status/' + job_id
-                resp = requests.get(url)
-                if not resp.ok:  # todo: error handling: e.g. timeout error?
-                    continue
-                status = resp.content.decode()
-                if status in ('PENDING', 'RUNNING'):
-                    continue
-                if status == 'FINISHED':
-                    url = baseUrl + u'/result/' + job_id + '/json'
+        try:
+            while seqs or current_jobs:  # still something to do
+                while seqs and len(current_jobs) < max_jobs:  # start more jobs
+                    params = {u'email': email, u'sequence': seqs.pop()}
+                    resp = requests.post(requestUrl, data=params)
+                    # todo: error handling - what if request fails?
+                    current_jobs[resp.content.decode()] = i
+                    pbar.set_description(f'waiting for {len(current_jobs)} jobs')
+                    i += 1
+                time.sleep(poll_time)
+                done = set()
+                for job_id, idx in current_jobs.items():  # check the current jobs
+                    url = baseUrl + u'/status/' + job_id
                     resp = requests.get(url)
-                    if resp.ok:
-                        domains[idx] = resp.json()['results']  # else?
-                        pbar.update(1)
+                    if not resp.ok:  # todo: error handling: e.g. timeout error?
+                        continue
+                    status = resp.content.decode()
+                    if status in ('PENDING', 'RUNNING'):
+                        continue
+                    elif status == 'FINISHED':
+                        url = baseUrl + u'/result/' + job_id + '/json'
+                        resp = requests.get(url)
+                        if resp.ok:
+                            domains[idx] = resp.json()['results']  # else?
+                            pbar.update(1)
+                        else:
+                            domains[idx] = [{'status': 'FAILED', 'reason': 'resp_not_ok', 'jobid': job_id}]
+                        done.add(job_id)
+                    elif status == 'FAILED':  # try again?
+                        logger.warning(f'Failed to get response for sequence {idx}')
+                        done.add(job_id)
+                        domains[idx] = [{'status': 'FAILED', 'reason': 'job failed', 'jobid': job_id}]
                     else:
-                        domains[idx] = [{'status': 'FAILED', 'reason': 'resp_not_ok', 'jobid': job_id}]
-                    done.add(job_id)
-                elif status == 'FAILED':  # try again?
-                    logger.warning(f'Failed to get response for sequence {idx}')
-                    done.add(job_id)
-                    domains[idx] = [{'status': 'FAILED', 'reason': 'job failed', 'jobid': job_id}]
-            for job_id in done:
-                current_jobs.pop(job_id)
-            pbar.set_description(f'waiting for {len(current_jobs)} jobs')
+                        logger.warning(f'unhandled status for sequence {idx}: jobid={job_id}')
+                for job_id in done:  # remove the finished jobs
+                    current_jobs.pop(job_id)
+                pbar.set_description(f'waiting for {len(current_jobs)} jobs')
+        except KeyboardInterrupt:
+            logger.warning(f'Interrupting retrieval of {len(current_jobs)} jobs: [{",".join(current_jobs)}]')  # give the user the chance to check the jobs
     return domains
 
 # method of isotools.Gene
@@ -371,6 +376,7 @@ def add_interpro_domains(self, genome, email, baseUrl='http://www.ebi.ac.uk/Tool
             for trid in seqs[dom['sequence']].get('reference' if reference else 'isotools', []):
                 tr = self.ref_transcripts[trid] if reference else self.transcripts[trid]
                 orf = sorted(self.find_transcript_positions(trid, tr.get('CDS', tr.get('ORF'))[:2], reference=reference))
-                pos_map = genomic_position([p+orf[0] for d in domL for p in d[2]], tr['exons'], self.strand == '-')
-                trdom = tuple((*d[:3], (pos_map[d[2][0]+orf[0]], pos_map[d[2][1]+orf[0]]), *d[3:]) for d in domL)
+                pos_map = genomic_position([p+orf[0] for dom in domL for p in dom[3]], tr['exons'], self.strand == '-')
+                trdom = tuple((*dom[:4], (pos_map[dom[3][0]+orf[0]], pos_map[dom[3][1]+orf[0]]), *dom[4:]) for dom in domL)
+
                 tr.setdefault('domain', {})['interpro'] = trdom

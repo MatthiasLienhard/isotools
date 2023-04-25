@@ -577,8 +577,8 @@ class Gene(Interval):
         return self.__copy__()
 
     def filter_transcripts(self, query=None, min_coverage=None, max_coverage=None):
-        tr_filter = self._transcriptome.filter['transcript']
         if query:
+            tr_filter = self._transcriptome.filter['transcript']
             # used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}
             query_fun, used_tags = _filter_function(query)
             msg = 'did not find the following filter rules: {}\nvalid rules are: {}'
@@ -597,8 +597,8 @@ class Gene(Interval):
         return trids
 
     def filter_ref_transcripts(self, query=None):
-        tr_filter = self._transcriptome.filter['reference']
         if query:
+            tr_filter = self._transcriptome.filter['reference']
             # used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}
             query_fun, used_tags = _filter_function(query)
             msg = 'did not find the following filter rules: {}\nvalid rules are: {}'

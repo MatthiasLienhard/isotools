@@ -33,7 +33,7 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5
     :return: figure, axes and list of plotted events
     '''
 
-    plotted = pd.DataFrame(columns=result_table.columns)
+    plotted = {}  # pd.DataFrame(columns=result_table.columns)
     if isinstance(splice_types, str):
         splice_types = [splice_types]
     f, axs = plt.subplots(*grid_shape)
@@ -54,7 +54,7 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5
         logger.debug('plotting %s: %s', idx, row.gene)
         if splice_types is not None and row.splice_type not in splice_types:
             continue
-        if row.gene in set(plotted.gene):
+        if row.gene in plotted:
             continue
         params_alt = {gn: (row[f'{gn}_PSI'], row[f'{gn}_disp']) for gn in group_names}
         # select only samples covered >= min_cov
@@ -89,10 +89,10 @@ def plot_diff_results(result_table, min_support=3, min_diff=.1, grid_shape=(5, 5
             ax2.plot(x, y, color=group_colors[gn], lw=lw, ls=ls)
             ax2.tick_params(right=False, labelright=False)
         ax.set_title(f'{row.gene} {row.splice_type}\nFDR={row.padj:.5f}')
-        plotted = plotted.append(row)
+        plotted[row.gene] = row
         if len(plotted) == len(axs):
             break
-    return f, axs, plotted
+    return f, axs, pd.concat(plotted.values())
 
 
 def plot_embedding(splice_bubbles, method='PCA', prior_count=3,

@@ -17,7 +17,9 @@ compl = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}
 
 
 def rc(seq):
-    '''reverse complement of seq'''
+    '''reverse complement of seq
+    :param seq: sequence
+    :return: reverse complement of seq'''
     return ''.join(reversed([compl[c] if c in compl else 'N' for c in seq]))
 
 
@@ -39,7 +41,14 @@ def get_error_rate(bam_fn, n=1000):
 
 
 def basequal_hist(bam_fn, qual_bins=10**(np.linspace(-7, 0, 30)), len_bins=None, n=10000):
-    '''compute summary base quality statistics from base file, optionally dependent on read length'''
+    '''calculates base quality statistics for a bam file:
+
+    :param bam_fn: path to bam file
+    :param qual_bins: list of quality thresholds for binning
+    :param len_bins: list of read length thresholds for binning
+    :param n: number of reads to use for statistics
+    :return: pandas Series or DataFrame with base quality statistics'''
+
     n_len_bins = 1 if len_bins is None else len(len_bins)+1
     qual = np.zeros((len(qual_bins)+1, n_len_bins), dtype=int)
     len_i = 0
@@ -78,6 +87,10 @@ def pairwise(iterable):  # e.g. usefull for enumerating introns
 
 
 def cigar_string2tuples(cigarstring):
+    '''converts cigar string to tuples ((operator_id, length), ...)
+    :param cigarstring: cigar string
+    :return: tuple of tuples'''
+
     res = re.findall(f'(\\d+)([{cigar}]+)', cigarstring)
     return tuple((cigar_lup[c], int(n)) for n, c in res)
 
@@ -101,7 +114,7 @@ def junctions_from_cigar(cigartuples, offset):
 
 
 def is_same_gene(tr1, tr2, spj_iou_th=0, reg_iou_th=.5):
-    'checks whether tr1 and tr2 are the same gene by calculating intersection over union of the intersects'
+    'Checks whether tr1 and tr2 are the same gene by calculating intersection over union of the intersects'
     # current default definition of "same gene": at least one shared splice site
     # or more than 50% exonic overlap
     spj_i, reg_i = get_intersects(tr1, tr2)

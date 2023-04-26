@@ -44,7 +44,8 @@ class Gene(Interval):
     def short_reads(self, idx):
         '''Returns the short read coverage profile for a short read sample.
 
-        :param idx: The index of the short read sample. '''
+        :param idx: The index of the short read sample.
+        :returns: The short read coverage profile.'''
 
         try:
             return self.data['short_reads'][idx]
@@ -63,7 +64,8 @@ class Gene(Interval):
 
          :param trid: The index of the transcript to be checked.
          :param size: The maximum shift to be corrected.
-         :param modify: If set, the exon positions are corrected according to the reference.'''
+         :param modify: If set, the exon positions are corrected according to the reference.
+         :returns: A dictionary with the exon id as keys and the shifted bases as values.'''
 
         exons = trid['exons']
         shifts = self.ref_segment_graph.fuzzy_junction(exons, size)
@@ -75,13 +77,14 @@ class Gene(Interval):
             trid['exons'] = [e for e in exons if e[0] < e[1]]  # remove zero length exons
         return shifts
 
-    def _to_gtf(self, trids, source='isoseq'):
+    def _to_gtf(self, trids, ref_trids=None, source='isoseq', ref_source='annotation'):
         '''Creates the gtf lines of the gene as strings.'''
         donotshow = {'transcripts', 'short_exons', 'segment_graph'}
         info = {'gene_id': self.id, 'gene_name': self.name}
         lines = [None]
         starts = []
         ends = []
+        ref_fsm = []
         for i in trids:
             tr = self.transcripts[i]
             info['transcript_id'] = f'{info["gene_id"]}_{i}'
@@ -93,6 +96,7 @@ class Gene(Interval):
             if tr['annotation'][0] == 0:  # FSM
                 refinfo = {}
                 for refid in tr['annotation'][1]['FSM']:
+                    ref_fsm.append(refid)
                     for k in self.ref_transcripts[refid]:
                         if k == 'exons':
                             continue
@@ -120,6 +124,34 @@ class Gene(Interval):
                 if enr+1 in noncanonical:
                     exon_info['noncanonical_acceptor'] = noncanonical[enr+1][2:]
                 lines.append((self.chrom, source, 'exon', pos[0] + 1, pos[1], '.', self.strand, '.', '; '.join(f'{k} "{v}"' for k, v in exon_info.items())))
+        if ref_trids:
+            # add reference transcripts not covered by FSM
+            for i, tr in enumerate(self.ref_transcripts):
+                if i in ref_fsm:
+                    continue
+                starts.append(tr['exons'][0][0] + 1)
+                ends.append(tr['exons'][-1][1])
+                info['transcript_id'] = f'{info["gene_id"]}_ref{i}'
+                refinfo = info.copy()
+                for k in tr:
+                    if k == 'exons':
+                        continue
+                    elif k == 'CDS':
+                        if self.strand == '+':
+                            cds_start, cds_end = tr['CDS']
+                        else:
+                            cds_end, cds_start = tr['CDS']
+                        refinfo['CDS_start'] = str(cds_start)
+                        refinfo['CDS_end'] = str(cds_end)
+                    else:
+                        refinfo.setdefault(k, []).append(str(tr[k]))
+                    lines.append((self.chrom, ref_source, 'transcript', tr['exons'][0][0] + 1, tr['exons'][-1][1], '.',
+                                  self.strand, '.', '; '.join(f'{k} "{v}"' for k, v in refinfo.items())))
+                    for enr, pos in enumerate(tr['exons']):
+                        exon_info = info.copy()
+                        exon_id = f'{info["gene_id"]}_ref{i}_{enr}'
+                        lines.append((self.chrom, ref_source, 'exon', pos[0] + 1, pos[1], '.', self.strand, '.', f'exon_id "{exon_id}"'))
+
         if len(lines) > 1:
             # add gene line
             if 'reference' in self.data:
@@ -217,7 +249,9 @@ class Gene(Interval):
         :param trids: List of transcript ids for which the sequence are requested.
         :param reference: Specifiy whether the sequence is fetched for reference transcripts (True)
             or long read transcripts (False, default).
-        :param protein: Return protein sequences instead of transcript sequences.'''
+        :param protein: Return protein sequences instead of transcript sequences.
+        :returns: A dictionary of transcript ids and their sequences.
+        '''
 
         trL = [(i, tr) for i, tr in enumerate(self.ref_transcripts if reference else self.transcripts) if trids is None or i in trids]
         if not trL:
@@ -261,6 +295,18 @@ class Gene(Interval):
 
     def get_all_orf(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
         ''' Predicts ORF.
+
+        :param genome_fh: The path to the genome fasta file, or FastaFile handle.
+        :param reference: Specifiy whether the sequence is fetched for reference transcripts (True)
+            or long read transcripts (False, default).
+        :param minlen: The minimum length of the ORF.
+        :param start_codons: List of start codons.
+        :param stop_codons: List of stop codons.
+        :returns: A list of (transcript_id, list_of_orfs) tuples. Each orf is a tuple of (genomic_start, genomic_end, orf_properties).
+        The orf_properties is a dictionary with keys 'start', 'length', 'start_codon', 'stop_codon' and 'NMD'.
+        NMD is True if the ORF is predicted to be degraded by nonsense-mediated decay,
+        as defined by the 55 bases rule, e.g. there is at least one splice site upstream the stop codon,
+        and the distance of the stop codon to the last upstrame splice site is less than 55 bases.
         '''
         orf_list = []
         trL = self.ref_transcripts if reference else self.transcripts
@@ -531,8 +577,8 @@ class Gene(Interval):
         return self.__copy__()
 
     def filter_transcripts(self, query=None, min_coverage=None, max_coverage=None):
-        tr_filter = self._transcriptome.filter['transcript']
         if query:
+            tr_filter = self._transcriptome.filter['transcript']
             # used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}
             query_fun, used_tags = _filter_function(query)
             msg = 'did not find the following filter rules: {}\nvalid rules are: {}'
@@ -551,8 +597,8 @@ class Gene(Interval):
         return trids
 
     def filter_ref_transcripts(self, query=None):
-        tr_filter = self._transcriptome.filter['reference']
         if query:
+            tr_filter = self._transcriptome.filter['reference']
             # used_tags={tag for tag in re.findall(r'\b\w+\b', query) if tag not in BOOL_OP}
             query_fun, used_tags = _filter_function(query)
             msg = 'did not find the following filter rules: {}\nvalid rules are: {}'
@@ -560,7 +606,7 @@ class Gene(Interval):
                 ', '.join(f for f in used_tags if f not in tr_filter), ', '.join(tr_filter))
             tr_filter_fun = {tag: _filter_function(tr_filter[tag])[0] for tag in used_tags if tag in tr_filter}
         else:
-            return list(range(len(self.transcripts)))
+            return list(range(len(self.ref_transcripts)))
         trids = []
         for i, tr in enumerate(self.ref_transcripts):
             if query_fun(**{tag: f(g=self, trid=i, **tr) for tag, f in tr_filter_fun.items()}):

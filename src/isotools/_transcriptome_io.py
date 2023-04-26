@@ -4,6 +4,7 @@ import pandas as pd
 from os import path
 from intervaltree import IntervalTree, Interval
 from collections.abc import Iterable
+from collections import Counter
 from pysam import TabixFile, AlignmentFile, FastaFile
 from tqdm import tqdm
 from contextlib import ExitStack
@@ -129,23 +130,23 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
         elif 'gene_id' in cov_tab.columns and 'transcript_nr' in cov_tab.columns:
             cov_tab['transcript_id'] = cov_tab.gene_id+'_'+cov_tab.transcript_nr.astype(str)
         else:
-            raise ValueError('"transcript_id_cols" not specified, and coverage table does not contain "transcript_id", nor "gene_id" and "transcript_nr"')
-        transcript_id_cols = 'transcript_id'
+            raise ValueError('"transcript_id_col" not specified, and coverage table does not contain "transcript_id", nor "gene_id" and "transcript_nr"')
+        transcript_id_col = 'transcript_id'
     elif isinstance(transcript_id_col, list):
         assert all(c in cov_tab for c in transcript_id_col), 'missing specified transcript_id_col'
-        cov_tab['transcript_id'] = ['_'.join(str(v) for v in row.values()) for _, row in cov_tab[transcript_id_col].iterrows()]
-        transcript_id_cols = 'transcript_id'
+        cov_tab['transcript_id'] = ['_'.join(str(v) for v in row) for _, row in cov_tab[transcript_id_col].iterrows()]
+        transcript_id_col = 'transcript_id'
     else:
         assert transcript_id_col in cov_tab, 'missing specified transcript_id_col'
         cov_tab['transcript_id'] = cov_tab[transcript_id_col]
     known_sa = set(samples).intersection(self.samples)
-    assert transcript_id_cols == 'transcript_id'  # could be optimized, but code is easier when the id column always is transcript_id
+    assert transcript_id_col == 'transcript_id'  # could be optimized, but code is easier when the id column always is transcript_id
     assert not known_sa, 'Attempt to add known samples: %s' % known_sa
     # cov_tab.set_index('transcript_id')
     # assert cov_tab.index.is_unique, 'ambigous transcript ids in %s' % coverage_csv_file
     # check sample properties
     if sample_properties is None:
-        sample_properties = {sa: {} for sa in samples}
+        sample_properties = {sa: {'group': sa} for sa in samples}
     elif isinstance(sample_properties, pd.DataFrame):
         if 'name' in sample_properties:
             sample_properties = sample_properties.set_index('name')
@@ -153,6 +154,9 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
                              for sa, row in sample_properties.iterrows()}
     assert all(sa in sample_properties for sa in samples), 'missing sample_properties for samples %s' % ', '.join(
         (sa for sa in samples if sa not in sample_properties))
+    for sa in sample_properties:
+        sample_properties[sa].setdefault('group', sa)
+
     logger.info('adding samples "%s" from csv', '", "'.join(samples))
     # consider chromosomes not in the referernce?
     if add_chromosomes:
@@ -261,10 +265,11 @@ def add_sample_from_bam(self, fn, sample_name=None, barcode_file=None, fuzzy_jun
 
     :param fn: The bam filename of the new sample
     :param sample_name: Name of the new sample. If specified, all reads are assumed to belong to this sample.
-    :param barcode_file: For barcoded samples, ath to file with assignment of sequencing barcodes to sample names.
+    :param barcode_file: For barcoded samples, a file with assignment of sequencing barcodes to sample names.
         This file should be a tab seperated text file with two columns: the barcode and the sample name
         Barcodes not listed in this file will be ignored.
-        If sample_name is specified in addition to bacode_file, it will be used as a prefix
+        If sample_name is specified in addition to bacode_file, it will be used as a prefix.
+        Barcodes will be read from the XC tag of the bam file.
     :param fuzzy_junction: maximum size for fuzzy junction correction
     :param add_chromosomes: If True, genes from chromosomes which are not in the Transcriptome yet are added.
     :param min_mapqual: Minimum mapping quality of the read to be considdered.
@@ -1478,13 +1483,15 @@ def export_alternative_splicing(self, out_dir, out_format='mats', reference=Fals
                     if total_cov.sum() < min_total or (not min_alt_fraction < junction_cov.sum() / total_cov.sum() < 1 - min_alt_fraction):
                         continue
                 st = types[splice_type]
-                lines = alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, count[st])
+                lines = alt_splice_export(setA, setB, nodeX, nodeY, st, reference, g, count[st])
                 if lines:
                     count[st] += len(lines)
                     fh[st].write('\n'.join(('\t'.join(str(field) for field in line) for line in lines)) + '\n')
 
 
-def _miso_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
+def _miso_alt_splice_export(setA, setB, nodeX, nodeY, st, reference, g, offset):
+    seg_graph = g.ref_segment_graph if reference else g.segment_graph
+
     event_id = f'{g.chrom}:{seg_graph[nodeX].end}-{seg_graph[nodeY].start}_st'
     # TODO: Mutually exclusives extend beyond nodeY - and have potentially multiple A "mRNAs"
     # TODO: is it possible to extend exons at nodeX and Y - if all/"most" tr from setA and B agree?
@@ -1510,7 +1517,8 @@ def _miso_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
     return lines
 
 
-def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
+def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, reference, g, offset,  use_top_isoform=True, use_top_alternative=True):
+    # use_top_isoform and use_top_alternative are ment to simplify the output, in order to not confuse rMATS with to many options
     # 'ID','GeneID','geneSymbol','chr','strand'
     # and ES/EE for the relevant exons
     # in case of 'SE':['skipped', 'upstream', 'downstream'],
@@ -1518,34 +1526,72 @@ def _mats_alt_splice_export(setA, setB, nodeX, nodeY, st, seg_graph, g, offset):
     # in case of 'MXE':['1st','2nd', 'upstream', 'downstream'],
     # in case of 'A3SS':['long','short', 'flanking'],
     # in case of 'A5SS':['long','short', 'flanking']}
+    # upstream and downstream/ 1st/snd are with respect to the genome strand
+    # offset is the event id offset
+    seg_graph = g.ref_segment_graph if reference else g.segment_graph
+
     lines = []
     if g.chrom[: 3] != 'chr':
         chrom = 'chr' + g.chrom
     else:
         chrom = g.chrom
-    exonsA = ((seg_graph[nodeX].start, seg_graph[nodeX].end), (seg_graph[nodeY].start, seg_graph[nodeY].end))
-    for exonsB in {tuple(seg_graph._get_all_exons(nodeX, nodeY, b_tr)) for b_tr in setB}:
-        exons_sel = None
+    if use_top_isoform:  # use flanking exons from top isoform
+        all_transcript_ids = setA+setB
+        if not reference:
+            # most covered isoform
+            top_isoform = all_transcript_ids[g.coverage[:, all_transcript_ids].sum(0).argmax()]  # top covered isoform across all samples
+            nodeX_start = seg_graph._get_exon_start(top_isoform, nodeX)
+            nodeY_end = seg_graph._get_exon_end(top_isoform, nodeY)
+        else:
+            # for reference: most frequent
+            nodeX_start = Counter([seg_graph._get_exon_start(n, nodeX) for n in all_transcript_ids]).most_common(1)[0][0]
+            nodeY_end = Counter([seg_graph._get_exon_end(n, nodeY) for n in all_transcript_ids]).most_common(1)[0][0]
+
+        exonsA = ((seg_graph[nodeX_start].start, seg_graph[nodeX].end), (seg_graph[nodeY].start, seg_graph[nodeY_end].end))  # flanking/outer "exons" of setA()
+    else:
+        exonsA = ((seg_graph[nodeX].start, seg_graph[nodeX].end), (seg_graph[nodeY].start, seg_graph[nodeY].end))  # flanking/outer "exons" of setA
+
+    # _get_all_exons does not extend the exons beyond the nodeX/Y
+    alternatives = [tuple(seg_graph._get_all_exons(nodeX, nodeY, b_tr)) for b_tr in setB]
+    if use_top_alternative:
+        if reference:
+            c = Counter(alternatives)
+        else:
+            weights = [g.coverage[:, b_tr].sum() for b_tr in setB]
+            c = Counter()
+            for alt, w in zip(alternatives, weights):
+                c.update({alt: w})
+        alternatives = [c.most_common(1)[0][0]]
+    else:
+        alternatives = set(alternatives)
+    for exonsB in alternatives:
+        exons_sel = []
         if st in ['A3SS', 'A5SS'] and len(exonsB) == 2:
-            if exonsA[0][1] == exonsB[0][1]:
-                exons_sel = [exonsB[1], exonsA[1], exonsA[0]]  # long short flanking
-            else:
-                exons_sel = [exonsB[0], exonsA[0], exonsA[1]]  # long short flanking
+            if exonsA[0][1] == exonsB[0][1]:  # A5SS on - strand or A3SS on + strand
+                exons_sel.append([(exonsB[1][0], exonsA[1][1]), exonsA[1], exonsA[0]])  # long short flanking
+            else:  # A5SS on + strand or A3SS on - strand
+                exons_sel.append([(exonsA[0][0], exonsB[0][1]), exonsA[0], exonsA[1]])  # long short flanking
         elif st == 'SE' and len(exonsB) == 3:
-            assert exonsA[0] == exonsB[0] and exonsA[1] == exonsB[2], f'invalid exon skipping {exonsA} vs {exonsB}'  # just to be sure everything is consistent
-            # e_order=(1,0,2) if g.strand=='+' else (1,2,0)
-            e_order = (1, 0, 2)
-            exons_sel = [exonsB[i] for i in e_order]
+            # just to be sure everything is consistent
+            assert exonsA[0][1] == exonsB[0][1] and exonsA[1][0] == exonsB[2][0], f'invalid exon skipping {exonsA} vs {exonsB}'
+            # e_order = (1, 0, 2) if g.strand == '+' else (1, 2, 0)
+            exons_sel.append([exonsB[i] for i in (1, 0, 2)])  # skipped, upstream, downstream
         elif st == 'RI' and len(exonsB) == 1:
-            exons_sel = [exonsB[0], exonsA[0], exonsA[1]]  # if g.strand=='+' else [exonsB[0], exonsA[1], exonsA[0]]
+            exons_sel.append([(exonsA[0][0], exonsA[1][1]), exonsA[0], exonsA[1]])  # retained, upstream, downstream
+            # if g.strand == '+' else [exonsB[0], exonsA[1], exonsA[0]])
         elif st == 'MXE' and len(exonsB) == 3:
             # nodeZ=next(idx for idx,n in enumerate(seg_graph) if n.start==exonsB[-1][0])
-            for exonsA in {tuple(seg_graph._get_all_exons(nodeX, nodeY, a_tr)) for a_tr in setA}:
-                assert len(exonsA) == 3 and exonsA[0] == exonsB[0] and exonsA[2] == exonsB[2]  # should always be true
-                lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand, exonsB[1][0], exonsB[1][1], exonsA[1]
-                             [0], exonsA[1][1], exonsA[0][0], exonsA[0][1], exonsA[2][0], exonsA[2][1]])
-        if exons_sel is not None:
-            lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand] + [pos for e in exons_sel for pos in e])
+            # multiple exonA possibilities, so we need to check all of them
+            for exonsA_ME in {tuple(seg_graph._get_all_exons(nodeX, nodeY, a_tr)) for a_tr in setA}:
+                if len(exonsA_ME) != 3:  # complex events are not possible in rMATS
+                    continue
+                assert exonsA_ME[0] == exonsB[0] and exonsA_ME[2] == exonsB[2]  # should always be true
+                # assert exonsA_ME[0][1] == exonsA[0][1] and exonsA_ME[2][0] == exonsA[1][0]  # should always be true
+                # '1st','2nd', 'upstream', 'downstream'
+                exons_sel.append([exonsB[1], exonsA_ME[1], exonsA[0], exonsA[1]])
+        for exons in exons_sel:  # usually there is only one rMATS event per exonB, but for MXE we may get several
+            # lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand] + [pos for e in exons for pos in ((e[1],e[0]) if g.strand == '-' else e)])
+            lines.append([f'"{g.id}"', f'"{g.name}"', chrom, g.strand] + [pos for e in exons for pos in e])  # no need to reverse the order of exon start/end
     return [[offset + count] + l for count, l in enumerate(lines)]
 
 

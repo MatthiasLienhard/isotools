@@ -260,6 +260,7 @@ def die_test(self, groups, min_cov=25, n_isoforms=10, padj_method='fdr_bh', prog
 
     Syntax and parameters follow the original implementation in
     https://github.com/noush-joglekar/scisorseqr/blob/master/inst/RScript/IsoformTest.R
+    
     :param groups: Dict with group names as keys and lists of sample names as values, defining the two groups for the test.
     :param min_cov: Minimal number of reads per group for each gene.
     :param n_isoforms: Number of isoforms to consider in the test for each gene. All additional least expressed isoforms get summarized.'''
@@ -362,7 +363,7 @@ def altsplice_stats(self, groups=None, weight_by_coverage=True, min_coverage=2, 
 
     :param groups: A dict {group_name:[sample_name_list]} specifying sample groups. If omitted, the samples are analyzed individually.
     :param weight_by_coverage: If True, each transcript is weighted by the coverage.
-    :param min_coverage: Threshold to ignore poorly covered transcripts.
+    :param min_coverage: Threshold to ignore poorly covered transcripts. This parameter gets applied for each sample group seperately.
     :param tr_filter: Filter dict, that is passed to self.iter_transcripts().
     :return: Table with numbers of novel alternative splicing events, and suggested parameters for isotools.plots.plot_bar().'''
     weights = dict()

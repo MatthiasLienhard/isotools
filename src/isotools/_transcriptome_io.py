@@ -134,7 +134,7 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
         transcript_id_col = 'transcript_id'
     elif isinstance(transcript_id_col, list):
         assert all(c in cov_tab for c in transcript_id_col), 'missing specified transcript_id_col'
-        cov_tab['transcript_id'] = ['_'.join(str(v) for v in row.values()) for _, row in cov_tab[transcript_id_col].iterrows()]
+        cov_tab['transcript_id'] = ['_'.join(str(v) for v in row) for _, row in cov_tab[transcript_id_col].iterrows()]
         transcript_id_col = 'transcript_id'
     else:
         assert transcript_id_col in cov_tab, 'missing specified transcript_id_col'
@@ -146,7 +146,7 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
     # assert cov_tab.index.is_unique, 'ambigous transcript ids in %s' % coverage_csv_file
     # check sample properties
     if sample_properties is None:
-        sample_properties = {sa: {} for sa in samples}
+        sample_properties = {sa: {'group': sa} for sa in samples}
     elif isinstance(sample_properties, pd.DataFrame):
         if 'name' in sample_properties:
             sample_properties = sample_properties.set_index('name')
@@ -154,6 +154,9 @@ def add_sample_from_csv(self, coverage_csv_file, transcripts_file, transcript_id
                              for sa, row in sample_properties.iterrows()}
     assert all(sa in sample_properties for sa in samples), 'missing sample_properties for samples %s' % ', '.join(
         (sa for sa in samples if sa not in sample_properties))
+    for sa in sample_properties:
+        sample_properties[sa].setdefault('group', sa)
+
     logger.info('adding samples "%s" from csv', '", "'.join(samples))
     # consider chromosomes not in the referernce?
     if add_chromosomes:

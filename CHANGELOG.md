@@ -12,7 +12,7 @@
 * changed export to rMATS: events report complete flanking exons of top covered isoform
 * fixed bug with transcript_id_col parameter in add_sample_from_csv
 * fixed handling of interpro protein domains
-* improved documentation: syntax highlighing, code style, additional explanations on filtering
+* improved documentation: syntax highlighting, code style, additional explanations on filtering
 
 ## [0.3.2]
 * restructured tutorials

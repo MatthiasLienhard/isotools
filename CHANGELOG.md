@@ -5,9 +5,11 @@
 * planned new feature: during import of long reads, (optionally) correct for short exon alignment issues. 
 * separate new read import and classification of isoforms.
 
+## [0.3.4]
+
+
+
 ## [0.3.3]
-<<<<<<< HEAD
-=======
 * fixed bug in filter_ref_transcripts with no query
 * export gtf with long read transcripts as well uncovered as reference transcripts
 * fix warning in plot_diff_results
@@ -15,7 +17,6 @@
 * fixed bug with transcript_id_col parameter in add_sample_from_csv
 * fixed handling of interpro protein domains
 * improved documentation: syntax highlighting, code style, additional explanations on filtering
->>>>>>> master
 
 ## [0.3.2]
 * restructured tutorials

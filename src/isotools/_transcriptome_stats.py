@@ -260,7 +260,7 @@ def die_test(self, groups, min_cov=25, n_isoforms=10, padj_method='fdr_bh', prog
 
     Syntax and parameters follow the original implementation in
     https://github.com/noush-joglekar/scisorseqr/blob/master/inst/RScript/IsoformTest.R
-    
+
     :param groups: Dict with group names as keys and lists of sample names as values, defining the two groups for the test.
     :param min_cov: Minimal number of reads per group for each gene.
     :param n_isoforms: Number of isoforms to consider in the test for each gene. All additional least expressed isoforms get summarized.'''

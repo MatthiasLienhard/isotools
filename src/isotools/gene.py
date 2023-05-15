@@ -330,7 +330,11 @@ class Gene(Interval):
             cum_exon_len = np.cumsum([end-start for start, end in tr['exons']])  # cummulative exon length
             cum_intron_len = np.cumsum([0]+[end-start for (_, start), (end, _) in pairwise(tr['exons'])])  # cummulative intron length
             orf_list.append((tr_seq, []))
-            for start, stop, frame, seq_start, seq_end in find_orfs(tr_seq, start_codons, stop_codons, minlen=minlen):
+            uORFs = 0
+            for start, stop, frame, seq_start, seq_end in sorted(find_orfs(tr_seq, start_codons, stop_codons)):
+                if stop-start < minlen:
+                    uORFs += 1
+                    continue
                 if self.strand == '-':
                     start, stop = cum_exon_len[-1]-stop, cum_exon_len[-1]-start
                 start_exon = next(i for i in range(len(cum_exon_len)) if cum_exon_len[i] >= start)
@@ -343,7 +347,8 @@ class Gene(Interval):
                 if self.strand == '-' and start_exon > 0:
                     dist_pas = start-cum_exon_len[0]
                 orf_list[-1][1].append((*genome_pos, {'start': start, 'length': stop-start,
-                                       'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55}))
+                                       'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55, 'uORFs': uORFs}))
+                uORFs += 1
         return orf_list
 
     def add_fragments(self):

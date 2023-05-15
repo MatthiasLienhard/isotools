@@ -160,7 +160,7 @@ def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
             if start < stop:  # inframe start within the previous ORF
                 continue
             try:
-                stop, stop_codon = next(s for s in sorted(stops[frame]) if s[0] > start[0])
+                stop, stop_codon = next(s for s in sorted(stops[frame]) if s[0] > start)
             except StopIteration:  # no stop codon - still report as it might be an uAUG
                 stop, stop_codon = start, None
             orf.append((start, stop, frame, start_codon, stop_codon))

@@ -300,7 +300,7 @@ class Gene(Interval):
         trL = self.ref_transcripts if reference else self.transcripts
         for (_, orfs), tr in zip(self.get_all_orf(genome_fh, reference, minlen, start_codons, stop_codons), trL):
             if orfs:
-                main_ORF = max(orfs, key=lambda x: x[2]['length'])
+                main_ORF = max(orfs, key=lambda x: x[2]['CDS'])
                 tr["ORF"] = main_ORF
                 if self.strand == '+':
                     tr["ORF"][2]['uAUG'] = len([orf for orf in orfs if orf[0] < main_ORF[0]])
@@ -336,17 +336,19 @@ class Gene(Interval):
                     uORFs += 1
                     continue
                 if self.strand == '-':
-                    start, stop = cum_exon_len[-1]-stop, cum_exon_len[-1]-start
-                start_exon = next(i for i in range(len(cum_exon_len)) if cum_exon_len[i] >= start)
-                stop_exon = next(i for i in range(start_exon, len(cum_exon_len)) if cum_exon_len[i] >= stop)
-                genome_pos = (tr_start+start+cum_intron_len[start_exon],
-                              tr_start+stop+cum_intron_len[stop_exon])
+                    fwd_start, fwd_stop = cum_exon_len[-1]-stop, cum_exon_len[-1]-start
+                else:
+                    fwd_start, fwd_stop= start, stop # start/stop position wrt genomic fwd strand
+                start_exon = next(i for i in range(len(cum_exon_len)) if cum_exon_len[i] >= fwd_start)
+                stop_exon = next(i for i in range(start_exon, len(cum_exon_len)) if cum_exon_len[i] >= fwd_stop)
+                genome_pos = (tr_start+fwd_start+cum_intron_len[start_exon],
+                              tr_start+fwd_stop+cum_intron_len[stop_exon])
                 dist_pas = 0  # distance of termination codon to last upstream splice site
                 if self.strand == '+' and stop_exon < len(cum_exon_len)-1:
-                    dist_pas = cum_exon_len[-2]-stop
+                    dist_pas = cum_exon_len[-2]-fwd_stop
                 if self.strand == '-' and start_exon > 0:
-                    dist_pas = start-cum_exon_len[0]
-                orf_list[-1][1].append((*genome_pos, {'start': start, 'length': stop-start,
+                    dist_pas = fwd_start-cum_exon_len[0]
+                orf_list[-1][1].append((*genome_pos, {"5'UTR": start, 'CDS': stop-start,"3'UTR":stop,
                                        'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55, 'uORFs': uORFs}))
                 uORFs += 1
         return orf_list

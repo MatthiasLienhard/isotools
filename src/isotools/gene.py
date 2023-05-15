@@ -287,11 +287,25 @@ class Gene(Interval):
         return prot_seqs
 
     def add_orfs(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
-        '''find longest ORF for each transcript and add to the transcript properties tr["ORF"]'''
+        '''Find longest ORF for each transcript.
+
+        For each transcript, the longest ORF (sequence starting with start_condon, and ending with in frame stop codon) is determined.
+        The genomic and transcript positions of these codons, and the length of the ORF, as well as  the number of upstream start codons
+        is added to the transcript properties tr["ORF"].
+        :param minlen: the minimum length of a ORF (in bases) to be considered.
+        :param start_codons: List of base triplets that are considered as start codons. By default ['ATG'].
+        :param stop_codons: List of base triplets that are considered as stop codons. By default ['TAA', 'TAG', 'TGA'].
+
+        '''
         trL = self.ref_transcripts if reference else self.transcripts
         for (_, orfs), tr in zip(self.get_all_orf(genome_fh, reference, minlen, start_codons, stop_codons), trL):
             if orfs:
-                tr["ORF"] = max(orfs, key=lambda x: x[2]['length'])
+                main_ORF = max(orfs, key=lambda x: x[2]['length'])
+                tr["ORF"] = main_ORF
+                if self.strand == '+':
+                    tr["ORF"][2]['uAUG'] = len([orf for orf in orfs if orf[0] < main_ORF[0]])
+                else:
+                    tr["ORF"][2]['uAUG'] = len([orf for orf in orfs if orf[1] > main_ORF[1]])
 
     def get_all_orf(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
         ''' Predicts ORF.
@@ -316,7 +330,7 @@ class Gene(Interval):
             cum_exon_len = np.cumsum([end-start for start, end in tr['exons']])  # cummulative exon length
             cum_intron_len = np.cumsum([0]+[end-start for (_, start), (end, _) in pairwise(tr['exons'])])  # cummulative intron length
             orf_list.append((tr_seq, []))
-            for start, stop, frame, seq_start, seq_end in find_orfs(tr_seq, minlen=minlen):
+            for start, stop, frame, seq_start, seq_end in find_orfs(tr_seq, start_codons, stop_codons, minlen=minlen):
                 if self.strand == '-':
                     start, stop = cum_exon_len[-1]-stop, cum_exon_len[-1]-start
                 start_exon = next(i for i in range(len(cum_exon_len)) if cum_exon_len[i] >= start)

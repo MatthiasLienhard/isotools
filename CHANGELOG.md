@@ -6,7 +6,7 @@
 * separate new read import and classification of isoforms.
 
 ## [0.3.4]
-
+* new feature: count number of uORFs in Gene.add_orfs() (called by default when adding QC metrics to transcriptome)
 
 
 ## [0.3.3]

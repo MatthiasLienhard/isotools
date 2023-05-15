@@ -143,7 +143,7 @@ def splice_identical(tr1, tr2):
     return True
 
 
-def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'], minlen=100):
+def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
     ''' Find all open reading frames on the forward strand of the sequence.
     Return a 5-tuple with start and stop position, reading frame (0,1 or 2) and start and stop codon sequence
     '''
@@ -151,20 +151,19 @@ def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'], minl
     starts = [[], [], []]
     stops = [[], [], []]
     for match in re.finditer("|".join(start_codons), seq):
-        starts[match.start() % 3].append((match.start(), match.group()))
+        starts[match.start() % 3].append((match.start(), match.group()))  # position and codon
     for match in re.finditer("|".join(stop_codons), seq):
         stops[match.start() % 3].append((match.end(), match.group()))
     for frame in range(3):
-        stop = (0, None)
-        for start in starts[frame]:
-            if start[0] < stop[0]:
+        stop, stop_codon = (0, None)
+        for start, start_codon in starts[frame]:
+            if start < stop:  # inframe start within the previous ORF
                 continue
             try:
-                stop = next(s for s in sorted(stops[frame]) if s[0] > start[0])
-            except StopIteration:
-                continue
-            if stop[0]-start[0] >= minlen:
-                orf.append((start[0], stop[0], frame, start[1], stop[1]))
+                stop, stop_codon = next(s for s in sorted(stops[frame]) if s[0] > start[0])
+            except StopIteration:  # no stop codon - still report as it might be an uAUG
+                stop, stop_codon = start, None
+            orf.append((start, stop, frame, start_codon, stop_codon))
     return orf
 
 

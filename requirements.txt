@@ -13,3 +13,4 @@ statsmodels
 importlib-metadata
 pyhmmer
 requests
+CPAT

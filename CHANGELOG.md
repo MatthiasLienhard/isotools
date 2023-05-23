@@ -7,6 +7,7 @@
 
 ## [0.3.4]
 * new feature: count number of uORFs in Gene.add_orfs() (called by default when adding QC metrics to transcriptome)
+* new feature: calculate Fickett testscore and hexamer score for longest ORFs, to separate coding and noncoding genes. 
 
 
 ## [0.3.3]

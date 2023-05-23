@@ -7,6 +7,7 @@ from tqdm import tqdm
 import builtins
 import logging
 from scipy.stats import chi2_contingency, fisher_exact
+from cpmodule import fickett, FrameKmer  # this is from the CPAT module
 
 logger = logging.getLogger('isotools')
 
@@ -143,6 +144,40 @@ def splice_identical(tr1, tr2):
     return True
 
 
+def find_longest_orf(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'], coding_hexamers=None, noncoding_hexamers=None):
+    '''Find the longest open reading frames on the forward strand of the sequence.
+    Return a 8-tuple with start and stop position, reading frame (0,1 or 2), start and stop codon sequence,
+    number of upstream start codons, the hexamere score and the Fickett TESTCODE score'''
+    orf = []
+    starts = [[], [], []]
+    stops = [[], [], []]
+    for match in re.finditer("|".join(start_codons), seq):
+        starts[match.start() % 3].append((match.start(), match.group()))  # position and codon
+    for match in re.finditer("|".join(stop_codons), seq):
+        stops[match.start() % 3].append((match.end(), match.group()))
+    for frame in range(3):
+        stop, stop_codon = (0, None)
+        for start, start_codon in starts[frame]:
+            if start < stop:  # inframe start within the previous ORF
+                continue
+            try:
+                stop, stop_codon = next(s for s in sorted(stops[frame]) if s[0] > start)
+            except StopIteration:  # no stop codon - still report as it might be an uAUG
+                stop, stop_codon = start, None
+            orf.append([start, stop, frame, start_codon, stop_codon, 0])
+    uORFs = 0
+    for orf_i in sorted(orf):  # sort by start position
+        orf_i[5] = uORFs
+        uORFs += 1
+    longest_orf = max(orf, key=lambda x: x[1]-x[0] if x[1] else -1)
+    if coding_hexamers is not None and noncoding_hexamers is not None:
+        hexamer = FrameKmer.kmer_ratio(seq, 6, 3, coding_hexamers, noncoding_hexamers)
+    else:
+        hexamer = None
+    fickett_score = fickett.fickett_value(seq)
+    return (*longest_orf, hexamer, fickett_score)
+
+
 def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
     ''' Find all open reading frames on the forward strand of the sequence.
     Return a 5-tuple with start and stop position, reading frame (0,1 or 2) and start and stop codon sequence
@@ -198,7 +233,7 @@ def get_intersects(tr1, tr2):
             if tr2_exon[1] == tr1_exon[1] and i < len(tr2)-1 and j < len(tr1)-1:
                 sjintersect += 1
             if has_overlap(tr1_exon, tr2_exon):
-                # region intersect
+                # the regions intersect
                 i_end = min(tr1_exon[1], tr2_exon[1])
                 i_start = max(tr1_exon[0], tr2_exon[0])
                 intersect += (i_end-i_start)

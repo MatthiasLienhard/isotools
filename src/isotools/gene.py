@@ -5,7 +5,6 @@ from scipy.stats import chi2_contingency
 from scipy.signal import find_peaks
 from Bio.Seq import reverse_complement, translate
 from Bio.Data.CodonTable import TranslationError
-
 from pysam import FastaFile
 import numpy as np
 import copy
@@ -13,7 +12,7 @@ import itertools
 from .splice_graph import SegmentGraph
 from .short_read import Coverage
 from ._transcriptome_filter import SPLICE_CATEGORY
-from ._utils import pairwise, _filter_event, find_orfs, smooth, get_quantiles, _filter_function, \
+from ._utils import pairwise, _filter_event, find_longest_orf, smooth, get_quantiles, _filter_function, \
     pairwise_event_test, prepare_contingency_table
 
 import logging
@@ -59,8 +58,8 @@ class Gene(Interval):
     def correct_fuzzy_junctions(self, trid, size, modify=True):
         '''Corrects for splicing shifts.
 
-         This function looks for "shifted junctions", e.g. same difference compared to reference annotaiton at both donor and acceptor)
-         presumably caused by ambigous alignments. In these cases the positions are adapted to the reference position (if modify is set).
+         This function looks for "shifted junctions", e.g. same difference compared to reference annotation at both donor and acceptor)
+         presumably caused by ambiguous alignments. In these cases the positions are adapted to the reference position (if modify is set).
 
          :param trid: The index of the transcript to be checked.
          :param size: The maximum shift to be corrected.
@@ -165,10 +164,10 @@ class Gene(Interval):
 
         For all transcripts of the gene, scan for noncanonical (i.e. not GT-AG) splice sites.
         If noncanonical splice sites are present, the corresponding intron index (in genomic orientation) and the sequence
-        i.e. the dinucleotides of donor and aceptor as XX-YY string are stored in the "noncannoncical_splicing" field of the transcript dicts.
-        True noncanonical splicing is rare, thus it might indicate technical artifacts (template switching, missalignment, ...)
+        i.e. the di-nucleotides of donor and acceptor as XX-YY string are stored in the "noncannoncical_splicing" field of the transcript dicts.
+        True noncanonical splicing is rare, thus it might indicate technical artifacts (template switching, misalignment, ...)
 
-        :param genome_fh: A file handle of the genome fasta file.'''
+        :param genome_fh: A file handle of the genome fastA file.'''
         ss_seq = {}
         for tr in self.transcripts:
             pos = [(tr['exons'][i][1], tr['exons'][i + 1][0] - 2) for i in range(len(tr['exons']) - 1)]
@@ -188,11 +187,11 @@ class Gene(Interval):
     def add_direct_repeat_len(self, genome_fh, delta=15, max_mm=2, wobble=2):
         '''Computes direct repeat length.
 
-        This function counts the number of consequtive equal bases at donor and acceptor sites of the splice junctions.
+        This function counts the number of consecutive equal bases at donor and acceptor sites of the splice junctions.
         This information is stored in the "direct_repeat_len" filed of the transcript dictionaries.
         Direct repeats longer than expected by chance indicate template switching.
 
-        :param genome_fh: The file handle to the genome fasta.
+        :param genome_fh: The file handle to the genome fastA.
         :param delta: The maximum length of direct repeats that can be found.
         :param max_mm: The maximum length of direct repeats that can be found.
         :param wobble: The maximum length of direct repeats that can be found.'''
@@ -225,7 +224,7 @@ class Gene(Interval):
         High values of genomic A content indicate internal priming and hence genomic origin of the LRTS read.
         This function populates the 'downstream_A_content' field of the transcript dictionaries.
 
-        :param geneome_fh: A file handle for the indexed genome fasta file.
+        :param geneome_fh: A file handle for the indexed genome fastA file.
         :param length: The length of the downstream region to be considered.
         '''
         a_content = {}
@@ -245,9 +244,9 @@ class Gene(Interval):
     def get_sequence(self, genome_fh, trids=None, reference=False, protein=False):
         '''Returns the nucleotide sequence of the specified transcripts.
 
-        :param genome_fh: The path to the genome fasta file, or FastaFile handle.
+        :param genome_fh: The path to the genome fastA file, or FastaFile handle.
         :param trids: List of transcript ids for which the sequence are requested.
-        :param reference: Specifiy whether the sequence is fetched for reference transcripts (True)
+        :param reference: Specify whether the sequence is fetched for reference transcripts (True)
             or long read transcripts (False, default).
         :param protein: Return protein sequences instead of transcript sequences.
         :returns: A dictionary of transcript ids and their sequences.
@@ -298,60 +297,28 @@ class Gene(Interval):
 
         '''
         trL = self.ref_transcripts if reference else self.transcripts
-        for (_, orfs), tr in zip(self.get_all_orf(genome_fh, reference, minlen, start_codons, stop_codons), trL):
-            if orfs:
-                main_ORF = max(orfs, key=lambda x: x[2]['CDS'])
-                tr["ORF"] = main_ORF
-                if self.strand == '+':
-                    tr["ORF"][2]['uAUG'] = len([orf for orf in orfs if orf[0] < main_ORF[0]])
-                else:
-                    tr["ORF"][2]['uAUG'] = len([orf for orf in orfs if orf[1] > main_ORF[1]])
-
-    def get_all_orf(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
-        ''' Predicts ORF.
-
-        :param genome_fh: The path to the genome fasta file, or FastaFile handle.
-        :param reference: Specifiy whether the sequence is fetched for reference transcripts (True)
-            or long read transcripts (False, default).
-        :param minlen: The minimum length of the ORF.
-        :param start_codons: List of start codons.
-        :param stop_codons: List of stop codons.
-        :returns: A list of (transcript_id, list_of_orfs) tuples. Each orf is a tuple of (genomic_start, genomic_end, orf_properties).
-        The orf_properties is a dictionary with keys 'start', 'length', 'start_codon', 'stop_codon' and 'NMD'.
-        NMD is True if the ORF is predicted to be degraded by nonsense-mediated decay,
-        as defined by the 55 bases rule, e.g. there is at least one splice site upstream the stop codon,
-        and the distance of the stop codon to the last upstrame splice site is less than 55 bases.
-        '''
-        orf_list = []
-        trL = self.ref_transcripts if reference else self.transcripts
         for trid, tr_seq in self.get_sequence(genome_fh, reference=reference).items():
             tr = trL[trid]
             tr_start = tr['exons'][0][0]
-            cum_exon_len = np.cumsum([end-start for start, end in tr['exons']])  # cummulative exon length
-            cum_intron_len = np.cumsum([0]+[end-start for (_, start), (end, _) in pairwise(tr['exons'])])  # cummulative intron length
-            orf_list.append((tr_seq, []))
-            uORFs = 0
-            for start, stop, frame, seq_start, seq_end in sorted(find_orfs(tr_seq, start_codons, stop_codons)):
-                if stop-start < minlen:
-                    uORFs += 1
-                    continue
-                if self.strand == '-':
-                    fwd_start, fwd_stop = cum_exon_len[-1]-stop, cum_exon_len[-1]-start
-                else:
-                    fwd_start, fwd_stop= start, stop # start/stop position wrt genomic fwd strand
-                start_exon = next(i for i in range(len(cum_exon_len)) if cum_exon_len[i] >= fwd_start)
-                stop_exon = next(i for i in range(start_exon, len(cum_exon_len)) if cum_exon_len[i] >= fwd_stop)
-                genome_pos = (tr_start+fwd_start+cum_intron_len[start_exon],
-                              tr_start+fwd_stop+cum_intron_len[stop_exon])
-                dist_pas = 0  # distance of termination codon to last upstream splice site
-                if self.strand == '+' and stop_exon < len(cum_exon_len)-1:
-                    dist_pas = cum_exon_len[-2]-fwd_stop
-                if self.strand == '-' and start_exon > 0:
-                    dist_pas = fwd_start-cum_exon_len[0]
-                orf_list[-1][1].append((*genome_pos, {"5'UTR": start, 'CDS': stop-start,"3'UTR":stop,
-                                       'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55, 'uORFs': uORFs}))
-                uORFs += 1
-        return orf_list
+            cum_exon_len = np.cumsum([end-start for start, end in tr['exons']])  # cumulative exon length
+            cum_intron_len = np.cumsum([0]+[end-start for (_, start), (end, _) in pairwise(tr['exons'])])  # cumulative intron length
+            start, stop, frame, seq_start, seq_end, uORFs, hexamer_score, fickett_score = find_longest_orf(tr_seq, start_codons, stop_codons)
+            if self.strand == '-':
+                fwd_start, fwd_stop = cum_exon_len[-1]-stop, cum_exon_len[-1]-start
+            else:
+                fwd_start, fwd_stop = start, stop  # start/stop position wrt genomic fwd strand
+            start_exon = next(i for i in range(len(cum_exon_len)) if cum_exon_len[i] >= fwd_start)
+            stop_exon = next(i for i in range(start_exon, len(cum_exon_len)) if cum_exon_len[i] >= fwd_stop)
+            genome_pos = (tr_start+fwd_start+cum_intron_len[start_exon],
+                          tr_start+fwd_stop+cum_intron_len[stop_exon])
+            dist_pas = 0  # distance of termination codon to last upstream splice site
+            if self.strand == '+' and stop_exon < len(cum_exon_len)-1:
+                dist_pas = cum_exon_len[-2]-fwd_stop
+            if self.strand == '-' and start_exon > 0:
+                dist_pas = fwd_start-cum_exon_len[0]
+            tr['ORF'] = (*genome_pos, {"5'UTR": start, 'CDS': stop-start, "3'UTR": stop,
+                                       'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55, 'uORFs': uORFs,
+                                       'hexamer': hexamer_score, 'fickett': fickett_score})
 
     def add_fragments(self):
         '''Checks for transcripts that are fully contained in other transcripts.

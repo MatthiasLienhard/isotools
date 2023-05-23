@@ -6,6 +6,7 @@
 * separate new read import and classification of isoforms.
 
 ## [0.3.4]
+* API change: separated ORF prediction from QC metrics calculation. 
 * new feature: count number of uORFs in Gene.add_orfs() (called by default when adding QC metrics to transcriptome)
 * new feature: calculate Fickett testscore and hexamer score for longest ORFs, to separate coding and noncoding genes. 
 

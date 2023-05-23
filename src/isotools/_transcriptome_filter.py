@@ -38,20 +38,58 @@ ANNOTATION_VOCABULARY = ['antisense', 'intergenic', 'genic genomic', 'novel exon
 
 # filtering functions for the transcriptome class
 
+def add_orf_prediction(self, genome_fn, progress_bar=True, fickett_score=True, hexamer_file=None):
+    ''' Performs ORF prediction on the transcripts.
 
-def add_qc_metrics(self, genome_fn, progress_bar=True, downstream_a_len=30, direct_repeat_wd=15, direct_repeat_wobble=2, direct_repeat_mm=2, unify_ends=True):
+    For each transcript the longest open reading frame is determined, and metrics to assess the coding potential
+    (UTR and CDS lenghts, Fickett score, hexamer score and NMD prediction). The hexamer score depends on hexamer frequency table,
+    see CPAT python module for prebuild tables and instructions.
+
+    :param geneome_fn: Path to the genome in fastA format.
+    :param fickett_score: If set to True, the Fickett TESTCODE score is computed for each transcript.
+    :param hexamer_file: Filename of the hexamer table, for the ORF hexamer scores. If set not None, the hexamer score is not computed.'''
+
+    if hexamer_file is None:
+        coding = None
+        noncoding = None
+    else:
+        coding = {}
+        noncoding = {}
+        for line in open(hexamer_file):
+            line = line.strip()
+            fields = line.split()
+            if fields[0] == 'hexamer':
+                continue
+            coding[fields[0]] = float(fields[1])
+            noncoding[fields[0]] = float(fields[2])
+
+    with FastaFile(genome_fn) as genome_fh:
+        missing_chr = set(self.chromosomes) - set(genome_fh.references)
+        if missing_chr:
+            missing_genes = sum(len(self.data[mc]) for mc in missing_chr)
+            logger.warning('%s contigs are not contained in genome, affecting %s genes. \
+                ORFs cannot be computed for these contigs: %s', str(len(missing_chr)), str(missing_genes), str(missing_chr))
+
+        for g in self.iter_genes(progress_bar=progress_bar):
+            if g.chrom in genome_fh.references:
+                g.add_orfs(genome_fh, reference=False, minlen=30, get_fickett=fickett_score, coding_hexamers=coding, noncoding_hexamers=noncoding)
+                g.add_orfs(genome_fh, reference=True, minlen=30, get_fickett=fickett_score, coding_hexamers=coding, noncoding_hexamers=noncoding)
+
+
+def add_qc_metrics(self, genome_fn, progress_bar=True, downstream_a_len=30, direct_repeat_wd=15, direct_repeat_wobble=2, direct_repeat_mm=2,
+                   unify_ends=True):
     ''' Retrieves QC metrics for the transcripts.
 
     Calling this function populates transcript["biases"] information, which can be used do create filters.
-    In particular, the direct repeat length, the downstream adenosine content and information about noncanonical splice sites are fetched.
-    Additionaly genes are scanned for transcripts that are fully contained in other transcripts.
+    In particular, the direct repeat length, the downstream adenosine content and information about non-canonical splice sites are fetched.
+    In addition, genes are scanned for transcripts that are fully contained in other transcripts.
 
     :param geneome_fn: Path to the genome in fastA format.
     :param downstream_a_len: The number of bases downstream the transcript where the adenosine fraction is determined.
     :param direct_repeat_wd: The number of bases around the splice sites scanned for direct repeats.
     :param direct_repeat_wobble: Number of bases the splice site sequences are shifted.
     :param unify_ends: Unify TSS/PAS across transcripts of a gene.
-    :param direct_repeat_mm: Maximum number of missmatches in a direct repeat. '''
+    :param direct_repeat_mm: Maximum number of missmatches in a direct repeat.'''
 
     with FastaFile(genome_fn) as genome_fh:
         missing_chr = set(self.chromosomes) - set(genome_fh.references)
@@ -70,7 +108,6 @@ def add_qc_metrics(self, genome_fn, progress_bar=True, downstream_a_len=30, dire
             _ = g.segment_graph
             g.add_fragments()
             if g.chrom in genome_fh.references:
-                g.add_orfs(genome_fh, reference=False, minlen=30)
                 g.add_direct_repeat_len(genome_fh, delta=direct_repeat_wd, max_mm=direct_repeat_mm, wobble=direct_repeat_wobble)
                 g.add_noncanonical_splicing(genome_fh)
                 g.add_threeprime_a_content(genome_fh, length=downstream_a_len)

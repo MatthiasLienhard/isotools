@@ -23,6 +23,7 @@ def test_import_bam():
         isoseq.add_sample_from_bam(f'tests/data/example_1_{sa}.bam', sample_name=sa, group=sa, platform='SequelII')
     # assert isoseq.n_transcripts == 185, 'we expect 185 transcripts'
     isoseq.add_qc_metrics('tests/data/example.fa')
+    isoseq.add_orf_prediction('tests/data/example.fa')
     isoseq.save('tests/data/example_1_isotools.pkl')
 
 

@@ -7,7 +7,6 @@ from tqdm import tqdm
 import builtins
 import logging
 from scipy.stats import chi2_contingency, fisher_exact
-from cpmodule import fickett, FrameKmer  # this is from the CPAT module
 
 logger = logging.getLogger('isotools')
 
@@ -165,17 +164,13 @@ def find_longest_orf(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'
             except StopIteration:  # no stop codon - still report as it might be an uAUG
                 stop, stop_codon = start, None
             orf.append([start, stop, frame, start_codon, stop_codon, 0])
+    if not orf:
+        return
     uORFs = 0
     for orf_i in sorted(orf):  # sort by start position
         orf_i[5] = uORFs
         uORFs += 1
-    longest_orf = max(orf, key=lambda x: x[1]-x[0] if x[1] else -1)
-    if coding_hexamers is not None and noncoding_hexamers is not None:
-        hexamer = FrameKmer.kmer_ratio(seq, 6, 3, coding_hexamers, noncoding_hexamers)
-    else:
-        hexamer = None
-    fickett_score = fickett.fickett_value(seq)
-    return (*longest_orf, hexamer, fickett_score)
+    return max(orf, key=lambda x: x[1]-x[0] if x[1] else -1)
 
 
 def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):

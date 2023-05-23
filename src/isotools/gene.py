@@ -9,6 +9,7 @@ from pysam import FastaFile
 import numpy as np
 import copy
 import itertools
+from cpmodule import fickett, FrameKmer  # this is from the CPAT module
 from .splice_graph import SegmentGraph
 from .short_read import Coverage
 from ._transcriptome_filter import SPLICE_CATEGORY
@@ -285,24 +286,35 @@ class Gene(Interval):
                 logger.warning(f'CDS sequence of {self.id} {"reference" if reference else ""} transcript {i} cannot be translated.')
         return prot_seqs
 
-    def add_orfs(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
+    def add_orfs(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'],
+                 get_fickett=True, coding_hexamers=None, noncoding_hexamers=None):
         '''Find longest ORF for each transcript.
 
         For each transcript, the longest ORF (sequence starting with start_condon, and ending with in frame stop codon) is determined.
         The genomic and transcript positions of these codons, and the length of the ORF, as well as  the number of upstream start codons
-        is added to the transcript properties tr["ORF"].
+        is added to the transcript properties tr["ORF"]. Additionally, the Fickett score, and the hexamer score are computed. For the
+        latter, hexamer frequencies in coding and noncoding transcripts are needed. See CPAT python module for prebuilt tables and
+        instructions.
         :param minlen: the minimum length of a ORF (in bases) to be considered.
         :param start_codons: List of base triplets that are considered as start codons. By default ['ATG'].
         :param stop_codons: List of base triplets that are considered as stop codons. By default ['TAA', 'TAG', 'TGA'].
+        :param coding_hexamers: The hexamer frequencies for coding sequences.
+        :param noncoding_hexamers: The hexamer frequencies for coding sequences.'''
 
-        '''
         trL = self.ref_transcripts if reference else self.transcripts
         for trid, tr_seq in self.get_sequence(genome_fh, reference=reference).items():
+            try:
+                start, stop, frame, seq_start, seq_end, uORFs = find_longest_orf(
+                    tr_seq, start_codons, stop_codons, coding_hexamers, noncoding_hexamers)
+            except TypeError:  # No ORF
+                continue
+            if stop is None or stop - start < minlen:
+                continue
+
             tr = trL[trid]
             tr_start = tr['exons'][0][0]
             cum_exon_len = np.cumsum([end-start for start, end in tr['exons']])  # cumulative exon length
             cum_intron_len = np.cumsum([0]+[end-start for (_, start), (end, _) in pairwise(tr['exons'])])  # cumulative intron length
-            start, stop, frame, seq_start, seq_end, uORFs, hexamer_score, fickett_score = find_longest_orf(tr_seq, start_codons, stop_codons)
             if self.strand == '-':
                 fwd_start, fwd_stop = cum_exon_len[-1]-stop, cum_exon_len[-1]-start
             else:
@@ -316,9 +328,14 @@ class Gene(Interval):
                 dist_pas = cum_exon_len[-2]-fwd_stop
             if self.strand == '-' and start_exon > 0:
                 dist_pas = fwd_start-cum_exon_len[0]
-            tr['ORF'] = (*genome_pos, {"5'UTR": start, 'CDS': stop-start, "3'UTR": stop,
-                                       'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55, 'uORFs': uORFs,
-                                       'hexamer': hexamer_score, 'fickett': fickett_score})
+            orf_dict = {"5'UTR": start, 'CDS': stop-start, "3'UTR": cum_exon_len[-1]-stop,
+                        'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55, 'uORFs': uORFs}
+
+            if coding_hexamers is not None and noncoding_hexamers is not None:
+                orf_dict['hexamer'] = FrameKmer.kmer_ratio(tr_seq[start:stop], 6, 3, coding_hexamers, noncoding_hexamers)
+            if get_fickett:
+                orf_dict['fickett'] = fickett.fickett_value(tr_seq[start:stop])
+            tr['ORF'] = (*genome_pos, orf_dict)
 
     def add_fragments(self):
         '''Checks for transcripts that are fully contained in other transcripts.

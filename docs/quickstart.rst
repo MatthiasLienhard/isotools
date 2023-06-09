@@ -47,5 +47,4 @@ Citation and feedback
 ---------------------
 * If you run into any issues, please use the `github issues <https://github.com/MatthiasLienhard/isotools/issues>`_ report feature. 
 * For feedback, please write me an email to `lienhard@molgen.mpg.de <mailto:lienhard@molgen.mpg.de>`_.
-* If you use isotools in your publication, please cite the following paper:
-  IsoTools: a python toolbox for long-read transcriptome sequencing (in preparation)
+* If you use isotools in your publication, please cite the following [paper](https://doi.org/10.1093/bioinformatics/btad364): Lienhard et al, Bioinformatics, 2023: IsoTools: a flexible workflow for long-read transcriptome sequencing analysis

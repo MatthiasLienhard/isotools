@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import numpy as np
 from math import log10
+from itertools import chain
 from ._utils import has_overlap, pairwise
 import logging
 logger = logging.getLogger('isotools')
@@ -515,11 +516,42 @@ def find_blocks(pos, segments, remove_zero_gaps=False):
 
 
 def get_rects(blocks, h=1, w=.1, connect=False,  **kwargs):
-    rects = [patches.Rectangle((b[0], h), b[1]-b[0], w, **kwargs) for b in blocks]
+    rects = [patches.Rectangle((b[0], h-w/2), b[1]-b[0], w, **kwargs) for b in blocks]
+    #  Rectangle(xy=lower left, width, height)
+    if connect:  # draw a line between blocks
+        rects.extend([patches.Polygon(np.array([[b1[1], h], [b2[0], h]]), closed=True, **kwargs) for b1, b2 in pairwise(blocks) if b1[1] < b2[0]])
+    return (rects)
 
-    if connect:
-        c = h+w/2
-        rects.extend([patches.Polygon(np.array([[b1[1], c], [b2[0], c]]), closed=True, **kwargs) for b1, b2 in pairwise(blocks)])
+
+def get_patches(start_blocks, orf_blocks, end_blocks, h, w1=.1, w2=.5, connect=True, **kwargs):
+    rects = [patches.Rectangle((b[0], h-w1/2), b[1]-b[0], w1, **kwargs) for b in start_blocks[:-1]]
+    rects.extend([patches.Rectangle((b[0], h-w1/2), b[1]-b[0], w1, **kwargs) for b in end_blocks[1:]])
+    if not orf_blocks:
+        if start_blocks:
+            rects.append(patches.Rectangle((start_blocks[-1][0], h-w1/2), start_blocks[-1][1]-start_blocks[-1][0], w1, **kwargs))
+        if end_blocks:
+            rects.append(patches.Rectangle((end_blocks[0][0], h-w1/2), end_blocks[0][1]-end_blocks[0][0], w1, **kwargs))
+        return rects
+    rects.extend(patches.Rectangle((b[0], h-w2/2), b[1]-b[0], w2, **kwargs) for b in orf_blocks[1:-1])
+    b1, b4 = start_blocks[-1], end_blocks[0]
+    y1, y2 = h+w1/2, h-w1/2
+    p_start = [[b1[1], y2], [b1[0], y2], [b1[0], y1], [b1[1], y1]]
+    p_end = [[b4[0], y1], [b4[1], y1], [b4[1], y2], [b4[0], y2]]
+    y1, y2 = h+w2/2, h-w2/2
+    b2 = orf_blocks[0]
+    if len(orf_blocks) == 1:
+        xy = np.array(list(chain(p_start, [[b2[0], y1], [b2[1], y1]], p_end, [[b2[1], y2], [b2[0], y2]])))
+        rects.append(patches.Polygon(xy, closed=True, **kwargs))
+    else:
+        xy = np.array(list(chain(p_start, [[b2[0], y1], [b2[1], y1], [b2[1], y2], [b2[0], y2]])))
+        rects.append(patches.Polygon(xy, closed=True, **kwargs))
+        b3 = orf_blocks[-1]
+        xy = np.array(list(chain([[b3[1], y2], [b3[0], y2], [b3[0], y1], [b3[1], y1]], p_end)))
+        rects.append(patches.Polygon(xy, closed=True, **kwargs))
+
+    if connect:  # draw a line between blocks
+        all_blocks = chain(start_blocks, orf_blocks, end_blocks)
+        rects.extend([patches.Polygon(np.array([[b1[1], h], [b2[0], h]]), closed=False, **kwargs) for b1, b2 in pairwise(all_blocks) if b1[1] < b2[0]])
     return (rects)
 
 
@@ -658,27 +690,27 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, lab
                 assert len(pos) == 2, 'provide intervals as a sequence of length 2'
                 # draw box
                 box_x = sorted(pos_map[p] for p in pos)
-                patch = patches.Rectangle((box_x[0], -n_tr+.7), box_x[1]-box_x[0], n_tr+.6, edgecolor=highlight_col, facecolor=highlight_col)
+                patch = patches.Rectangle((box_x[0], -n_tr), box_x[1]-box_x[0], n_tr+1, edgecolor=highlight_col, facecolor=highlight_col)
                 ax.add_patch(patch)
             else:  # draw line
-                ax.vlines(pos_map[pos], -n_tr+.7, 0.8, colors=[highlight_col])
+                ax.vlines(pos_map[pos], -n_tr, 1, colors=[highlight_col])
 
     for line, (trid, tr) in enumerate(transcripts):
         seg = segments[line]
         orf_pos = tr.get('CDS', tr.get('ORF'))[:2]
         orf = sorted(self.find_transcript_positions(trid, orf_pos, reference=line < len(ref_trids)))
         if include_utr:
-            for rect in get_rects(find_blocks((0, orf[0]), seg),
-                                  h=-line+.2, w=.1, connect=True, linewidth=1, edgecolor="black", facecolor="white"):
-                ax.add_patch(rect)
-            for rect in get_rects(find_blocks((orf[1], sum(e[1]-e[0] for e in tr['exons'])), seg),
-                                  h=-line+.2, w=.1, connect=True, linewidth=1, edgecolor="black", facecolor="white"):
-                ax.add_patch(rect)
+            start_blocks = find_blocks((0, orf[0]), seg)
+            orf_blocks = find_blocks(orf[:2], seg)
+            end_blocks = find_blocks((orf[1], sum(e[1]-e[0] for e in tr['exons'])), seg)
+            for block_patch in get_patches(start_blocks, orf_blocks, end_blocks,
+                                           h=-line, connect=True,
+                                           linewidth=1, edgecolor="black", facecolor="white"):
+                ax.add_patch(block_patch)
         else:
-            orf = (0, orf[1]-orf[0])
-        orf_block = find_blocks((orf), seg)
-        for rect in get_rects(orf_block, h=-line, w=.5, connect=True, linewidth=1, edgecolor="black", facecolor="white"):
-            ax.add_patch(rect)
+            orf_block = find_blocks((0, orf[1]-orf[0]), seg)
+            for rect in get_patches([], orf_block, [], h=-line, linewidth=1, edgecolor="black", facecolor="white"):
+                ax.add_patch(rect)
 
         domains = [dom for dom in tr.get('domain', {}).get(source, []) if categories is None or dom[2] in categories]
         # sort by length
@@ -699,7 +731,7 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, lab
 
         w = .4/max(len(dom_line), 1)
         for dom_l in dom_line:
-            h = -line+w*(len(dom_line)//2 + (dom_l+1)//2 * (-1 if dom_l % 2 else 1))+.05
+            h = -line+w*(len(dom_line)//2 + (dom_l+1)//2 * (-1 if dom_l % 2 else 1))
             for idx, bl in dom_line[dom_l]:
                 dom = domains[idx]
                 try:
@@ -709,15 +741,15 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, lab
                     logger.error(f'cannot add patch for {dom_blocks[idx]}')
                     raise
                 if label is not None:
-                    ax.text((bl[0]+bl[1])/2, h+w/2, dom[label_idx], ha='center', va='center', color='black', clip_on=True)
+                    ax.text((bl[0]+bl[1])/2, h, dom[label_idx], ha='center', va='center', color='black', clip_on=True)
 
     if skipped:
         logger.warning("skipped %s domains, consider increasing max_overlap parameter", skipped)
-    ax.set_ylim(-len(transcripts)+.5, 1)
+    ax.set_ylim(-len(transcripts)+.25, .75)
     ax.set_xlim(-10, max_len+10)
     if x_ticks == 'genome':
         xticks = [0]+list(np.cumsum([abs(seg[1]-seg[0]) for seg in genome_map]))
         xticklabels = [str(genome_map[0][0])]+[f'{seg[0][1]}|{seg[1][0]}' for seg in pairwise(genome_map)] + [str(genome_map[-1][1])]
         ax.set_xticks(ticks=xticks, labels=xticklabels)
-    ax.set_yticks(ticks=[-i+.25 for i in range(len(transcripts))], labels=[tr.get('transcript_name', f'{self.name} {trid}') for trid, tr in transcripts])
+    ax.set_yticks(ticks=[-i for i in range(len(transcripts))], labels=[tr.get('transcript_name', f'{self.name} {trid}') for trid, tr in transcripts])
     return ax, genome_map

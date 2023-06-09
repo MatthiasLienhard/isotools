@@ -6,9 +6,10 @@
 * separate new read import and classification of isoforms.
 
 ## [0.3.4]
+* improved domain plots: ORF start and end do not appear like exon exon boundaries. 
 * API change: separated ORF prediction from QC metrics calculation. 
-* new feature: count number of uORFs in Gene.add_orfs() (called by default when adding QC metrics to transcriptome)
-* new feature: calculate Fickett testscore and hexamer score for longest ORFs, to separate coding and noncoding genes. 
+* new feature: count number of upstream start codons in Gene.add_orfs() (called by default when adding QC metrics to transcriptome)
+* new feature: calculate Fickett testcode and hexamer score for longest ORFs, to separate coding and noncoding genes. 
 
 
 ## [0.3.3]

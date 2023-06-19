@@ -514,3 +514,11 @@ def genomic_position(tr_pos, exons, reverse_strand):
     if reverse_strand:  # get them back to the original
         tr_pos = [tr_len-p for p in tr_pos]
     return {p: mp for p, mp in zip(tr_pos, mapped_pos)}
+
+
+def cmp_dist(a, b, min_dist=3):
+    if a >= b+min_dist:
+        return 1
+    if b >= a+min_dist:
+        return -1
+    return 0

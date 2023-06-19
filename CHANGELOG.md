@@ -6,6 +6,7 @@
 * separate new read import and classification of isoforms.
 
 ## [0.3.4]
+* fixing #8: AssertationError when unifying TSS/PAS between transcript
 * improved domain plots: ORF start and end do not appear like exon exon boundaries. 
 * API change: separated ORF prediction from QC metrics calculation. 
 * new feature: count number of upstream start codons in Gene.add_orfs() (called by default when adding QC metrics to transcriptome)

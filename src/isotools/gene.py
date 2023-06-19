@@ -14,7 +14,7 @@ from .splice_graph import SegmentGraph
 from .short_read import Coverage
 from ._transcriptome_filter import SPLICE_CATEGORY
 from ._utils import pairwise, _filter_event, find_longest_orf, smooth, get_quantiles, _filter_function, \
-    pairwise_event_test, prepare_contingency_table
+    pairwise_event_test, prepare_contingency_table, cmp_dist
 
 import logging
 logger = logging.getLogger('isotools')
@@ -787,6 +787,7 @@ class Gene(Interval):
         # get gene tss/pas profiles
         tss = {}
         pas = {}
+        strand = 1 if self.strand == '+' else -1
         for tr in self.transcripts:
             for sa in tr['TSS']:
                 for pos, c in tr['TSS'][sa].items():
@@ -803,28 +804,29 @@ class Gene(Interval):
             pas_pos[0] -= (smooth_window + pas_pos[0]-pas_pos[1] - 1)
         tss = [tss.get(pos, 0) for pos in range(tss_pos[0], tss_pos[1]+1)]
         pas = [pas.get(pos, 0) for pos in range(pas_pos[0], pas_pos[1]+1)]
-        # smooth profiles and finde maxima
+        # smooth profiles and find maxima
         tss_smooth = smooth(np.array(tss), smooth_window)
         pas_smooth = smooth(np.array(pas), smooth_window)
         # at least half of smooth_window reads required to call a peak
         # minimal distance between peaks is > ~ smooth_window
         # rel_prominence=1 -> smaller peak must have twice the hight of valley to call two peaks
         tss_peaks, _ = find_peaks(np.log2(tss_smooth+1), prominence=(rel_prominence, None))
-        tss_peak_pos = tss_peaks+tss_pos[0]
+        tss_peak_pos = tss_peaks+tss_pos[0]-1
         pas_peaks, _ = find_peaks(np.log2(pas_smooth+1), prominence=(rel_prominence, None))
-        pas_peak_pos = pas_peaks+pas_pos[0]
+        pas_peak_pos = pas_peaks+pas_pos[0]-1
 
         # find transcripts with common first/last splice site
-        starts = {}
-        ends = {}
+        first_junction = {}
+        last_junction = {}
         for trid, tr in enumerate(self.transcripts):
-            starts.setdefault(tr['exons'][0][1], []).append(trid)
-            ends.setdefault(tr['exons'][-1][0], []).append(trid)
+            first_junction.setdefault(tr['exons'][0][1], []).append(trid)
+            last_junction.setdefault(tr['exons'][-1][0], []).append(trid)
+        # first / last junction with respect to direction of transcription
         if self.strand == '-':
-            starts, ends = ends, starts
+            first_junction, last_junction = last_junction, first_junction
         # for each site, find consistant "peaks" TSS/PAS
         # if none found use median of all read starts
-        for pos, tr_ids in starts.items():
+        for junction_pos, tr_ids in first_junction.items():
             profile = {}
             for trid in tr_ids:
                 for sa_tss in self.transcripts[trid]['TSS'].values():
@@ -841,13 +843,13 @@ class Gene(Interval):
                 tr['TSS_unified'] = {}
                 for sa, sa_tss in tr['TSS'].items():
                     tss_unified = {}
-                    for pos, c in sa_tss.items():
-                        next_peak = min((p for p in ol_peaks if p < tr['exons'][0][1]),
+                    for pos, c in sa_tss.items():  # for each read start position, find closest peak
+                        next_peak = min((p for p in ol_peaks if cmp_dist(junction_pos,p, mindist=3) == strand),
                                         default=pos, key=lambda x: abs(x-pos))
                         tss_unified[next_peak] = tss_unified.get(next_peak, 0)+c
                     tr['TSS_unified'][sa] = tss_unified
         # same for PAS
-        for pos, tr_ids in ends.items():
+        for junction_pos, tr_ids in last_junction.items():
             profile = {}
             for trid in tr_ids:
                 for sa_pas in self.transcripts[trid]['PAS'].values():
@@ -865,7 +867,7 @@ class Gene(Interval):
                 for sa, sa_pas in tr['PAS'].items():
                     pas_unified = {}
                     for pos, c in sa_pas.items():
-                        next_peak = min((p for p in ol_peaks if p > tr['exons'][-1][0]),
+                        next_peak = min((p for p in ol_peaks if cmp_dist(p,junction_pos, mindist=3) == strand),
                                         default=pos, key=lambda x: abs(x-pos))
                         pas_unified[next_peak] = pas_unified.get(next_peak, 0)+c
                     tr['PAS_unified'][sa] = pas_unified

@@ -844,7 +844,7 @@ class Gene(Interval):
                 for sa, sa_tss in tr['TSS'].items():
                     tss_unified = {}
                     for pos, c in sa_tss.items():  # for each read start position, find closest peak
-                        next_peak = min((p for p in ol_peaks if cmp_dist(junction_pos, p, mindist=3) == strand),
+                        next_peak = min((p for p in ol_peaks if cmp_dist(junction_pos, p, min_dist=3) == strand),
                                         default=pos, key=lambda x: abs(x-pos))
                         tss_unified[next_peak] = tss_unified.get(next_peak, 0)+c
                     tr['TSS_unified'][sa] = tss_unified
@@ -867,7 +867,7 @@ class Gene(Interval):
                 for sa, sa_pas in tr['PAS'].items():
                     pas_unified = {}
                     for pos, c in sa_pas.items():
-                        next_peak = min((p for p in ol_peaks if cmp_dist(p, junction_pos, mindist=3) == strand),
+                        next_peak = min((p for p in ol_peaks if cmp_dist(p, junction_pos, min_dist=3) == strand),
                                         default=pos, key=lambda x: abs(x-pos))
                         pas_unified[next_peak] = pas_unified.get(next_peak, 0)+c
                     tr['PAS_unified'][sa] = pas_unified

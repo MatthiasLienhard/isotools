@@ -258,8 +258,7 @@ def die_test(self, groups, min_cov=25, n_isoforms=10, padj_method='fdr_bh', prog
     ''' Reimplementation of the DIE test, suggested by Joglekar et al in Nat Commun 12, 463 (2021):
     "A spatially resolved brain region- and cell type-specific isoform atlas of the postnatal mouse brain"
 
-    Syntax and parameters follow the original implementation in
-    https://github.com/noush-joglekar/scisorseqr/blob/master/inst/RScript/IsoformTest.R
+    Syntax and parameters follow the original implementation in https://github.com/noush-joglekar/scisorseqr/blob/master/inst/RScript/IsoformTest.R
 
     :param groups: Dict with group names as keys and lists of sample names as values, defining the two groups for the test.
     :param min_cov: Minimal number of reads per group for each gene.

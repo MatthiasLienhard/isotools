@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
 import numpy as np
 from math import log10
-from itertools import chain
 from ._utils import has_overlap, pairwise
 import logging
 logger = logging.getLogger('isotools')
@@ -523,35 +522,39 @@ def get_rects(blocks, h=1, w=.1, connect=False,  **kwargs):
     return (rects)
 
 
-def get_patches(start_blocks, orf_blocks, end_blocks, h, w1=.1, w2=.5, connect=True, **kwargs):
-    rects = [patches.Rectangle((b[0], h-w1/2), b[1]-b[0], w1, **kwargs) for b in start_blocks[:-1]]
-    rects.extend([patches.Rectangle((b[0], h-w1/2), b[1]-b[0], w1, **kwargs) for b in end_blocks[1:]])
-    if not orf_blocks:
-        if start_blocks:
-            rects.append(patches.Rectangle((start_blocks[-1][0], h-w1/2), start_blocks[-1][1]-start_blocks[-1][0], w1, **kwargs))
-        if end_blocks:
-            rects.append(patches.Rectangle((end_blocks[0][0], h-w1/2), end_blocks[0][1]-end_blocks[0][0], w1, **kwargs))
-        return rects
-    rects.extend(patches.Rectangle((b[0], h-w2/2), b[1]-b[0], w2, **kwargs) for b in orf_blocks[1:-1])
-    b1, b4 = start_blocks[-1], end_blocks[0]
-    y1, y2 = h+w1/2, h-w1/2
-    p_start = [[b1[1], y2], [b1[0], y2], [b1[0], y1], [b1[1], y1]]
-    p_end = [[b4[0], y1], [b4[1], y1], [b4[1], y2], [b4[0], y2]]
-    y1, y2 = h+w2/2, h-w2/2
-    b2 = orf_blocks[0]
-    if len(orf_blocks) == 1:
-        xy = np.array(list(chain(p_start, [[b2[0], y1], [b2[1], y1]], p_end, [[b2[1], y2], [b2[0], y2]])))
-        rects.append(patches.Polygon(xy, closed=True, **kwargs))
-    else:
-        xy = np.array(list(chain(p_start, [[b2[0], y1], [b2[1], y1], [b2[1], y2], [b2[0], y2]])))
-        rects.append(patches.Polygon(xy, closed=True, **kwargs))
-        b3 = orf_blocks[-1]
-        xy = np.array(list(chain([[b3[1], y2], [b3[0], y2], [b3[0], y1], [b3[1], y1]], p_end)))
-        rects.append(patches.Polygon(xy, closed=True, **kwargs))
+def get_patches(blocks, orf, h, w1=.1, w2=.5, connect=True, **kwargs):
+    rects = []
+    y11, y21 = h+w1/2, h-w1/2  # y for the smaller blocks
+    y12, y22 = h+w2/2, h-w2/2  # y for the larger blocks
+
+    if orf is None:
+        orf = [blocks[0][0], blocks[0][0]]
+
+    # 5'UTR blocks (small)
+    rects = [patches.Rectangle((b[0], y21), b[1]-b[0], w1, **kwargs) for b in blocks if b[1] <= orf[0]]
+    # transition to CDS
+    for b in blocks:
+        if b[0] < orf[0] and b[1] > orf[0]:  # transition in and out
+            if b[1] > orf[1]:
+                x = [b[0], orf[0], orf[0], orf[1], orf[1], b[1], b[1], orf[1], orf[1], orf[0], orf[0], b[0]]
+                y = [y11,     y11,    y12,    y12,    y11,  y11,  y21,    y21,    y22,    y22,    y21, y21]
+            else:  # transition to CDS
+                x = [b[0], orf[0], orf[0], b[1], b[1], orf[0], orf[0], b[0]]
+                y = [y11, y11, y12, y12, y22, y22, y21, y21]
+            rects.append(patches.Polygon(list(zip(x, y)), closed=True, **kwargs))
+    # CDS blocks(large)
+    rects.extend([patches.Rectangle((b[0], y22), b[1]-b[0], w2, **kwargs) for b in blocks if b[0] >= orf[0] and b[1] <= orf[1]])
+    # transition to 3'UTR
+    for b in blocks:
+        if b[0] > orf[0] and b[0] < orf[1] and b[1] > orf[1]:
+            x = [b[0], orf[1], orf[1], b[1], b[1], orf[1], orf[1], b[0]]
+            y = [y12, y12, y11, y11, y21, y21, y22, y22]
+            rects.append(patches.Polygon(list(zip(x, y)), closed=True, **kwargs))
+    # 3'UTR blocks (small)
+    rects.extend([patches.Rectangle((b[0], y21), b[1]-b[0], w1, **kwargs) for b in blocks if b[0] >= orf[1]])
 
     if connect:  # draw a line between blocks
-        all_blocks = chain(start_blocks, orf_blocks, end_blocks)
-        rects.extend([patches.Polygon(np.array([[b1[1], h], [b2[0], h]]), closed=False, **kwargs) for b1, b2 in pairwise(all_blocks) if b1[1] < b2[0]])
+        rects.extend([patches.Polygon(np.array([[b1[1], h], [b2[0], h]]), closed=False, **kwargs) for b1, b2 in pairwise(blocks) if b1[1] < b2[0]])
     return (rects)
 
 
@@ -697,26 +700,24 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, lab
 
     for line, (trid, tr) in enumerate(transcripts):
         seg = segments[line]
-        orf_pos = tr.get('CDS', tr.get('ORF'))[:2]
-        orf = sorted(self.find_transcript_positions(trid, orf_pos, reference=line < len(ref_trids)))
         if include_utr:
-            start_blocks = find_blocks((0, orf[0]), seg)
-            orf_blocks = find_blocks(orf[:2], seg)
-            end_blocks = find_blocks((orf[1], sum(e[1]-e[0] for e in tr['exons'])), seg)
-            for block_patch in get_patches(start_blocks, orf_blocks, end_blocks,
-                                           h=-line, connect=True,
-                                           linewidth=1, edgecolor="black", facecolor="white"):
-                ax.add_patch(block_patch)
+            orf_pos = tr.get('CDS', tr.get('ORF'))[:2]
+            orf_trpos = sorted(self.find_transcript_positions(trid, orf_pos, reference=line < len(ref_trids)))
+            orf_blocks = find_blocks(orf_trpos, seg, True)
+            orf_segpos = [orf_blocks[0][0], orf_blocks[-1][1]]
+
         else:
-            orf_block = find_blocks((0, orf[1]-orf[0]), seg)
-            for rect in get_patches([], orf_block, [], h=-line, linewidth=1, edgecolor="black", facecolor="white"):
-                ax.add_patch(rect)
+            orf_segpos = [0, seg[-1][1]]
+            orf_trpos = [0, None]
+        for rect in get_patches(seg, orf_segpos, h=-line, connect=True,
+                                linewidth=1, edgecolor="black", facecolor="white"):
+            ax.add_patch(rect)
 
         domains = [dom for dom in tr.get('domain', {}).get(source, []) if categories is None or dom[2] in categories]
         # sort by length
         domains.sort(key=lambda x: x[3][1]-x[3][0], reverse=True)
         # get positions relative to segments
-        dom_blocks = [find_blocks([p+orf[0] for p in dom[3]], seg, True) for dom in domains]
+        dom_blocks = [find_blocks([p+orf_trpos[0] for p in dom[3]], seg, True) for dom in domains]
         dom_line = {}
         for idx, block in enumerate(dom_blocks):
             i = 0
@@ -730,8 +731,13 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, lab
                 dom_line[i].append((idx, block_interval))  # idx in length-sorted domains
 
         w = .4/max(len(dom_line), 1)
+
+        def get_line_y(i, n):
+            return n//2 + (i+1)//2 * (-1 if i % 2 else 1)
         for dom_l in dom_line:
-            h = -line+w*(len(dom_line)//2 + (dom_l+1)//2 * (-1 if dom_l % 2 else 1))
+            h = -line+w*get_line_y(dom_l, len(dom_line))
+            # ugly hack to make the domains align with the proteins
+            h -= w*(get_line_y(len(dom_line)-1, len(dom_line))+get_line_y(len(dom_line)-2, len(dom_line)))/2
             for idx, bl in dom_line[dom_l]:
                 dom = domains[idx]
                 try:

@@ -1081,7 +1081,8 @@ def import_ref_transcripts(fn, transcriptome, file_format, chromosomes=None, gen
     logger.debug('sorting exon positions...')
     for tid in exons:
         exons[tid].sort()
-    missed_genes = [gid for gid in transcripts.keys() if gid not in gene_infos]
+    all_genes = set().union(*(set(gi.keys()) for gi in gene_infos.values()))
+    missed_genes = [gid for gid in transcripts.keys() if gid not in all_genes]
     if missed_genes:
         # logger.debug('/n'.join(gid+str(tr) for gid, tr in missed_genes.items()))
         notfound = len(missed_genes)

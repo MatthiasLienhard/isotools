@@ -5,6 +5,9 @@
 * planned new feature: during import of long reads, (optionally) correct for short exon alignment issues. 
 * separate new read import and classification of isoforms.
 
+## [0.3.5]
+* fixed a bug in domain plots, which was introduced in 0.3.4
+
 ## [0.3.4]
 * fixing #8: AssertationError when unifying TSS/PAS between transcript
 * improved domain plots: ORF start and end do not appear like exon exon boundaries. 

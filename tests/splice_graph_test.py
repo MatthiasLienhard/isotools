@@ -21,7 +21,7 @@ def test_exon_regions():
         c1 = g.ref_segment_graph.get_exonic_region()
         c2 = _get_exonic_region(g.ref_transcripts)
         assert len(c1) == len(c2), 'isotools._transcriptome_io._get_exonic_region and Segment_Graph.get_exonic_region yield different length'
-        assert all(reg1[0] == reg2[0] and reg1[1] == reg2[1] for reg1, reg2 in zip(c1, c2)),\
+        assert all(reg1[0] == reg2[0] and reg1[1] == reg2[1] for reg1, reg2 in zip(c1, c2)), \
             'isotools._transcriptome_io._get_exonic_region and Segment_Graph.get_exonic_region yield different regions'
     assert True
 

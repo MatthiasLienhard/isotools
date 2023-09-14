@@ -250,7 +250,7 @@ class Transcriptome:
     from ._transcriptome_stats import die_test, altsplice_test, coordination_test, alternative_splicing_events, rarefaction
 
     # statistic: summary tables (can be used as input to plot_bar / plot_dist)
-    from ._transcriptome_stats import altsplice_stats, filter_stats, transcript_length_hist, transcript_coverage_hist,\
+    from ._transcriptome_stats import altsplice_stats, filter_stats, transcript_length_hist, transcript_coverage_hist, \
         transcripts_per_gene_hist, exons_per_transcript_hist, downstream_a_hist, direct_repeat_hist
 
     # protein domain annotation

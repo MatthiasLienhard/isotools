@@ -8,6 +8,16 @@ import builtins
 import logging
 from scipy.stats import chi2_contingency, fisher_exact
 
+
+# from Kozak et al, NAR, 1987
+kozak = np.array([[23, 35, 23, 19], [26, 35, 21, 18], [25, 35, 22, 18], [23, 26, 33, 18], [19, 39, 23, 19], [23, 37, 20, 20], [
+                 17, 19, 44, 20], [18, 39, 23, 20], [25, 53, 15, 7], [61, 2, 36, 1], [27, 49, 13, 11], [15, 55, 21, 9], [23, 16, 46, 15]])
+bg = kozak.sum(0)/kozak.sum()
+kozak.sum(1)  # check they sum up to 100%
+kozak_weights = np.log2(kozak/100/bg)
+kozak_weights = np.c_[kozak_weights, np.zeros(kozak_weights.shape[0])]
+kozak_pos = list(range(-12, 0))+[3]
+DEFAULT_KOZAK_PWM = pd.DataFrame(kozak_weights.T, columns=kozak_pos, index=[*'ACGTN'])
 logger = logging.getLogger('isotools')
 
 cigar = 'MIDNSHP=XB'
@@ -143,58 +153,42 @@ def splice_identical(tr1, tr2):
     return True
 
 
-def find_longest_orf(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'], coding_hexamers=None, noncoding_hexamers=None):
-    '''Find the longest open reading frames on the forward strand of the sequence.
-    Return a 8-tuple with start and stop position, reading frame (0,1 or 2), start and stop codon sequence,
-    number of upstream start codons, the hexamere score and the Fickett TESTCODE score'''
+def kozak_score(sequence, pos, pwm=DEFAULT_KOZAK_PWM):
+    return sum(pwm.loc[sequence[pos+i], i] for i in pwm.columns if pos+i >= 0 and pos+i < len(sequence))
+
+
+def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'], ref_cds={}):
+    '''Find all open reading frames on the forward strand of the sequence.
+    Return a 7-tuple with start and stop position, reading frame (0,1 or 2), start and stop codon sequence,
+    number of upstream start codons, and the ids of the reference transcripts with matching CDS initialization.'''
     orf = []
     starts = [[], [], []]
     stops = [[], [], []]
+    for init, ref_ids in ref_cds.items():
+        starts[init % 3].append((init, seq[init:(init+3)], ref_ids))
     for match in re.finditer("|".join(start_codons), seq):
-        starts[match.start() % 3].append((match.start(), match.group()))  # position and codon
+        if match.start() not in ref_cds:
+            starts[match.start() % 3].append((match.start(), match.group(), None))  # position and codon
     for match in re.finditer("|".join(stop_codons), seq):
         stops[match.start() % 3].append((match.end(), match.group()))
     for frame in range(3):
         stop, stop_codon = (0, None)
-        for start, start_codon in starts[frame]:
-            if start < stop:  # inframe start within the previous ORF
+        for start, start_codon, ref_ids in starts[frame]:
+            if start < stop and ref_ids is None:  # inframe start within the previous ORF
                 continue
             try:
                 stop, stop_codon = next(s for s in sorted(stops[frame]) if s[0] > start)
             except StopIteration:  # no stop codon - still report as it might be an uAUG
                 stop, stop_codon = start, None
-            orf.append([start, stop, frame, start_codon, stop_codon, 0])
-    if not orf:
-        return
+            orf.append([start, stop, frame, start_codon, stop_codon, 0, ref_ids])
     uORFs = 0
     for orf_i in sorted(orf):  # sort by start position
         orf_i[5] = uORFs
         uORFs += 1
-    return max(orf, key=lambda x: x[1]-x[0] if x[1] else -1)
 
+    return sorted(orf)
 
-def find_orfs(seq, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA']):
-    ''' Find all open reading frames on the forward strand of the sequence.
-    Return a 5-tuple with start and stop position, reading frame (0,1 or 2) and start and stop codon sequence
-    '''
-    orf = []
-    starts = [[], [], []]
-    stops = [[], [], []]
-    for match in re.finditer("|".join(start_codons), seq):
-        starts[match.start() % 3].append((match.start(), match.group()))  # position and codon
-    for match in re.finditer("|".join(stop_codons), seq):
-        stops[match.start() % 3].append((match.end(), match.group()))
-    for frame in range(3):
-        stop, stop_codon = (0, None)
-        for start, start_codon in starts[frame]:
-            if start < stop:  # inframe start within the previous ORF
-                continue
-            try:
-                stop, stop_codon = next(s for s in sorted(stops[frame]) if s[0] > start)
-            except StopIteration:  # no stop codon - still report as it might be an uAUG
-                stop, stop_codon = start, None
-            orf.append((start, stop, frame, start_codon, stop_codon))
-    return orf
+    # return max(orf, key=lambda x: (bool(x[6]), x[1]-x[0] if x[1] else -1))  # prefer annotated CDS init
 
 
 def has_overlap(r1, r2):

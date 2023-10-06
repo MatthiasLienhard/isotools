@@ -71,7 +71,7 @@ class Transcriptome:
                 logger.warning("The following parameters are ignored when loading reference from pkl: %s", ", ".join(kwargs))
             tr = cls.load(reference_file)
             if 'sample_table' in tr.infos:
-                logger.warning('the pickle file seems to contain sample information... extracting refrence')
+                logger.warning('the pickle file seems to contain sample information... extracting reference')
                 tr = tr._extract_reference()
         else:
             raise ValueError('invalid file format %s of file %s' % (file_format, reference_file))

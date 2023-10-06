@@ -2,7 +2,7 @@ from pysam import FastaFile
 from tqdm import tqdm
 import logging
 import re
-from ._utils import _filter_function
+from ._utils import _filter_function, DEFAULT_KOZAK_PWM
 
 logger = logging.getLogger('isotools')
 BOOL_OP = {'and', 'or', 'not', 'is'}
@@ -38,15 +38,21 @@ ANNOTATION_VOCABULARY = ['antisense', 'intergenic', 'genic genomic', 'novel exon
 
 # filtering functions for the transcriptome class
 
-def add_orf_prediction(self, genome_fn, progress_bar=True, fickett_score=True, hexamer_file=None):
+def add_orf_prediction(self, genome_fn, progress_bar=True, filter_transcripts={}, filter_ref_transcripts={}, min_len=300, max_5utr_len=500,
+                       min_kozak=None, prefer_annotated_init=True,  kozak_matrix=DEFAULT_KOZAK_PWM, fickett_score=True, hexamer_file=None):
     ''' Performs ORF prediction on the transcripts.
 
-    For each transcript the longest open reading frame is determined, and metrics to assess the coding potential
-    (UTR and CDS lenghts, Fickett score, hexamer score and NMD prediction). The hexamer score depends on hexamer frequency table,
+    For each transcript the first valid open reading frame is determined, and metrics to assess the coding potential
+    (UTR and CDS lengths, Kozak score, Fickett score, hexamer score and NMD prediction). The hexamer score depends on hexamer frequency table,
     see CPAT python module for prebuild tables and instructions.
 
     :param geneome_fn: Path to the genome in fastA format.
-    :param fickett_score: If set to True, the Fickett TESTCODE score is computed for each transcript.
+    :param min_len: Minimum length of the ORF, Does not apply to annotated initiation sites.
+    :param min_kozak: Minimal score for translation initiation site. Does not apply to annotated initiation sites.
+    :param max_5utr_len: Maximal length of the 5'UTR region. Does not apply to annotated initiation sites.
+    :param prefer_annotated_init: If True, the initiation sites of annotated CDS are preferred.
+    :param kozak_matrix: PWM (log odds ratios) for the kozak sequence similarity score.
+    :param fickett_score: If set to True, the Fickett TESTCODE score is computed for the ORF.
     :param hexamer_file: Filename of the hexamer table, for the ORF hexamer scores. If set not None, the hexamer score is not computed.'''
 
     if hexamer_file is None:
@@ -72,8 +78,14 @@ def add_orf_prediction(self, genome_fn, progress_bar=True, fickett_score=True, h
 
         for g in self.iter_genes(progress_bar=progress_bar):
             if g.chrom in genome_fh.references:
-                g.add_orfs(genome_fh, reference=False, minlen=30, get_fickett=fickett_score, coding_hexamers=coding, noncoding_hexamers=noncoding)
-                g.add_orfs(genome_fh, reference=True, minlen=30, get_fickett=fickett_score, coding_hexamers=coding, noncoding_hexamers=noncoding)
+                if filter_transcripts is not None:
+                    g.add_orfs(genome_fh, reference=False, prefer_annotated_init=prefer_annotated_init, minlen=min_len,
+                               min_kozak=min_kozak, max_5utr_len=max_5utr_len, tr_filter=filter_transcripts,
+                               kozak_matrix=kozak_matrix, get_fickett=fickett_score, coding_hexamers=coding, noncoding_hexamers=noncoding)
+                if filter_ref_transcripts is not None:
+                    g.add_orfs(genome_fh, reference=True, prefer_annotated_init=prefer_annotated_init, minlen=min_len,
+                               min_kozak=min_kozak, max_5utr_len=max_5utr_len, tr_filter=filter_ref_transcripts,
+                               get_fickett=fickett_score, kozak_matrix=kozak_matrix, coding_hexamers=coding, noncoding_hexamers=noncoding)
 
 
 def add_qc_metrics(self, genome_fn, progress_bar=True, downstream_a_len=30, direct_repeat_wd=15, direct_repeat_wobble=2, direct_repeat_mm=2,
@@ -198,6 +210,7 @@ def iter_genes(self, region=None, query=None, min_coverage=None, max_coverage=No
         if isinstance(region, str):
             if region in self.data:
                 genes = self.data[region]  # provide chromosome
+                start = None
             else:  # parse region string (chr:start-end)
                 try:
                     chrom, pos = region.split(':')
@@ -206,7 +219,7 @@ def iter_genes(self, region=None, query=None, min_coverage=None, max_coverage=No
                     raise ValueError('incorrect region {} - specify as string "chr" or "chr:start-end" or tuple ("chr",start,end)'.format(region)) from e
         elif isinstance(region, tuple):
             chrom, start, end = region
-        if chrom in self.data:
+        if start is not None and chrom in self.data:
             genes = self.data[chrom][int(start):int(end)]
         else:
             raise ValueError('specified chromosome {} not found'.format(chrom))

@@ -13,8 +13,8 @@ from cpmodule import fickett, FrameKmer  # this is from the CPAT module
 from .splice_graph import SegmentGraph
 from .short_read import Coverage
 from ._transcriptome_filter import SPLICE_CATEGORY
-from ._utils import pairwise, _filter_event, find_longest_orf, smooth, get_quantiles, _filter_function, \
-    pairwise_event_test, prepare_contingency_table, cmp_dist
+from ._utils import pairwise, _filter_event, find_orfs, DEFAULT_KOZAK_PWM, kozak_score, smooth, get_quantiles, \
+    _filter_function, pairwise_event_test, prepare_contingency_table, cmp_dist
 
 import logging
 logger = logging.getLogger('isotools')
@@ -286,32 +286,114 @@ class Gene(Interval):
                 logger.warning(f'CDS sequence of {self.id} {"reference" if reference else ""} transcript {i} cannot be translated.')
         return prot_seqs
 
-    def add_orfs(self, genome_fh, reference=False, minlen=30, start_codons=["ATG"], stop_codons=['TAA', 'TAG', 'TGA'],
-                 get_fickett=True, coding_hexamers=None, noncoding_hexamers=None):
-        '''Find longest ORF for each transcript.
+    def _get_ref_cds_pos(self, trids=None):
+        '''find the position of annotated CDS initiation '''
+        if trids is None:
+            trids = range(len(self.transcripts))
+        reverse_strand = self.strand == '-'
+        utr, anno_cds = {}, {}
+        match_cds = {}
+        for i, tr in enumerate(self.ref_transcripts):
+            if 'CDS' in tr:
+                anno_cds[i] = tr['CDS']
+                if not reverse_strand:
+                    utr[i] = [e for e in tr['exons'] if e[0] < tr['CDS'][0]]
+                else:
+                    utr[i] = [e for e in tr['exons'] if e[1] > tr['CDS'][1]]
 
-        For each transcript, the longest ORF (sequence starting with start_condon, and ending with in frame stop codon) is determined.
+        for trid in trids:
+            tr = self.transcripts[trid]
+            match_cds[trid] = {}
+            for i, reg in utr.items():
+                if not any(s <= anno_cds[i][reverse_strand] <= e for s, e in tr['exons']):  # no overlap of CDS init with exons
+                    continue
+                if not reverse_strand:
+                    to_check = zip(pairwise(reg), pairwise(tr['exons']))
+                else:
+                    to_check = zip(pairwise((e, s) for s, e in reversed(reg)), pairwise((e, s) for s, e in reversed(tr['exons'])))
+                for ((e1reg, e2reg), (e1, e2)) in to_check:
+                    if (e1reg[1] != e1[1] or e2reg[0] != e2[0]):
+                        break
+                else:
+                    pos = self.find_transcript_positions(trid, anno_cds[i], reference=False)[reverse_strand]
+                    match_cds[trid].setdefault(pos, []).append(i)
+        return match_cds
+
+    def add_orfs(self, genome_fh, tr_filter={}, reference=False, minlen=300, min_kozak=None, max_5utr_len=0, prefer_annotated_init=True,  start_codons=["ATG"],
+                 stop_codons=['TAA', 'TAG', 'TGA'], kozak_matrix=DEFAULT_KOZAK_PWM, get_fickett=True, coding_hexamers=None, noncoding_hexamers=None):
+        '''Predict the CDS for each transcript.
+
+        For each transcript, one ORF is selected as the coding sequence. Depending on the parameters, this is either the first ORF
+        (sequence starting with start_condon, and ending with in frame stop codon), or the longest ORF,
+        starting with a codon that is annotated as CDS initiation site in a reference transcript.
         The genomic and transcript positions of these codons, and the length of the ORF, as well as  the number of upstream start codons
         is added to the transcript properties tr["ORF"]. Additionally, the Fickett score, and the hexamer score are computed. For the
         latter, hexamer frequencies in coding and noncoding transcripts are needed. See CPAT python module for prebuilt tables and
         instructions.
-        :param minlen: the minimum length of a ORF (in bases) to be considered.
+        :param tr_filter: dict with filtering parameters passed to iter_transcripts or iter_ref_transcripts
+        :param min_len: Minimum length of the ORF, Does not apply to annotated initiation sites.
+        :param min_kozak: Minimal score for translation initiation site. Does not apply to annotated initiation sites.
+        :param max_5utr_len: Maximal length of the 5'UTR region. Does not apply to annotated initiation sites.
+        :param prefer_annotated_init: If True, the initiation sites of annotated CDS are preferred.
         :param start_codons: List of base triplets that are considered as start codons. By default ['ATG'].
         :param stop_codons: List of base triplets that are considered as stop codons. By default ['TAA', 'TAG', 'TGA'].
+        :param kozak_matrix: A PWM (log odds ratios) to compute the Kozak sequence similarity
+        :param get_fickett: If true, the fickett score for the CDS is computed.
         :param coding_hexamers: The hexamer frequencies for coding sequences.
-        :param noncoding_hexamers: The hexamer frequencies for coding sequences.'''
+        :param noncoding_hexamers: The hexamer frequencies for non-coding sequences (background).'''
+        if tr_filter:
+            if reference:
+                tr_dict = {i: self.ref_transcripts[i] for i in self.filter_ref_transcripts(**tr_filter)}
+            else:
+                tr_dict = {i: self.transcripts[i] for i in self.filter_transcripts(**tr_filter)}
+        else:
+            tr_dict = {i: tr for i, tr in enumerate(self.ref_transcripts if reference else self.transcripts)}
+        assert min_kozak is None or kozak_matrix is not None, 'Kozak matrix missing for min_kozak'
+        if not tr_dict:
+            return
+        if prefer_annotated_init:
+            if reference:
+                ref_cds = {}
+                for i, tr in tr_dict.items():
+                    if 'CDS' not in tr:
+                        ref_cds[i] = {}
+                    else:
+                        pos = self.find_transcript_positions(i, tr['CDS'], reference=True)[self.strand == '-']
+                        ref_cds[i] = {pos: [i]}
+            else:
+                ref_cds = self._get_ref_cds_pos(trids=tr_dict.keys())
 
-        trL = self.ref_transcripts if reference else self.transcripts
-        for trid, tr_seq in self.get_sequence(genome_fh, reference=reference).items():
-            try:
-                start, stop, frame, seq_start, seq_end, uORFs = find_longest_orf(
-                    tr_seq, start_codons, stop_codons, coding_hexamers, noncoding_hexamers)
-            except TypeError:  # No ORF
+        for trid, tr_seq in self.get_sequence(genome_fh, trids=tr_dict.keys(), reference=reference).items():
+            orfs = find_orfs(
+                    tr_seq, start_codons, stop_codons, ref_cds[trid] if prefer_annotated_init else [])
+            if not orfs:  # No ORF
                 continue
-            if stop is None or stop - start < minlen:
-                continue
+            # select best ORF
+            # prefer annotated CDS init
+            anno_orfs = [orf for orf in orfs if bool(orf[6]) and orf[1] is not None]
+            kozak = None
+            if anno_orfs:
+                start, stop, frame, seq_start, seq_end, uORFs, ref_trids = max(anno_orfs, key=lambda x: x[1]-x[0])
+            else:
+                valid_orfs = [orf for orf in orfs if orf[1] is not None and orf[1]-orf[0] > minlen and orf[0] <= max_5utr_len]
+                if not valid_orfs:
+                    continue
+                if min_kozak is not None:
+                    for orf in valid_orfs:
+                        kozak = kozak_score(tr_seq, orf[0], kozak_matrix)
+                        if kozak > min_kozak:
+                            start, stop, frame, seq_start, seq_end, uORFs, ref_trids = orf
+                            break
+                    else:
+                        continue
+                else:
+                    start, stop, frame, seq_start, seq_end, uORFs, ref_trids = valid_orfs[0]
 
-            tr = trL[trid]
+                start, stop, frame, seq_start, seq_end, uORFs, ref_trids = valid_orfs[0]
+            # if stop is None or stop - start < minlen:
+            #    continue
+
+            tr = tr_dict[trid]
             tr_start = tr['exons'][0][0]
             cum_exon_len = np.cumsum([end-start for start, end in tr['exons']])  # cumulative exon length
             cum_intron_len = np.cumsum([0]+[end-start for (_, start), (end, _) in pairwise(tr['exons'])])  # cumulative intron length
@@ -329,7 +411,12 @@ class Gene(Interval):
             if self.strand == '-' and start_exon > 0:
                 dist_pas = fwd_start-cum_exon_len[0]
             orf_dict = {"5'UTR": start, 'CDS': stop-start, "3'UTR": cum_exon_len[-1]-stop,
-                        'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55, 'uORFs': uORFs}
+                        'start_codon': seq_start, 'stop_codon': seq_end, 'NMD': dist_pas > 55, 'uORFs': uORFs, 'ref_ids': ref_trids}
+            if kozak_matrix is not None:
+                if kozak is None:
+                    orf_dict['kozak'] = kozak_score(tr_seq, start, kozak_matrix)
+                else:
+                    orf_dict['kozak'] = kozak
 
             if coding_hexamers is not None and noncoding_hexamers is not None:
                 orf_dict['hexamer'] = FrameKmer.kmer_ratio(tr_seq[start:stop], 6, 3, coding_hexamers, noncoding_hexamers)

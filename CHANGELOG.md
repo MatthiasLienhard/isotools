@@ -7,6 +7,8 @@
 
 ## [0.3.5]
 * fixed a bug in domain plots, which was introduced in 0.3.4
+* fixed a bug in iter_genes/iter_transcripts with region='chr', and no positions specified
+* new option in plot_domains to depict noncoding transcripts, controlled with the coding_only parameter
 
 ## [0.3.4]
 * fixing #8: AssertationError when unifying TSS/PAS between transcript

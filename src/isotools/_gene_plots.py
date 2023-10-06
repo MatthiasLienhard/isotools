@@ -534,8 +534,8 @@ def get_patches(blocks, orf, h, w1=.1, w2=.5, connect=True, **kwargs):
     rects = [patches.Rectangle((b[0], y21), b[1]-b[0], w1, **kwargs) for b in blocks if b[1] <= orf[0]]
     # transition to CDS
     for b in blocks:
-        if b[0] < orf[0] and b[1] > orf[0]:  # transition in and out
-            if b[1] > orf[1]:
+        if b[0] < orf[0] and b[1] > orf[0]:
+            if b[1] > orf[1]:  # transition in and out
                 x = [b[0], orf[0], orf[0], orf[1], orf[1], b[1], b[1], orf[1], orf[1], orf[0], orf[0], b[0]]
                 y = [y11,     y11,    y12,    y12,    y11,  y11,  y21,    y21,    y22,    y22,    y21, y21]
             else:  # transition to CDS
@@ -634,8 +634,8 @@ def genome_pos_to_gene_segments(pos, genome_map, strict=True):
     return {p: mp for p, mp in zip(pos, mapped_pos)}
 
 
-def plot_domains(self, source, categories=None, trids=True, ref_trids=False, label='name', include_utr=False, seperate_exons=True,
-                 x_ticks='gene', ax=None, domain_cols=DOMAIN_COLS,  max_overlap=5, highlight=None, highlight_col='red'):
+def plot_domains(self, source, categories=None, trids=True, ref_trids=False, coding_only=True, label='name', include_utr=False, seperate_exons=True,
+                 x_ticks='gene', ax=None, dom_space=.8, domain_cols=DOMAIN_COLS,  max_overlap=5, highlight=None, highlight_col='red'):
     '''Plot exonic part of transcripts, together with protein domanis and annotations.
 
     :param source: Source of protein domains, e.g. "annotation", "hmmer" or "interpro", for domains added by the functions
@@ -643,11 +643,13 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, lab
     :param categories: List of domain categories to be depicted, default: all categories.
     :param trids: List of transcript indices to be depicted. If True/False, all/none transcripts are depicted.
     :param ref_trids: List of reference transcript indices to be depicted. If True/False, all/none reference transcripts are depicted.
+    :param coding_only: Depict only transcripts with annotated ORF/CDS (requires include_utr=True)
     :param label: Specify the type of label: eiter None, or id, or name.
     :param include_utr: If set True, the untranslated regions are also depicted.
     :param seperate_exons: If set True, exon boundaries are marked.
     :param x_ticks: Either "gene" or "genome". If set to "gene", positions are relative to the gene (continuous, starting from 0).
         If set to "genome", positions are (discontinous) genomic coordinates.
+    :param dom_space: relative space used for the domains. Should be between 0 and 1.
     :param ax: Specify the axis.
     :param domain_cols: Dicionary for the colors of different domain types.
     :param max_overlap: Maximum number of overlapping domains to be depicted. Longer domains have priority over shorter domains.
@@ -657,14 +659,20 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, lab
     if label is not None:
         assert label in ('id', 'name'), 'label needs to be either "id" or "name" (or None).'
         label_idx = 0 if label == 'id' else 1
+
+    assert 0 < dom_space <= 1, 'dom_space should be between 0 and 1.'
     domain_cols = {k.lower(): v for k, v in domain_cols.items()}
     assert x_ticks in ["gene", "genome"], f'x_ticks should be "gene" or "genome", not "{x_ticks}"'
+    if not include_utr:
+        assert coding_only, 'coding_only can be set only if include_utr is also set.'
     if isinstance(trids, bool):
         trids = list(range(len(self.transcripts))) if trids else []
-    trids = [trid for trid in trids if 'ORF' in self.transcripts[trid] or 'CDS' in self.transcripts[trid]]
+    if coding_only:
+        trids = [trid for trid in trids if 'ORF' in self.transcripts[trid] or 'CDS' in self.transcripts[trid]]
     if isinstance(ref_trids, bool):
         ref_trids = list(range(len(self.ref_transcripts))) if ref_trids else []
-    ref_trids = [trid for trid in ref_trids if 'ORF' in self.ref_transcripts[trid] or 'CDS' in self.ref_transcripts[trid]]
+    if coding_only:
+        ref_trids = [trid for trid in ref_trids if 'ORF' in self.ref_transcripts[trid] or 'CDS' in self.ref_transcripts[trid]]
     transcripts = [(i, self.ref_transcripts[i]) for i in ref_trids] + [(i, self.transcripts[i]) for i in trids]
     n_tr = len(transcripts)
     if not transcripts:
@@ -701,10 +709,14 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, lab
     for line, (trid, tr) in enumerate(transcripts):
         seg = segments[line]
         if include_utr:
-            orf_pos = tr.get('CDS', tr.get('ORF'))[:2]
-            orf_trpos = sorted(self.find_transcript_positions(trid, orf_pos, reference=line < len(ref_trids)))
-            orf_blocks = find_blocks(orf_trpos, seg, True)
-            orf_segpos = [orf_blocks[0][0], orf_blocks[-1][1]]
+            try:
+                orf_pos = tr.get('CDS', tr['ORF'])[:2]
+                orf_trpos = sorted(self.find_transcript_positions(trid, orf_pos, reference=line < len(ref_trids)))
+                orf_blocks = find_blocks(orf_trpos, seg, True)
+                orf_segpos = [orf_blocks[0][0], orf_blocks[-1][1]]
+            except KeyError:
+                orf_segpos = None
+                orf_trpos = None
 
         else:
             orf_segpos = [0, seg[-1][1]]
@@ -712,6 +724,8 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, lab
         for rect in get_patches(seg, orf_segpos, h=-line, connect=True,
                                 linewidth=1, edgecolor="black", facecolor="white"):
             ax.add_patch(rect)
+        if orf_segpos is None:
+            continue
 
         domains = [dom for dom in tr.get('domain', {}).get(source, []) if categories is None or dom[2] in categories]
         # sort by length
@@ -730,7 +744,7 @@ def plot_domains(self, source, categories=None, trids=True, ref_trids=False, lab
             else:
                 dom_line[i].append((idx, block_interval))  # idx in length-sorted domains
 
-        w = .4/max(len(dom_line), 1)
+        w = dom_space*.5/max(len(dom_line), 1)
 
         def get_line_y(i, n):
             return n//2 + (i+1)//2 * (-1 if i % 2 else 1)
